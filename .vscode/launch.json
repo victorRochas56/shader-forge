@@ -1,0 +1,12 @@
+{
+    "configurations": [
+        {
+            "type": "cmake",
+            "request": "launch",
+            "name": "Debug portfile(s)",
+            "cmakeDebugType": "configure",
+            "pipeName": "\\\\.\\pipe\\vcpkg_ext_portfile_dbg",
+            "preLaunchTask": "Debug vcpkg commands"
+        }
+    ]
+}

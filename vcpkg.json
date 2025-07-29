@@ -1,0 +1,12 @@
+{
+  "name": "shader-forge",
+  "version": "1.0.0",
+  "dependencies": [
+    "glfw3",
+    "glm",
+    "tinyobjloader",
+    "stb",
+    "nlohmann-json",
+    "ktx"
+  ]
+}
