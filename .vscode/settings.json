@@ -6,7 +6,6 @@
     "vcpkg.target.defaultTriplet": "",
     "vcpkg.target.useStaticLib": false,
     "cmake.configureArgs": [
-        "-DVCPKG_TARGET_TRIPLET=",
         "-DVCPKG_APPLOCAL_DEPS=ON",
         "-DCMAKE_CXX_STANDARD=20",
         "-DX_VCPKG_APPLOCAL_DEPS_INSTALL=ON",
@@ -103,6 +102,7 @@
         "xtr1common": "cpp",
         "xtree": "cpp",
         "xutility": "cpp",
-        "expected": "cpp"
+        "expected": "cpp",
+        "queue": "cpp"
     }
 }

@@ -39,29 +39,29 @@ function(add_slang_shader_target TARGET EXECUTABLE_TARGET)
     cmake_parse_arguments(SHADER "" "" "SOURCES" ${ARGN})
     set(SHADERS_DIR ${CMAKE_CURRENT_LIST_DIR}/shaders)
     set(TEXTURES_DIR ${CMAKE_CURRENT_LIST_DIR}/textures)
+    set(MODELS_DIR ${CMAKE_CURRENT_LIST_DIR}/models)
     set(ENTRY_POINTS -entry vertMain -entry fragMain)
-    
+   
     # Create build-time shaders directory
     add_custom_command(
         OUTPUT ${SHADERS_DIR}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADERS_DIR}
     )
-    
+   
     # Get all .slang files in the directory
     file(GLOB SLANG_FILES "${SHADERS_DIR}/*.slang")
-
-    # Generate output filenames 
+    # Generate output filenames
     set(SLANG_SPV_FILES)
     foreach(SLANG_FILE ${SLANG_FILES})
         get_filename_component(FILENAME ${SLANG_FILE} NAME_WE)
         list(APPEND SLANG_SPV_FILES "${SHADERS_DIR}/${FILENAME}.spv")
     endforeach()
-
+    
     #compile each .slang to corresponding .spv
     foreach(SLANG_FILE ${SLANG_FILES})
         get_filename_component(FILENAME ${SLANG_FILE} NAME_WE)
         set(OUTPUT_FILE "${SHADERS_DIR}/${FILENAME}.spv")
-        
+       
         add_custom_command(
             OUTPUT ${OUTPUT_FILE}
             COMMAND ${SLANGC_EXECUTABLE} ${SLANG_FILE} -target spirv -profile spirv_1_4 -emit-spirv-directly -fvk-use-entrypoint-name -o ${FILENAME}.spv
@@ -71,7 +71,7 @@ function(add_slang_shader_target TARGET EXECUTABLE_TARGET)
             VERBATIM
         )
     endforeach()
-
+    
     # Get all .slang files and generate corresponding .spv filenames
     file(GLOB SLANG_FILES "${SHADERS_DIR}/*.slang")
     set(SLANG_SPV_FILES)
@@ -79,31 +79,53 @@ function(add_slang_shader_target TARGET EXECUTABLE_TARGET)
         get_filename_component(FILENAME ${SLANG_FILE} NAME_WE)
         list(APPEND SLANG_SPV_FILES "${SHADERS_DIR}/${FILENAME}.spv")
     endforeach()
-
+    
     # post-build step to copy all compiled shaders and textures to executable directory
     add_custom_command(TARGET ${EXECUTABLE_TARGET} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${EXECUTABLE_TARGET}>/shaders
         COMMENT "Copying compiled shaders to executable directory"
         VERBATIM
     )
-
-    # Copy compiled shaders
+    
+    # Copy compiled shaders (only if different)
     foreach(SPV_FILE ${SLANG_SPV_FILES})
         get_filename_component(FILENAME ${SPV_FILE} NAME)
         add_custom_command(TARGET ${EXECUTABLE_TARGET} POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy ${SPV_FILE} $<TARGET_FILE_DIR:${EXECUTABLE_TARGET}>/shaders/${FILENAME}
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${SPV_FILE} $<TARGET_FILE_DIR:${EXECUTABLE_TARGET}>/shaders/${FILENAME}
             VERBATIM
         )
     endforeach()
-
-    # Copy textures
+    
+    # Copy textures (only if different)
+    file(GLOB TEXTURE_FILES "${TEXTURES_DIR}/*")
     add_custom_command(TARGET ${EXECUTABLE_TARGET} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${EXECUTABLE_TARGET}>/textures
-        COMMAND ${CMAKE_COMMAND} -E copy_directory ${TEXTURES_DIR} $<TARGET_FILE_DIR:${EXECUTABLE_TARGET}>/textures
         COMMENT "Copying textures to executable directory"
         VERBATIM
     )
+    foreach(TEXTURE_FILE ${TEXTURE_FILES})
+        get_filename_component(FILENAME ${TEXTURE_FILE} NAME)
+        add_custom_command(TARGET ${EXECUTABLE_TARGET} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${TEXTURE_FILE} $<TARGET_FILE_DIR:${EXECUTABLE_TARGET}>/textures/${FILENAME}
+            VERBATIM
+        )
+    endforeach()
     
+    # Copy models (only if different)
+    file(GLOB MODEL_FILES "${MODELS_DIR}/*")
+    add_custom_command(TARGET ${EXECUTABLE_TARGET} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${EXECUTABLE_TARGET}>/models
+        COMMENT "Copying models to executable directory"
+        VERBATIM
+    )
+    foreach(MODEL_FILE ${MODEL_FILES})
+        get_filename_component(FILENAME ${MODEL_FILE} NAME)
+        add_custom_command(TARGET ${EXECUTABLE_TARGET} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${MODEL_FILE} $<TARGET_FILE_DIR:${EXECUTABLE_TARGET}>/models/${FILENAME}
+            VERBATIM
+        )
+    endforeach()
+   
     add_custom_target(${TARGET} DEPENDS ${SLANG_SPV_FILES})
 endfunction()
 
@@ -112,6 +134,7 @@ project(shader-forge)
 # Include directories
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules
     ${VULKAN_INCLUDE_DIR}
 )
 
@@ -126,6 +149,11 @@ find_package(Ktx CONFIG REQUIRED) # !upper case K
 
 add_executable(shader-forge
     main.cpp
+    modules/core.hpp
+    modules/devices.hpp
+    modules/resources.hpp
+    modules/swapchain.hpp
+    modules/utils.hpp
 )
 
 if(MSVC)

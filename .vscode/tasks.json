@@ -4,7 +4,7 @@
         {
             "label": "CMake Build",
             "type": "shell",
-            "command": "cmake --build build --verbose --config Debug",
+            "command": "cmake --build build --verbose --config Release",
             "group": {
                 "kind": "build",
                 "isDefault": true
@@ -22,7 +22,7 @@
                 "-DCMAKE_TOOLCHAIN_FILE=C:/Users/vicro/Desktop/vulkan-renderer/vcpkg/scripts/buildsystems/vcpkg.cmake",
                 "-DSLANGC_EXECUTABLE=C:/VulkanSDK/1.4.321.0/Bin/slangc.exe",  
                 "-DVULKAN_INCLUDE_DIR=C:/VulkanSDK/1.4.321.0/Include",
-                "-DCMAKE_BUILD_TYPE=Debug"
+                "-DCMAKE_BUILD_TYPE=Release"
             ],
             "group": "build",
             "problemMatcher": []
