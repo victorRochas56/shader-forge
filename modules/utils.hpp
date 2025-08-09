@@ -1,37 +1,10 @@
 #pragma once
 #define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1 // for raii
 #define VULKAN_HPP_NO_CONSTRUCTORS 1         // for structs constructors
-#include <algorithm>
-#include <array>
-#include <chrono>
-#include <cstdlib>
-#include <cstring>
-#include <fstream>
-#include <iostream>
-#include <limits>
-#include <memory>
-#include <stdexcept>
-#include <swapchain.hpp>
-#include <unordered_map>
-#include <vector>
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_raii.hpp>
-#define GLFW_INCLUDE_VULKAN // REQUIRED only for GLFW CreateWindowSurface.
-#include <GLFW/glfw3.h>
 
-#define GLM_FORCE_RADIANS
-#define GLM_DEPTH_ZERO_TO_ONE
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
-#define GLM_ENABLE_EXPERIMENTAL
-#include <glm/gtx/hash.hpp>
-
-#ifndef STB_IMAGE_IMPLEMENTATION
-#define STB_IMAGE_IMPLEMENTATION
-#include <stb_image.h>
-#endif
-
-uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties, Devices* devices) {
+uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties, const Devices* devices) {
     vk::PhysicalDeviceMemoryProperties memProperties = devices->getPhysicalDevice().getMemoryProperties();
 
     for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
@@ -39,7 +12,6 @@ uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties,
             return i;
         }
     }
-
     throw std::runtime_error("failed to find suitable memory type!");
 }
 
@@ -64,7 +36,7 @@ uint32_t getBytesPerPixel(vk::Format format) {
     }
 }
 
-vk::Format findSupportedFormat(const std::vector<vk::Format>& candidates, vk::ImageTiling tiling, vk::FormatFeatureFlags features, Devices* devices) {
+vk::Format findSupportedFormat(const std::vector<vk::Format>& candidates, vk::ImageTiling tiling, vk::FormatFeatureFlags features, const Devices* devices) {
     for (const auto format : candidates) {
         vk::FormatProperties props = devices->getPhysicalDevice().getFormatProperties(format);
 
@@ -77,6 +49,12 @@ vk::Format findSupportedFormat(const std::vector<vk::Format>& candidates, vk::Im
     }
     throw std::runtime_error("failed to find supported format!");
 }
+vk::Format findDepthFormat(const Devices* devices) {
+    return findSupportedFormat({vk::Format::eD32Sfloat, vk::Format::eD32SfloatS8Uint, vk::Format::eD24UnormS8Uint}, vk::ImageTiling::eOptimal,
+                                vk::FormatFeatureFlagBits::eDepthStencilAttachment, &*devices);
+}
+
+//READING FILES///
 
 static std::vector<char> readFile(const std::string& filename) {
     std::ifstream file(filename, std::ios::ate | std::ios::binary);

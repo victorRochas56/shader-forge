@@ -151,9 +151,13 @@ add_executable(shader-forge
     main.cpp
     modules/core.hpp
     modules/devices.hpp
-    modules/resources.hpp
+    modules/bindless_resources.hpp
+    modules/load_resources.hpp
     modules/swapchain.hpp
     modules/utils.hpp
+    modules/structs.hpp
+    modules/pipeline.hpp
+    modules/debug.hpp
 )
 
 if(MSVC)

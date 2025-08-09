@@ -73,6 +73,7 @@ class Devices {
 
         if (devIter != devices.end()) {
             physicalDevice = std::move(*devIter);
+            std::cout << "running on device: " << physicalDevice.getProperties().deviceName << std::endl;
         } else {
             throw std::runtime_error("failed to find a suitable GPU!");
         }
@@ -127,16 +128,21 @@ class Devices {
             throw std::runtime_error("Could not find a queue for graphics or present -> terminating");
         }
 
-        vk::PhysicalDeviceDescriptorIndexingFeatures descriptorIndexingFeature = {
-            .sType = vk::StructureType::ePhysicalDeviceDescriptorIndexingFeatures, .descriptorBindingPartiallyBound = true, .descriptorBindingVariableDescriptorCount = true};
         // query for Vulkan 1.3 features
-        vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT,
-                           vk::PhysicalDeviceDescriptorIndexingFeatures>
-            featureChain = {
-                {.features = {.sampleRateShading = true, .samplerAnisotropy = true}}, // vk::PhysicalDeviceFeatures2
-                {.synchronization2 = true, .dynamicRendering = true},                 // vk::PhysicalDeviceVulkan13Features
-                {.extendedDynamicState = true},                                       // vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
-                {.sType = vk::StructureType::ePhysicalDeviceDescriptorIndexingFeatures, .descriptorBindingPartiallyBound = true, .descriptorBindingVariableDescriptorCount = true}};
+        vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features, vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features,
+                           vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>
+            featureChain = {{.features = { .sampleRateShading = true, .fillModeNonSolid = true, .wideLines = true ,.samplerAnisotropy = true }}, // vk::PhysicalDeviceFeatures2
+                            {.shaderDrawParameters = true},
+                            {.shaderInt8 = true,
+                             .descriptorIndexing = true,
+                             .descriptorBindingSampledImageUpdateAfterBind = true,
+                             .descriptorBindingStorageBufferUpdateAfterBind = true,
+                             .descriptorBindingUpdateUnusedWhilePending = true,
+                             .descriptorBindingPartiallyBound = true,
+                             .descriptorBindingVariableDescriptorCount = true,
+                             .runtimeDescriptorArray = true},
+                            {.synchronization2 = true, .dynamicRendering = true}, // vk::PhysicalDeviceVulkan13Features
+                            {.extendedDynamicState = true}};                      // vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
 
         // create a Device
         float queuePriority = 0.0f;

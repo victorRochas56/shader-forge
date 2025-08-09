@@ -15,6 +15,7 @@
 #include <optional>
 #include <queue>
 #include <stdexcept>
+#include <structs.hpp>
 #include <swapchain.hpp>
 #include <unordered_map>
 #include <utils.hpp>
@@ -30,7 +31,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 constexpr uint32_t MAX_BINDLESS_TEXTURES = 256;
-constexpr uint32_t MAX_BINDLESS_SAMPLERS = 256;
+constexpr uint32_t MAX_BINDLESS_SAMPLERS = 16;
 static constexpr vk::DeviceSize VERTEX_BUFFER_SIZE = 256 * 1024 * 1024; // max 256mb of vertex data
 static constexpr uint32_t MAX_VERTEX_ALLOCATIONS = 2048;
 constexpr uint32_t MAX_BINDLESS_MODEL_MATRICES = 2048;
@@ -50,7 +51,6 @@ class BindlessResourceManager {
     }
 
     void initializeDefaults() {
-        
 
         initializeVertexBuffer();
         initializeModelMatrixBuffer();
@@ -90,15 +90,9 @@ class BindlessResourceManager {
     uint32_t getDefaultVertexBufferIndex() const { return defaultVertexBufferIndex; }
     uint32_t getDefaultModelMatrixIndex() const { return defaultModelMatrixIndex; }
 
-    uint32_t allocateTexture(vk::raii::ImageView&& imageView) {
-        
-        return allocateTextureImpl(std::move(imageView));
-    }
+    uint32_t allocateTexture(vk::raii::ImageView&& imageView) { return allocateTextureImpl(std::move(imageView)); }
 
-    uint32_t allocateSampler(vk::raii::Sampler&& sampler) {
-        
-        return allocateSamplerImpl(std::move(sampler));
-    }
+    uint32_t allocateSampler(vk::raii::Sampler&& sampler) { return allocateSamplerImpl(std::move(sampler)); }
 
     uint32_t loadTexture(const void* data, uint32_t width, uint32_t height, vk::Format format = vk::Format::eR8G8B8A8Srgb) {
         if (!data) {
@@ -107,8 +101,6 @@ class BindlessResourceManager {
         if (width == 0 || height == 0) {
             throw std::invalid_argument("Texture dimensions must be greater than 0");
         }
-
-        
 
         if (textureResources.size() >= MAX_BINDLESS_TEXTURES && freeTextureSlots.empty()) {
             throw std::runtime_error("Maximum bindless textures exceeded");
@@ -147,14 +139,12 @@ class BindlessResourceManager {
             throw std::invalid_argument("Invalid vertex buffer parameters");
         }
 
-        
         uint32_t index = allocateVertexBufferImpl(data, dataSize, vertexStride, vertexCount);
 
-        return {.allocationIndex = index, .offset = vertexAllocations[index].offset, .vertexCount = vertexCount};
+        return {.allocationIndex = 0, .offset = vertexAllocations[index].offset, .vertexCount = vertexCount};
     }
 
     void updateVertexBuffer(uint32_t allocationIndex, const void* data, vk::DeviceSize dataSize, vk::DeviceSize offset = 0) {
-        
 
         if (allocationIndex >= MAX_VERTEX_ALLOCATIONS || !vertexAllocations[allocationIndex].inUse) {
             throw std::invalid_argument("Invalid vertex allocation index");
@@ -176,7 +166,6 @@ class BindlessResourceManager {
     }
 
     uint32_t allocateModelMatrixBuffer(const glm::mat4& matrix) {
-        
 
         uint32_t index;
         if (!freeModelMatrixSlots.empty()) {
@@ -211,7 +200,6 @@ class BindlessResourceManager {
     }
 
     void updateModelMatrix(uint32_t index, const glm::mat4& matrix) {
-        
 
         if (index >= MAX_BINDLESS_MODEL_MATRICES || !modelMatrixSlots[index].inUse) {
             throw std::invalid_argument("Invalid model matrix index");
@@ -226,7 +214,6 @@ class BindlessResourceManager {
     }
 
     void freeTexture(uint32_t index) {
-        
 
         if (index >= textureResources.size() || textureResources[index].isEmpty()) {
             return; // Already freed or invalid index
@@ -243,7 +230,6 @@ class BindlessResourceManager {
     }
 
     void freeSampler(uint32_t index) {
-        
 
         if (index >= samplerResources.size() || samplerResources[index].isEmpty()) {
             return; // Already freed or invalid index
@@ -260,7 +246,6 @@ class BindlessResourceManager {
     }
 
     void freeVertexBuffer(uint32_t allocationIndex) {
-        
 
         if (allocationIndex >= MAX_VERTEX_ALLOCATIONS || !vertexAllocations[allocationIndex].inUse) {
             return;
@@ -277,7 +262,6 @@ class BindlessResourceManager {
     }
 
     void freeModelMatrix(uint32_t index) {
-        
 
         if (index >= MAX_BINDLESS_MODEL_MATRICES || !modelMatrixSlots[index].inUse) {
             return;
@@ -307,9 +291,8 @@ class BindlessResourceManager {
     };
 
     ResourceStats getResourceStats() const {
-        
 
-        uint32_t texturesUsed = textureResources.size() - freeTextureSlots.size();
+        uint32_t texturesUsed = textureResources.size() - freeTextureSlots.size() - 3;
         uint32_t samplersUsed = samplerResources.size() - freeSamplerSlots.size();
         uint32_t vertexBuffersUsed = MAX_VERTEX_ALLOCATIONS - freeVertexSlots.size();
         uint32_t modelMatricesUsed = MAX_BINDLESS_MODEL_MATRICES - freeModelMatrixSlots.size();
@@ -421,8 +404,8 @@ class BindlessResourceManager {
     std::optional<vk::raii::DescriptorSetLayout> descriptorSetLayout;
     std::optional<vk::raii::DescriptorPool> descriptorPool;
 
-    vk::raii::CommandPool* commandPool;
-    Devices* devices;
+    const vk::raii::CommandPool* commandPool;
+    const Devices* devices;
 
     uint32_t defaultSamplerIndex;
     uint32_t whiteTextureIndex;
@@ -462,7 +445,7 @@ class BindlessResourceManager {
 
         std::array<vk::DescriptorBindingFlags, 4> bindingFlags = {{vk::DescriptorBindingFlagBits::ePartiallyBound,
                                                                    vk::DescriptorBindingFlagBits::ePartiallyBound,
-                                                                   vk::DescriptorBindingFlagBits::ePartiallyBound, 
+                                                                   vk::DescriptorBindingFlagBits::ePartiallyBound,
                                                                    vk::DescriptorBindingFlagBits::ePartiallyBound}};
 
         vk::DescriptorSetLayoutBindingFlagsCreateInfo flagsInfo{.bindingCount = static_cast<uint32_t>(bindingFlags.size()), .pBindingFlags = bindingFlags.data()};
@@ -488,7 +471,6 @@ class BindlessResourceManager {
     }
 
     void initializeModelMatrixBuffer() {
-        
 
         // Create single large buffer for all matrices
         vk::DeviceSize bufferSize = sizeof(glm::mat4) * MAX_BINDLESS_MODEL_MATRICES;
@@ -521,7 +503,6 @@ class BindlessResourceManager {
     }
 
     void initializeVertexBuffer() {
-        
 
         // Create single large buffer
         vk::BufferCreateInfo bufferInfo{
@@ -544,10 +525,6 @@ class BindlessResourceManager {
 
         // Update descriptor to point to the single buffer
         updateVertexBufferDescriptor();
-
-        // Create default empty allocation
-        std::vector<uint8_t> emptyData(64, 0);
-        defaultVertexAllocationIndex = allocateVertexBufferImpl(emptyData.data(), emptyData.size(), 16, 4); // 4 vertices, 16 bytes each
     }
 
     vk::raii::DescriptorSet allocateDescriptorSet() {
@@ -638,7 +615,6 @@ class BindlessResourceManager {
         // Copy data to buffer
         uint8_t* bufferData = static_cast<uint8_t*>(vertexBuffer.mappedData);
         memcpy(bufferData + offset, data, dataSize);
-
         return index;
     }
 
@@ -894,236 +870,3 @@ class BindlessResourceManager {
         devices->getGraphicsQueue().waitIdle();
     }
 };
-/*
-
-
-struct Material {
-    uint32_t albedoTextureIndex;
-    uint32_t normalTextureIndex;
-    uint32_t roughnessTextureIndex;
-    uint32_t samplerIndex;
-};
-
-class MaterialManager {
-  private:
-    vk::raii::Buffer materialBuffer;
-    vk::raii::DeviceMemory materialBufferMemory;
-    std::vector<Material> materials;
-    Devices* devices;
-    BindlessResourceManager* bindlessManager;
-    size_t bufferSize;
-    bool needsUpdate;
-    mutable std::mutex materialMutex;
-
-  public:
-    MaterialManager(Devices& devices, BindlessResourceManager& bindlessManager, size_t maxMaterials = 1024)
-        : devices(&devices), bindlessManager(&bindlessManager), bufferSize(maxMaterials * sizeof(Material)), needsUpdate(false) {
-
-        materials.reserve(maxMaterials);
-        createMaterialBuffer();
-    }
-
-    uint32_t createMaterial(uint32_t albedo = 0, uint32_t normal = 0, uint32_t roughness = 0, uint32_t sampler = 0) {
-        std::lock_guard<std::mutex> lock(materialMutex);
-
-        // Use defaults if not specified
-        if (albedo == 0)
-            albedo = bindlessManager->getWhiteTextureIndex();
-        if (normal == 0)
-            normal = bindlessManager->getDefaultNormalIndex();
-        if (roughness == 0)
-            roughness = bindlessManager->getWhiteTextureIndex();
-        if (sampler == 0)
-            sampler = bindlessManager->getDefaultSamplerIndex();
-
-        uint32_t materialIndex = materials.size();
-        materials.push_back({albedo, normal, roughness, sampler});
-
-        needsUpdate = true;
-        return materialIndex;
-    }
-
-    void updateMaterial(uint32_t index, uint32_t albedo, uint32_t normal, uint32_t roughness, uint32_t sampler) {
-        std::lock_guard<std::mutex> lock(materialMutex);
-
-        if (index >= materials.size()) {
-            throw std::out_of_range("Material index out of range");
-        }
-
-        materials[index] = {albedo, normal, roughness, sampler};
-        needsUpdate = true;
-    }
-
-    const Material& getMaterial(uint32_t index) const {
-        std::lock_guard<std::mutex> lock(materialMutex);
-
-        if (index >= materials.size()) {
-            throw std::out_of_range("Material index out of range");
-        }
-
-        return materials[index];
-    }
-
-    size_t getMaterialCount() const {
-        std::lock_guard<std::mutex> lock(materialMutex);
-        return materials.size();
-    }
-
-    const vk::raii::Buffer& getMaterialBuffer() const { return materialBuffer; }
-
-    void updateMaterialBuffer() {
-        std::lock_guard<std::mutex> lock(materialMutex);
-
-        if (!needsUpdate || materials.empty()) {
-            return;
-        }
-
-        size_t dataSize = materials.size() * sizeof(Material);
-        if (dataSize > bufferSize) {
-            throw std::runtime_error("Material data exceeds buffer size");
-        }
-
-        // Map memory and copy data
-        void* mappedData = materialBufferMemory.mapMemory(0, dataSize);
-        memcpy(mappedData, materials.data(), dataSize);
-        materialBufferMemory.unmapMemory();
-
-        needsUpdate = false;
-    }
-
-    // Force update the buffer (useful for rendering loop)
-    void flushMaterialBuffer() { updateMaterialBuffer(); }
-
-  private:
-    void createMaterialBuffer() {
-        // Create buffer
-        vk::BufferCreateInfo bufferInfo{};
-        bufferInfo.size = bufferSize;
-        bufferInfo.usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eUniformBuffer;
-        bufferInfo.sharingMode = vk::SharingMode::eExclusive;
-
-        materialBuffer = vk::raii::Buffer(devices->getLogicalDevice(), bufferInfo);
-
-        // Allocate memory
-        vk::MemoryRequirements memRequirements = materialBuffer.getMemoryRequirements();
-
-        vk::MemoryAllocateInfo allocInfo{};
-        allocInfo.allocationSize = memRequirements.size;
-        allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, *devices);
-
-        materialBufferMemory = vk::raii::DeviceMemory(devices->getLogicalDevice(), allocInfo);
-        materialBuffer.bindMemory(*materialBufferMemory, 0);
-    }
-};
-
-// Example usage class showing how to integrate everything
-class RenderSystem {
-  private:
-    std::unique_ptr<BindlessResourceManager> bindlessManager;
-    std::unique_ptr<MaterialManager> materialManager;
-    Devices* devices;
-
-  public:
-    RenderSystem(Devices& devices, vk::raii::CommandPool& commandPool) : devices(&devices) {
-
-        bindlessManager = std::make_unique<BindlessResourceManager>(devices, commandPool);
-        bindlessManager->initializeDefaults();
-
-        materialManager = std::make_unique<MaterialManager>(devices, *bindlessManager);
-    }
-
-    // Load a texture from file data
-    uint32_t loadTexture(const void* data, uint32_t width, uint32_t height, vk::Format format = vk::Format::eR8G8B8A8Srgb) {
-        return bindlessManager->loadTexture(data, width, height, format);
-    }
-
-    // Create a custom sampler
-    uint32_t createSampler(const vk::SamplerCreateInfo& samplerInfo) {
-        vk::raii::Sampler sampler(devices->getLogicalDevice(), samplerInfo);
-        return bindlessManager->allocateSampler(std::move(sampler));
-    }
-
-    // Create a material with specific textures
-    uint32_t createMaterial(uint32_t albedoTexture, uint32_t normalTexture = 0, uint32_t roughnessTexture = 0, uint32_t sampler = 0) {
-        return materialManager->createMaterial(albedoTexture, normalTexture, roughnessTexture, sampler);
-    }
-
-    // Get the descriptor set for binding
-    const vk::raii::DescriptorSet& getBindlessDescriptorSet() const { return bindlessManager->getDescriptorSet(); }
-
-    // Get the descriptor set layout for pipeline creation
-    const vk::raii::DescriptorSetLayout& getBindlessDescriptorSetLayout() const { return bindlessManager->getDescriptorSetLayout(); }
-
-    // Get material buffer for binding
-    const vk::raii::Buffer& getMaterialBuffer() const { return materialManager->getMaterialBuffer(); }
-
-    // Update material buffer before rendering
-    void updateBuffers() { materialManager->flushMaterialBuffer(); }
-
-    // Get resource usage statistics
-    BindlessResourceManager::ResourceStats getResourceStats() const { return bindlessManager->getResourceStats(); }
-
-    // Cleanup specific resources
-    void freeTexture(uint32_t index) { bindlessManager->freeTexture(index); }
-
-    void freeSampler(uint32_t index) { bindlessManager->freeSampler(index); }
-
-    // Get default resource indices
-    uint32_t getDefaultWhiteTexture() const { return bindlessManager->getWhiteTextureIndex(); }
-    uint32_t getDefaultBlackTexture() const { return bindlessManager->getBlackTextureIndex(); }
-    uint32_t getDefaultNormalTexture() const { return bindlessManager->getDefaultNormalIndex(); }
-    uint32_t getDefaultSampler() const { return bindlessManager->getDefaultSamplerIndex(); }
-
-
-};
-
-// Initialize the system
-RenderSystem renderSystem(devices, commandPool);
-
-// Load textures
-uint32_t albedoTex = renderSystem.loadTexture(albedoData, width, height);
-uint32_t normalTex = renderSystem.loadTexture(normalData, width, height);
-
-// Create material
-uint32_t materialId = renderSystem.createMaterial(albedoTex, normalTex);
-
-// Before rendering
-renderSystem.updateBuffers();
-
-// Bind descriptor set
-commandBuffer.bindDescriptorSets(
-    vk::PipelineBindPoint::eGraphics,
-    pipelineLayout,
-    0, 1,
-    &*renderSystem.getBindlessDescriptorSet(),
-    0, nullptr
-);
-
-
-layout(push_constant) uniform PushConstants {
-    uint vertexOffset;      // Offset in bytes into the vertex buffer
-    uint vertexStride;      // Size of each vertex
-    uint modelMatrixIndex;
-} pc;
-
-layout(set = 0, binding = 2) readonly restrict buffer VertexBuffer {
-    uint8_t data[];  // Raw vertex data
-} vertexBuffer;
-
-struct Vertex {
-    vec3 position;
-    vec3 normal;
-    vec2 texCoord;
-};
-
-void main() {
-    // Calculate vertex data location
-    uint vertexIndex = gl_VertexIndex;
-    uint byteOffset = pc.vertexOffset + (vertexIndex * pc.vertexStride);
-
-    // Read vertex data (you'd have helper functions for this)
-    Vertex vertex = unpackVertex(vertexBuffer.data, byteOffset);
-
-    // Use the vertex data
-    gl_Position = mvp * vec4(vertex.position, 1.0);
-}*/

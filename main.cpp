@@ -1,4 +1,5 @@
 #include <core.hpp>
+#include <debug.hpp>
 
 constexpr uint32_t WIDTH = 800;
 constexpr uint32_t HEIGHT = 600;
@@ -13,6 +14,11 @@ class App {
         renderer.setWindow(window);
         renderer.initVulkan();
         renderer.initializeResourceDefaults();
+        renderer.addMeshFromFile("models/viking_room.obj","textures/viking_room.png",glm::vec3(-0.8,0.0,0.0), glm::angleAxis(glm::radians(-90.0f),glm::vec3(1.0,0.0,0.0)) *glm::angleAxis(glm::radians(-90.0f),glm::vec3(0.0,0.0,1.0)) ,glm::vec3(0.35));
+        addLine(glm::vec3(0),glm::vec3(20,0,0),glm::vec4(1.0,0.0,0.0,1.0),renderer.getResourceManager());
+        addLine(glm::vec3(0),glm::vec3(0,20,0),glm::vec4(0.0,1.0,0.0,1.0),renderer.getResourceManager());
+        addLine(glm::vec3(0),glm::vec3(0,0,20),glm::vec4(0.0,0.0,1.0,1.0),renderer.getResourceManager());
+
         mainLoop();
         cleanup();
     }

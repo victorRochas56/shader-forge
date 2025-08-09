@@ -20,31 +20,83 @@
 class SwapChain {
 
   public:
-    SwapChain(GLFWwindow* window, Devices* devices, vk::raii::SurfaceKHR* surface) {
-        createSwapChain(*window, *devices, *surface);
-        createImageViews(*devices);
+    SwapChain(GLFWwindow* window, const Devices* devices, vk::raii::SurfaceKHR* surface ,vk::raii::Instance* instance) : devices(devices), surface(surface) {
+        createSwapChain(*window);
+        createImageViews();
     }
 
+    const vk::raii::SwapchainKHR& getSwapChain() { return swapChain; }
+    const std::vector<vk::Image>& getSwapChainImages() { return swapChainImages; }
+    const std::vector<vk::raii::ImageView>& getSwapChainImageViews() { return swapChainImageViews; }
     const vk::Format& getSwapChainImageFormat() { return swapChainImageFormat; }
     const vk::Extent2D& getSwapChainExtent() { return swapChainExtent; }
     const size_t getSwapImageSize() { return swapChainImages.size(); }
-    
+    vk::raii::Image& getDepthImage() { return depthImage; }
+    vk::raii::Image& getColorImage() { return colorImage; }
+    vk::raii::ImageView& getDepthImageView() { return depthImageView; }
+    vk::raii::ImageView& getColorImageView() { return colorImageView; }
+
+    void recreateSwapChain(GLFWwindow* window, const Devices* devices, vk::SampleCountFlagBits msaaSamples) {
+        int width = 0, height = 0;
+        glfwGetFramebufferSize(window, &width, &height);
+        while (width == 0 || height == 0) {
+            glfwGetFramebufferSize(window, &width, &height);
+            glfwWaitEvents();
+        }
+
+        devices->getLogicalDevice().waitIdle();
+
+        cleanupSwapChain();
+
+        createSwapChain(*window);
+        createImageViews();
+        createColorResources(msaaSamples);
+        createDepthResources(msaaSamples);
+    }
+
     void cleanupSwapChain() {
-        
+
         swapChainImageViews.clear();
         swapChain = nullptr;
     }
 
+    void createColorResources(vk::SampleCountFlagBits msaaSamples) {
+        vk::Format colorFormat = swapChainImageFormat;
+
+        createImage(swapChainExtent.width, swapChainExtent.height, 1, msaaSamples, colorFormat, vk::ImageTiling::eOptimal,
+                    vk::ImageUsageFlagBits::eTransientAttachment | vk::ImageUsageFlagBits::eColorAttachment, vk::MemoryPropertyFlagBits::eDeviceLocal, colorImage,
+                    colorImageMemory);
+        colorImageView = createImageView(colorImage, colorFormat, vk::ImageAspectFlagBits::eColor, 1);
+    }
+
+    void createDepthResources(vk::SampleCountFlagBits msaaSamples) {
+        vk::Format depthFormat = findDepthFormat(&*devices);
+        createImage(swapChainExtent.width, swapChainExtent.height, 1, msaaSamples, depthFormat, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eDepthStencilAttachment,
+                    vk::MemoryPropertyFlagBits::eDeviceLocal, depthImage, depthImageMemory);
+        depthImageView = createImageView(depthImage, depthFormat, vk::ImageAspectFlagBits::eDepth, 1);
+    }
+
   private:
+    const Devices* devices;
+    vk::raii::SurfaceKHR* surface;
+
     vk::raii::SwapchainKHR swapChain = nullptr;
     std::vector<vk::Image> swapChainImages;
     vk::Format swapChainImageFormat = vk::Format::eUndefined;
     vk::Extent2D swapChainExtent;
     std::vector<vk::raii::ImageView> swapChainImageViews;
 
-    void createSwapChain(GLFWwindow& window, Devices& devices, vk::raii::SurfaceKHR& surface) {
-        auto surfaceCapabilities = devices.getPhysicalDevice().getSurfaceCapabilitiesKHR(*surface);
-        swapChainImageFormat = chooseSwapSurfaceFormat(devices.getPhysicalDevice().getSurfaceFormatsKHR(*surface)).format;
+    vk::raii::Image depthImage = nullptr;
+    vk::raii::DeviceMemory depthImageMemory = nullptr;
+    vk::raii::ImageView depthImageView = nullptr;
+
+    vk::raii::Image colorImage = nullptr;
+    vk::raii::DeviceMemory colorImageMemory = nullptr;
+    vk::raii::ImageView colorImageView = nullptr;
+
+    void createSwapChain(GLFWwindow& window) {
+        auto surfaceCapabilities = devices->getPhysicalDevice().getSurfaceCapabilitiesKHR(*surface);
+        swapChainImageFormat = chooseSwapSurfaceFormat(devices->getPhysicalDevice().getSurfaceFormatsKHR(*surface)).format;
         swapChainExtent = chooseSwapExtent(surfaceCapabilities, &window);
         auto minImageCount = std::max(3u, surfaceCapabilities.minImageCount);
         minImageCount = (surfaceCapabilities.maxImageCount > 0 && minImageCount > surfaceCapabilities.maxImageCount) ? surfaceCapabilities.maxImageCount : minImageCount;
@@ -58,10 +110,10 @@ class SwapChain {
                                                        .imageSharingMode = vk::SharingMode::eExclusive,
                                                        .preTransform = surfaceCapabilities.currentTransform,
                                                        .compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque,
-                                                       .presentMode = chooseSwapPresentMode(devices.getPhysicalDevice().getSurfacePresentModesKHR(*surface)),
+                                                       .presentMode = chooseSwapPresentMode(devices->getPhysicalDevice().getSurfacePresentModesKHR(*surface)),
                                                        .clipped = true};
 
-        swapChain = vk::raii::SwapchainKHR(devices.getLogicalDevice(), swapChainCreateInfo);
+        swapChain = vk::raii::SwapchainKHR(devices->getLogicalDevice(), swapChainCreateInfo);
         swapChainImages = swapChain.getImages();
     }
 
@@ -94,12 +146,42 @@ class SwapChain {
                 std::clamp<uint32_t>(height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height)};
     }
 
-    void createImageViews(Devices& devices) {
+    void createImage(uint32_t width, uint32_t height, uint32_t mipLevels, vk::SampleCountFlagBits numSamples, vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage,
+                     vk::MemoryPropertyFlags properties, vk::raii::Image& image, vk::raii::DeviceMemory& imageMemory) {
+
+        vk::ImageCreateInfo imageInfo{.imageType = vk::ImageType::e2D,
+                                      .format = format,
+                                      .extent = {width, height, 1},
+                                      .mipLevels = mipLevels,
+                                      .arrayLayers = 1,
+                                      .samples = numSamples,
+                                      .tiling = tiling,
+                                      .usage = usage,
+                                      .sharingMode = vk::SharingMode::eExclusive,
+                                      .initialLayout = vk::ImageLayout::eUndefined};
+
+        image = vk::raii::Image(devices->getLogicalDevice(), imageInfo);
+        vk::MemoryRequirements memRequirements = image.getMemoryRequirements();
+        vk::MemoryAllocateInfo allocInfo{.allocationSize = memRequirements.size, .memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties, &*devices)};
+
+        imageMemory = vk::raii::DeviceMemory(devices->getLogicalDevice(), allocInfo);
+        image.bindMemory(imageMemory, 0);
+    }
+
+    [[nodiscard]] vk::raii::ImageView createImageView(vk::raii::Image& image, vk::Format format, vk::ImageAspectFlags aspectFlags, uint32_t mipLevels) const {
+        vk::ImageViewCreateInfo viewInfo{.image = image,
+                                         .viewType = vk::ImageViewType::e2D,
+                                         .format = format,
+                                         .subresourceRange = {.aspectMask = aspectFlags, .baseMipLevel = 0, .levelCount = mipLevels, .baseArrayLayer = 0, .layerCount = 1}};
+        return vk::raii::ImageView(devices->getLogicalDevice(), viewInfo);
+    }
+
+    void createImageViews() {
         vk::ImageViewCreateInfo imageViewCreateInfo{
             .viewType = vk::ImageViewType::e2D, .format = swapChainImageFormat, .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
         for (auto image : swapChainImages) {
             imageViewCreateInfo.image = image;
-            swapChainImageViews.emplace_back(devices.getLogicalDevice(), imageViewCreateInfo);
+            swapChainImageViews.emplace_back(devices->getLogicalDevice(), imageViewCreateInfo);
         }
     }
 };
