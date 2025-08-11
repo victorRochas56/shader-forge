@@ -31,11 +31,11 @@
 #endif
 
 // my modules
-#include <bindless_resources.hpp>
 #include <debug.hpp>
 #include <devices.hpp>
 #include <load_resources.hpp>
 #include <pipeline.hpp>
+#include <resource_manager.hpp>
 #include <structs.hpp>
 #include <swapchain.hpp>
 #include <utils.hpp>
@@ -48,22 +48,17 @@ const std::vector validationLayers = {"VK_LAYER_KHRONOS_validation"};
 class Renderer {
 
   public:
+    Camera activeCamera;
+
     Renderer() = default;
 
-    void initVulkan() {
-        defaultCam.position = glm::vec3(1.0f, 1.0f, 1.0f);
-        defaultCam.target = glm::vec3(0.0f);
-        defaultCam.fov = glm::radians(45.0f);
-        defaultCam.aspectRatio = 800.0f / 600.0f;
-        defaultCam.nearPlane = 0.05f;
-        defaultCam.farPlane = 1000.0f;
-        defaultCam.calculateViewProjectionMatrix();
+    void initVulkan(uint32_t start_width, uint32_t start_height) {
         createInstance();
         setupDebugMessenger();
         createSurface();
         devices = std::make_unique<Devices>(instance, requiredDeviceExtension, surface);
         msaaSamples = getMaxUsableSampleCount();
-        swapChain = std::make_unique<SwapChain>(window, &*devices, &surface ,&instance);
+        swapChain = std::make_unique<SwapChain>(window, &*devices, &surface, &instance);
         createCommandPool();
         resources = std::make_unique<BindlessResourceManager>(&*devices, &commandPool);
         meshLoader = std::make_unique<MeshLoader>(*resources);
@@ -74,6 +69,14 @@ class Renderer {
         swapChain->createDepthResources(msaaSamples);
         createCommandBuffers();
         createSyncObjects();
+
+        activeCamera.position = glm::vec3(1.0f, 1.0f, 1.0f);
+        activeCamera.lookAt(glm::vec3(0));
+        activeCamera.fov = glm::radians(45.0f);
+        activeCamera.aspectRatio = start_width / start_height;
+        activeCamera.nearPlane = 0.05f;
+        activeCamera.farPlane = 1000.0f;
+        activeCamera.calculateViewProjectionMatrix();
     }
 
     void drawFrame() {
@@ -83,11 +86,11 @@ class Renderer {
         auto [result, imageIndex] = swapChain->getSwapChain().acquireNextImage(UINT64_MAX, *presentCompleteSemaphores[semaphoreIndex], nullptr);
 
         if (result == vk::Result::eErrorOutOfDateKHR) {
-            swapChain->recreateSwapChain(window,&*devices,msaaSamples);
+            swapChain->recreateSwapChain(window, &*devices, msaaSamples);
             int width = 0, height = 0;
             glfwGetFramebufferSize(window, &width, &height);
-            defaultCam.aspectRatio = static_cast<float>(width)/static_cast<float>(height);
-            defaultCam.calculateViewProjectionMatrix();
+            activeCamera.aspectRatio = static_cast<float>(width) / static_cast<float>(height);
+            activeCamera.calculateViewProjectionMatrix();
             return;
         }
         if (result != vk::Result::eSuccess && result != vk::Result::eSuboptimalKHR) {
@@ -123,8 +126,6 @@ class Renderer {
                                                 .pSwapchains = &*swapChain->getSwapChain(),
                                                 .pImageIndices = &imageIndex};
 
-        
-
         try {
             result = devices->getPresentQueue().presentKHR(presentInfoKHR);
         } catch (const vk::OutOfDateKHRError&) {
@@ -133,12 +134,12 @@ class Renderer {
 
         if (result == vk::Result::eErrorOutOfDateKHR || result == vk::Result::eSuboptimalKHR || framebufferResized) {
             framebufferResized = false;
-            swapChain->recreateSwapChain(window,&*devices,msaaSamples);
+            swapChain->recreateSwapChain(window, &*devices, msaaSamples);
 
             int width = 0, height = 0;
             glfwGetFramebufferSize(window, &width, &height);
-            defaultCam.aspectRatio = static_cast<float>(width)/static_cast<float>(height);
-            defaultCam.calculateViewProjectionMatrix();
+            activeCamera.aspectRatio = static_cast<float>(width) / static_cast<float>(height);
+            activeCamera.calculateViewProjectionMatrix();
 
         } else if (result != vk::Result::eSuccess) {
             throw std::runtime_error("failed to present swap chain image!");
@@ -148,20 +149,33 @@ class Renderer {
         currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
     }
 
-    void addMeshFromFile(std::string meshPath, std::string texPath = "", glm::vec3 location = glm::vec3(0.0f), glm::quat rotation = glm::quat(1.0, 0.0, 0.0, 0.0),
+    void addMeshFromFile(std::string meshPath, std::string albedoTexPath = "",std::string roughnessTexPath = "",std::string metallicTexPath = "",std::string normalTexPath = "", glm::vec3 location = glm::vec3(0.0f), glm::quat rotation = glm::quat(1.0, 0.0, 0.0, 0.0),
                          glm::vec3 scale = glm::vec3(0.5f)) {
-        meshes.push_back(meshLoader->loadFromFile(meshPath, texPath, location, rotation, scale));
+        meshes.push_back(meshLoader->loadFromFile(meshPath, albedoTexPath, roughnessTexPath, metallicTexPath, normalTexPath, location, rotation, scale));
     }
-    
+
+    void addPointLight(glm::vec3 position, glm::vec3 color, float range, float intensity) {
+        PointLight light = {.position = glm::vec4(position,1), .color = glm::vec4(color,1), .range = range, .intensity = intensity};
+
+        resources->allocateLightBuffer(light);
+    }
+
+    const vk::Instance& getInstance() const {return *instance; }
     const Devices* getDevices() { return &*devices; }
-    BindlessResourceManager* getResourceManager() { return &*resources;}
-    void setWindow(GLFWwindow* pWindow) { window = pWindow; }
+    SwapChain* getSwapChain() {return &*swapChain; }
+    
+    BindlessResourceManager* getResourceManager() const { return &*resources; }
     void initializeResourceDefaults() { resources->initializeDefaults(); }
+
+    GLFWwindow* getWindow() const {return window; }
+    void setWindow(GLFWwindow* pWindow) { window = pWindow; }
+    const vk::raii::CommandBuffer& getCurrentCommandBuffer() { return commandBuffers[currentFrame]; }
+    const vk::SampleCountFlagBits& getMsaaSamples() const { return msaaSamples; }
+    const uint32_t getGraphicsIndex() const {return graphicsIndex; }
+    
     void cleanupSwapChain() { swapChain->cleanupSwapChain(); }
 
   private:
-    Camera defaultCam;
-
     GLFWwindow* window = nullptr;
     vk::raii::Context context;
     vk::raii::Instance instance = nullptr;
@@ -302,6 +316,7 @@ class Renderer {
         }
         surface = vk::raii::SurfaceKHR(instance, _surface);
     }
+
     void createCommandPool() {
         vk::CommandPoolCreateInfo poolInfo{.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer, .queueFamilyIndex = graphicsIndex};
         commandPool = vk::raii::CommandPool(devices->getLogicalDevice(), poolInfo);
@@ -323,12 +338,14 @@ class Renderer {
         );
 
         // Transition the multisampled color image to COLOR_ATTACHMENT_OPTIMAL
-        transition_image_layout_custom(swapChain->getColorImage(), vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal, {}, vk::AccessFlagBits2::eColorAttachmentWrite,
-                                       vk::PipelineStageFlagBits2::eTopOfPipe, vk::PipelineStageFlagBits2::eColorAttachmentOutput, vk::ImageAspectFlagBits::eColor);
+        transition_image_layout_custom(swapChain->getColorImage(), vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal, {},
+                                       vk::AccessFlagBits2::eColorAttachmentWrite, vk::PipelineStageFlagBits2::eTopOfPipe, vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                                       vk::ImageAspectFlagBits::eColor);
 
         // Transition the depth image to DEPTH_ATTACHMENT_OPTIMAL
-        transition_image_layout_custom(swapChain->getDepthImage(), vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthAttachmentOptimal, {}, vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
-                                       vk::PipelineStageFlagBits2::eTopOfPipe, vk::PipelineStageFlagBits2::eEarlyFragmentTests, vk::ImageAspectFlagBits::eDepth);
+        transition_image_layout_custom(swapChain->getDepthImage(), vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthAttachmentOptimal, {},
+                                       vk::AccessFlagBits2::eDepthStencilAttachmentWrite, vk::PipelineStageFlagBits2::eTopOfPipe, vk::PipelineStageFlagBits2::eEarlyFragmentTests,
+                                       vk::ImageAspectFlagBits::eDepth);
 
         vk::ClearValue clearColor{.color = vk::ClearColorValue(std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f})};
         vk::ClearValue clearDepth{.depthStencil = vk::ClearDepthStencilValue{1.0f, 0}};
@@ -371,10 +388,15 @@ class Renderer {
                                            .vertexOffset = static_cast<uint32_t>(mesh.vertexOffset), // Convert byte offset to element offset
                                            .vertexStride = mesh.vertexStride,
                                            .modelMatrixIndex = mesh.modelMatrixIndex,
-                                           .textureIndex = mesh.textureIndex,
+                                           .albedoTextureIndex = mesh.albedoTextureIndex,
+                                           .roughnessTextureIndex = mesh.roughnessTextureIndex,
+                                           .metallicTextureIndex = mesh.metallicTextureIndex,
+                                           .normalTextureIndex = mesh.normalTextureIndex,
                                            .samplerIndex = mesh.samplerIndex,
-                                           .viewProjection = defaultCam.viewProjection};
-
+                                           .lightCount = resources->getLightCount(),
+                                           .viewProjection = activeCamera.viewProjection,
+                                           .cameraPos = glm::vec4(activeCamera.position, 1.0)};
+            
             commandBuffers[currentFrame].pushConstants<PushConstants>(pipelineBuilder->getPipelineLayout(size_t(0)),
                                                                       vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pushConstants);
             commandBuffers[currentFrame].draw(mesh.vertexCount, 1, 0, 0);
@@ -385,10 +407,10 @@ class Renderer {
         commandBuffers[currentFrame].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineBuilder->getPipelineLayout(size_t(1)), 0, {resources->getDescriptorSet()},
                                                         nullptr);
         for (const auto& line : lines) {
-            Line lineConstants = {.allocIndex = line.allocIndex, .offset = line.offset ,.stride = line.stride, .viewProjection = defaultCam.viewProjection};
+            Line lineConstants = {.allocIndex = line.allocIndex, .offset = line.offset, .stride = line.stride, .viewProjection = activeCamera.viewProjection};
             commandBuffers[currentFrame].pushConstants<Line>(pipelineBuilder->getPipelineLayout(size_t(1)), vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
                                                              0, lineConstants);
-            commandBuffers[currentFrame].draw(2,1,0,0);
+            commandBuffers[currentFrame].draw(2, 1, 0, 0);
         }
         commandBuffers[currentFrame].endRendering();
 

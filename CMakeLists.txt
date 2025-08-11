@@ -138,6 +138,16 @@ include_directories(
     ${VULKAN_INCLUDE_DIR}
 )
 
+set(IMGUI_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/imgui.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/imgui_demo.cpp     
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/imgui_draw.cpp     
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/imgui_tables.cpp   
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/imgui_widgets.cpp  
+    # Add your backend files too:
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/imgui_impl_vulkan.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/imgui_impl_glfw.cpp  # or your window backend
+)
 # Find packages
 find_package(Vulkan REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
@@ -149,15 +159,7 @@ find_package(Ktx CONFIG REQUIRED) # !upper case K
 
 add_executable(shader-forge
     main.cpp
-    modules/core.hpp
-    modules/devices.hpp
-    modules/bindless_resources.hpp
-    modules/load_resources.hpp
-    modules/swapchain.hpp
-    modules/utils.hpp
-    modules/structs.hpp
-    modules/pipeline.hpp
-    modules/debug.hpp
+    ${IMGUI_SOURCES}
 )
 
 if(MSVC)

@@ -3,7 +3,7 @@
 #define VULKAN_HPP_NO_CONSTRUCTORS 1         // for structs constructors
 #include <algorithm>
 #include <array>
-#include <bindless_resources.hpp>
+#include <resource_manager.hpp>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -142,7 +142,7 @@ class PipelineBuilder {
                                                             .frontFace = vk::FrontFace::eCounterClockwise,
                                                             .depthBiasEnable = vk::False,
                                                             .depthBiasSlopeFactor = 1.0f,
-                                                            .lineWidth = 1.0f};
+                                                            .lineWidth = 5.0f};
 
         vk::PipelineMultisampleStateCreateInfo multisampling{.rasterizationSamples = msaaSamples, .sampleShadingEnable = vk::True, .minSampleShading = 0.2f};
 

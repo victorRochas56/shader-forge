@@ -31,7 +31,7 @@
 #endif
 
 // my modules
-#include <bindless_resources.hpp>
+#include <resource_manager.hpp>
 #include <devices.hpp>
 #include <load_resources.hpp>
 #include <pipeline.hpp>
@@ -44,14 +44,20 @@ std::vector<Line> lines;
 
 void addLine(glm::vec3 startPoint, glm::vec3 endPoint, glm::vec4 color, BindlessResourceManager* resourceManager){
 
-    std::vector<Point> lineData{ {.position = startPoint, .color = color}, {.position = endPoint, .color = color}};
+    std::vector<Point> lineData{ {.position = glm::vec4(startPoint,1.0), .color = color}, {.position = glm::vec4(endPoint,1.0), .color = color}};
     auto vertexInfo = resourceManager->allocateVertexBuffer(lineData.data(),lineData.size() * sizeof(Point),2,sizeof(Point));
     
     Line line{
         .allocIndex = vertexInfo.allocationIndex,
         .offset = static_cast<uint32_t>(vertexInfo.offset),
-        .stride = sizeof(glm::vec3)
+        .stride = sizeof(Point)
     };
 
     lines.push_back(line);
 };
+
+void addAxes(glm::vec3 origin, float size, BindlessResourceManager* resourceManager){
+    addLine(glm::vec3(0), glm::vec3(0, size, 0), glm::vec4(0.0, 1.0, 0.0, 1.0), resourceManager);
+    addLine(glm::vec3(0), glm::vec3(0, 0, size), glm::vec4(0.0, 0.0, 1.0, 1.0), resourceManager);
+    addLine(glm::vec3(0), glm::vec3(size, 0, 0), glm::vec4(1.0, 0.0, 0.0, 1.0), resourceManager);
+}

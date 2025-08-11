@@ -25,7 +25,7 @@ StructuredBuffer<float4x4> bindlessModelMatrices[];
 
 struct Point
 {
-    float3 position;
+    float4 position;
     float4 color;
 };
 
@@ -33,14 +33,15 @@ Point loadPoint(uint bufferIndex, uint vertexIndex, uint stride, uint offset){
     Point point;
 
     uint byteOffset = offset + vertexIndex * stride;
-    point.position = float3(asfloat(bindlessVertexBuffers[bufferIndex].Load(byteOffset)),
+    point.position = float4(asfloat(bindlessVertexBuffers[bufferIndex].Load(byteOffset)),
                         asfloat(bindlessVertexBuffers[bufferIndex].Load(byteOffset + 4)),
-                        asfloat(bindlessVertexBuffers[bufferIndex].Load(byteOffset + 8)));
+                        asfloat(bindlessVertexBuffers[bufferIndex].Load(byteOffset + 8)),
+                        asfloat(bindlessVertexBuffers[bufferIndex].Load(byteOffset + 12)));
 
-    point.color = float4(asfloat(bindlessVertexBuffers[bufferIndex].Load(byteOffset+ 12)),
-                        asfloat(bindlessVertexBuffers[bufferIndex].Load(byteOffset + 16)),
+    point.color = float4(asfloat(bindlessVertexBuffers[bufferIndex].Load(byteOffset+ 16)),
                         asfloat(bindlessVertexBuffers[bufferIndex].Load(byteOffset + 20)),
-                        asfloat(bindlessVertexBuffers[bufferIndex].Load(byteOffset + 24)));
+                        asfloat(bindlessVertexBuffers[bufferIndex].Load(byteOffset + 24)),
+                        asfloat(bindlessVertexBuffers[bufferIndex].Load(byteOffset + 28)));
     return point;
 }
 
@@ -63,8 +64,7 @@ VertexOutput vertMain(uint vertexID : SV_VertexID)
     );
     VertexOutput output;
 
-    float4 position = float4(point.position,1.0);
-    output.position = mul(lineConsts.viewProjection,position);
+    output.position = mul(lineConsts.viewProjection,point.position);
     output.color = point.color;
     return output;
 }

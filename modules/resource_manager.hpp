@@ -35,6 +35,7 @@ constexpr uint32_t MAX_BINDLESS_SAMPLERS = 16;
 static constexpr vk::DeviceSize VERTEX_BUFFER_SIZE = 256 * 1024 * 1024; // max 256mb of vertex data
 static constexpr uint32_t MAX_VERTEX_ALLOCATIONS = 2048;
 constexpr uint32_t MAX_BINDLESS_MODEL_MATRICES = 2048;
+constexpr uint32_t MAX_POINT_LIGHTS = 1024;
 
 class BindlessResourceManager {
 
@@ -48,12 +49,14 @@ class BindlessResourceManager {
         samplerResources.reserve(MAX_BINDLESS_SAMPLERS);
         vertexAllocations.resize(MAX_VERTEX_ALLOCATIONS);
         modelMatrixSlots.resize(MAX_BINDLESS_MODEL_MATRICES);
+        lightSlots.resize(MAX_POINT_LIGHTS);
     }
 
     void initializeDefaults() {
 
         initializeVertexBuffer();
         initializeModelMatrixBuffer();
+        initializeLightBuffer();
 
         // Create default sampler
         vk::SamplerCreateInfo samplerInfo{};
@@ -77,18 +80,17 @@ class BindlessResourceManager {
         whiteTextureIndex = createDefaultTexture({255, 255, 255, 255});
         blackTextureIndex = createDefaultTexture({0, 0, 0, 255});
         defaultNormalIndex = createDefaultTexture({128, 128, 255, 255});
-
-        defaultModelMatrixIndex = allocateModelMatrixBuffer(createModelMatrix(glm::vec3(0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f), glm::vec3(1.0f)));
     }
 
     const vk::raii::DescriptorSetLayout& getDescriptorSetLayout() const { return *descriptorSetLayout; }
     const vk::raii::DescriptorSet& getDescriptorSet() const { return *bindlessDescriptorSet; }
+    vk::raii::DescriptorPool& getDescriptorPool() {return *descriptorPool; }
     uint32_t getWhiteTextureIndex() const { return whiteTextureIndex; }
     uint32_t getBlackTextureIndex() const { return blackTextureIndex; }
     uint32_t getDefaultNormalIndex() const { return defaultNormalIndex; }
     uint32_t getDefaultSamplerIndex() const { return defaultSamplerIndex; }
     uint32_t getDefaultVertexBufferIndex() const { return defaultVertexBufferIndex; }
-    uint32_t getDefaultModelMatrixIndex() const { return defaultModelMatrixIndex; }
+    uint32_t getLightCount() const {return lightBuffer.lightCount; }
 
     uint32_t allocateTexture(vk::raii::ImageView&& imageView) { return allocateTextureImpl(std::move(imageView)); }
 
@@ -173,7 +175,7 @@ class BindlessResourceManager {
             freeModelMatrixSlots.pop();
         } else {
             // Find first unused slot
-            index = 1; // Start from 1, 0 is reserved for default
+            index = 0;
             while (index < MAX_BINDLESS_MODEL_MATRICES && modelMatrixSlots[index].inUse) {
                 index++;
             }
@@ -182,8 +184,8 @@ class BindlessResourceManager {
                 throw std::runtime_error("Maximum bindless model matrices exceeded");
             }
         }
-
         // Update CPU-side tracking
+        modelMatrixBuffer.modelMatrixCount++;
         modelMatrixSlots[index].matrix = matrix;
         modelMatrixSlots[index].inUse = true;
 
@@ -191,6 +193,12 @@ class BindlessResourceManager {
         glm::mat4* gpuMatrices = static_cast<glm::mat4*>(modelMatrixBuffer.mappedData);
         gpuMatrices[index] = matrix;
 
+        printf("allocating matrix: \n");
+        for (int i = 0; i < 4; i++) {
+            printf("%.2f %.2f %.2f %.2f\n", matrix[0][i], matrix[1][i], matrix[2][i], matrix[3][i]);
+        }
+        std::cout<<"at index: " << index <<std::endl;
+        
         return index;
     }
 
@@ -211,6 +219,55 @@ class BindlessResourceManager {
         // Update GPU buffer directly
         glm::mat4* gpuMatrices = static_cast<glm::mat4*>(modelMatrixBuffer.mappedData);
         gpuMatrices[index] = matrix;
+    }
+
+    uint32_t allocateLightBuffer(const PointLight light) {
+        uint32_t index;
+        if (!freeLightSlots.empty()) {
+            index = freeLightSlots.front();
+            freeLightSlots.pop();
+        } else {
+            // Find first unused slot
+            index = 0;
+            while (index < MAX_POINT_LIGHTS && lightSlots[index].inUse) {
+                index++;
+            }
+            
+            if (index >= MAX_POINT_LIGHTS) {
+                throw std::runtime_error("Maximum point lights exceeded");
+            }
+        }
+        
+        // Update CPU-side tracking
+        lightBuffer.lightCount++;
+        lightSlots[index].light = light;
+        lightSlots[index].inUse = true;
+
+        // Update GPU buffer
+        PointLight* bufferData = static_cast<PointLight*>(lightBuffer.mappedData);
+        bufferData[index] = light;
+
+        printf("allocating light: \n");
+        std::cout <<"position: " << light.position.x <<" " <<light.position.y << " "<< light.position.z <<std::endl;
+        std::cout<< "range: "<< light.range<<std::endl;
+        std::cout <<"intensity: " << light.intensity<<std::endl;
+        std::cout <<"color: " << light.color.x << " " << light.color.y <<" "<< light.color.z <<std::endl;
+        std::cout<<"at index: " << index <<std::endl;
+
+        return index;
+    }
+
+    void updateLight(uint32_t index, const PointLight& light) {
+        if (index >= MAX_POINT_LIGHTS || !lightSlots[index].inUse) {
+            throw std::invalid_argument("Invalid light index");
+        }
+
+        // Update CPU copy
+        lightSlots[index].light = light;
+
+        // Update GPU buffer directly
+        PointLight* bufferData = static_cast<PointLight*>(lightBuffer.mappedData);
+        bufferData[index] = light;
     }
 
     void freeTexture(uint32_t index) {
@@ -267,16 +324,27 @@ class BindlessResourceManager {
             return;
         }
 
-        if (index == defaultModelMatrixIndex) {
-            throw std::runtime_error("Cannot free default model matrix");
-        }
-
+        modelMatrixBuffer.modelMatrixCount--;
         modelMatrixSlots[index].reset();
         freeModelMatrixSlots.push(index);
 
         // Reset to identity matrix in GPU buffer
         glm::mat4* gpuMatrices = static_cast<glm::mat4*>(modelMatrixBuffer.mappedData);
         gpuMatrices[index] = glm::mat4(1.0f);
+    }
+
+    void freeLight(uint32_t index) {
+        if (index >= MAX_POINT_LIGHTS || !lightSlots[index].inUse) {
+            return;
+        }
+
+        lightBuffer.lightCount--;
+        lightSlots[index].reset();
+        freeLightSlots.push(index);
+
+        // Reset to identity matrix in GPU buffer
+        PointLight* bufferData = static_cast<PointLight*>(lightBuffer.mappedData);
+        bufferData[index].reset();
     }
 
     struct ResourceStats {
@@ -365,7 +433,7 @@ class BindlessResourceManager {
         std::optional<vk::raii::DeviceMemory> memory;
         void* mappedData = nullptr;
         vk::DeviceSize bufferSize;
-
+        uint32_t modelMatrixCount = 0;
         void reset() {
             if (mappedData) {
                 memory->unmapMemory();
@@ -388,17 +456,51 @@ class BindlessResourceManager {
         }
     };
 
+    struct LightBufferResource {
+        std::optional<vk::raii::Buffer> buffer;
+        std::optional<vk::raii::DeviceMemory> memory;
+        void* mappedData = nullptr;
+        vk::DeviceSize bufferSize;
+        uint32_t lightCount = 0;
+        void reset() {
+            if (mappedData) {
+                memory->unmapMemory();
+                mappedData = nullptr;
+            }
+            buffer.reset();
+            memory.reset();
+        }
+
+        bool isEmpty() const { return !buffer.has_value(); }
+    };
+
+    struct LightSlot {
+        PointLight light;
+        bool inUse;
+
+        void reset() {
+            light.reset();
+            inUse = false;
+        }
+    };
+
     std::vector<TextureResource> textureResources;
     std::vector<SamplerResource> samplerResources;
     std::queue<uint32_t> freeTextureSlots;
     std::queue<uint32_t> freeSamplerSlots;
+
     VertexBufferResource vertexBuffer;
     std::vector<VertexAllocation> vertexAllocations;
     std::queue<uint32_t> freeVertexSlots;
     uint32_t defaultVertexAllocationIndex;
+
     ModelMatrixBufferResource modelMatrixBuffer;
     std::vector<ModelMatrixSlot> modelMatrixSlots;
     std::queue<uint32_t> freeModelMatrixSlots;
+
+    LightBufferResource lightBuffer;
+    std::vector<LightSlot> lightSlots;
+    std::queue<uint32_t> freeLightSlots;
 
     std::optional<vk::raii::DescriptorSet> bindlessDescriptorSet;
     std::optional<vk::raii::DescriptorSetLayout> descriptorSetLayout;
@@ -412,13 +514,22 @@ class BindlessResourceManager {
     uint32_t blackTextureIndex;
     uint32_t defaultNormalIndex;
     uint32_t defaultVertexBufferIndex;
-    uint32_t defaultModelMatrixIndex;
 
     // Thread safety
     mutable std::mutex resourceMutex;
 
+    vk::raii::DescriptorSet allocateDescriptorSet() {
+        std::array<uint32_t, 5> variableCounts = {MAX_BINDLESS_TEXTURES, MAX_BINDLESS_SAMPLERS, 1, 1 , 1};
+
+        vk::DescriptorSetVariableDescriptorCountAllocateInfo variableCountInfo{.descriptorSetCount = 1, .pDescriptorCounts = variableCounts.data()};
+        vk::DescriptorSetAllocateInfo allocInfo{.pNext = &variableCountInfo, .descriptorPool = *descriptorPool, .descriptorSetCount = 1, .pSetLayouts = &(**descriptorSetLayout)};
+
+        vk::raii::DescriptorSets sets(devices->getLogicalDevice(), allocInfo);
+        return std::move(sets[0]);
+    }
+
     vk::raii::DescriptorSetLayout createDescriptorSetLayout() {
-        std::array<vk::DescriptorSetLayoutBinding, 4> bindings = {{// textures
+        std::array<vk::DescriptorSetLayoutBinding,5> bindings = {{// textures
                                                                    {.binding = 0,
                                                                     .descriptorType = vk::DescriptorType::eSampledImage,
                                                                     .descriptorCount = MAX_BINDLESS_TEXTURES,
@@ -441,11 +552,15 @@ class BindlessResourceManager {
                                                                     .descriptorType = vk::DescriptorType::eStorageBuffer,
                                                                     .descriptorCount = 1,
                                                                     .stageFlags = vk::ShaderStageFlagBits::eFragment | vk::ShaderStageFlagBits::eVertex,
+                                                                    .pImmutableSamplers = nullptr},
+                                                                   {.binding = 4,
+                                                                    .descriptorType = vk::DescriptorType::eStorageBuffer,
+                                                                    .descriptorCount = 1,
+                                                                    .stageFlags = vk::ShaderStageFlagBits::eFragment | vk::ShaderStageFlagBits::eVertex,
                                                                     .pImmutableSamplers = nullptr}}};
 
-        std::array<vk::DescriptorBindingFlags, 4> bindingFlags = {{vk::DescriptorBindingFlagBits::ePartiallyBound,
-                                                                   vk::DescriptorBindingFlagBits::ePartiallyBound,
-                                                                   vk::DescriptorBindingFlagBits::ePartiallyBound,
+        std::array<vk::DescriptorBindingFlags, 5> bindingFlags = {{vk::DescriptorBindingFlagBits::ePartiallyBound, vk::DescriptorBindingFlagBits::ePartiallyBound,
+                                                                   vk::DescriptorBindingFlagBits::ePartiallyBound, vk::DescriptorBindingFlagBits::ePartiallyBound,
                                                                    vk::DescriptorBindingFlagBits::ePartiallyBound}};
 
         vk::DescriptorSetLayoutBindingFlagsCreateInfo flagsInfo{.bindingCount = static_cast<uint32_t>(bindingFlags.size()), .pBindingFlags = bindingFlags.data()};
@@ -456,8 +571,9 @@ class BindlessResourceManager {
     }
 
     vk::raii::DescriptorPool createDescriptorPool() {
-        std::array<vk::DescriptorPoolSize, 4> poolSizes = {{{vk::DescriptorType::eSampledImage, MAX_BINDLESS_TEXTURES},
+        std::array<vk::DescriptorPoolSize, 5> poolSizes = {{{vk::DescriptorType::eSampledImage, MAX_BINDLESS_TEXTURES},
                                                             {vk::DescriptorType::eSampler, MAX_BINDLESS_SAMPLERS},
+                                                            {vk::DescriptorType::eStorageBuffer, 1},
                                                             {vk::DescriptorType::eStorageBuffer, 1},
                                                             {vk::DescriptorType::eStorageBuffer, 1}}};
 
@@ -496,10 +612,6 @@ class BindlessResourceManager {
         }
 
         updateModelMatrixDescriptor();
-
-        defaultModelMatrixIndex = 0;
-        modelMatrixSlots[0].matrix = glm::mat4(1.0f);
-        modelMatrixSlots[0].inUse = true;
     }
 
     void initializeVertexBuffer() {
@@ -527,14 +639,31 @@ class BindlessResourceManager {
         updateVertexBufferDescriptor();
     }
 
-    vk::raii::DescriptorSet allocateDescriptorSet() {
-        std::array<uint32_t, 4> variableCounts = {MAX_BINDLESS_TEXTURES, MAX_BINDLESS_SAMPLERS, 1, 1};
+    void initializeLightBuffer() {
+        // Create single large buffer for all point light
+        vk::DeviceSize bufferSize = sizeof(PointLight) * MAX_POINT_LIGHTS;
 
-        vk::DescriptorSetVariableDescriptorCountAllocateInfo variableCountInfo{.descriptorSetCount = 1, .pDescriptorCounts = variableCounts.data()};
-        vk::DescriptorSetAllocateInfo allocInfo{.pNext = &variableCountInfo, .descriptorPool = *descriptorPool, .descriptorSetCount = 1, .pSetLayouts = &(**descriptorSetLayout)};
+        vk::BufferCreateInfo bufferInfo{.size = bufferSize, .usage = vk::BufferUsageFlagBits::eStorageBuffer, .sharingMode = vk::SharingMode::eExclusive};
 
-        vk::raii::DescriptorSets sets(devices->getLogicalDevice(), allocInfo);
-        return std::move(sets[0]);
+        lightBuffer.buffer = vk::raii::Buffer(devices->getLogicalDevice(), bufferInfo);
+
+        vk::MemoryRequirements memRequirements = lightBuffer.buffer->getMemoryRequirements();
+        vk::MemoryAllocateInfo allocInfo{
+            .allocationSize = memRequirements.size,
+            .memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, devices)};
+
+        lightBuffer.memory = vk::raii::DeviceMemory(devices->getLogicalDevice(), allocInfo);
+        lightBuffer.buffer->bindMemory(**lightBuffer.memory, 0);
+        lightBuffer.bufferSize = bufferSize;
+
+        lightBuffer.mappedData = lightBuffer.memory->mapMemory(0, bufferSize);
+
+        PointLight* lights = static_cast<PointLight*>(lightBuffer.mappedData);
+        for (uint32_t i = 0; i < MAX_POINT_LIGHTS; ++i) {
+            lights[i] = PointLight{};
+        }
+
+        updateLightDescriptor();
     }
 
     uint32_t allocateTextureImpl(vk::raii::ImageView&& imageView) {
@@ -663,6 +792,19 @@ class BindlessResourceManager {
 
         vk::WriteDescriptorSet write{.dstSet = *bindlessDescriptorSet,
                                      .dstBinding = 3,
+                                     .dstArrayElement = 0,
+                                     .descriptorCount = 1, // Only one descriptor for the entire buffer
+                                     .descriptorType = vk::DescriptorType::eStorageBuffer,
+                                     .pBufferInfo = &bufferInfo};
+
+        devices->getLogicalDevice().updateDescriptorSets(write, {});
+    }
+
+    void updateLightDescriptor() {
+        vk::DescriptorBufferInfo bufferInfo{.buffer = **lightBuffer.buffer, .offset = 0, .range = lightBuffer.bufferSize};
+
+        vk::WriteDescriptorSet write{.dstSet = *bindlessDescriptorSet,
+                                     .dstBinding = 4,
                                      .dstArrayElement = 0,
                                      .descriptorCount = 1, // Only one descriptor for the entire buffer
                                      .descriptorType = vk::DescriptorType::eStorageBuffer,

@@ -39,11 +39,12 @@ struct Vertex {
     glm::vec3 position;
     glm::vec3 normal;
     glm::vec2 texCoord;
+    glm::vec3 tangent;
 };
 
 struct Point {
-    glm::vec3 position;
-    glm::vec3 color;
+    glm::vec4 position;
+    glm::vec4 color;
 };
 
 struct Mesh {
@@ -51,9 +52,11 @@ struct Mesh {
     vk::DeviceSize vertexOffset;
     uint32_t vertexCount;
     uint32_t vertexStride;
-
     uint32_t modelMatrixIndex;
-    uint32_t textureIndex;
+    uint32_t albedoTextureIndex;
+    uint32_t roughnessTextureIndex;
+    uint32_t metallicTextureIndex;
+    uint32_t normalTextureIndex;
     uint32_t samplerIndex;
 };
 
@@ -62,10 +65,32 @@ struct PushConstants {
     uint32_t vertexOffset;     // Byte offset in vertex buffer
     uint32_t vertexStride;     // Size of each vertex (e.g., sizeof(Vertex))
     uint32_t modelMatrixIndex; // Index into model matrices
-    uint32_t textureIndex;     // Index into textures
+    uint32_t albedoTextureIndex;     // Index into textures
+    uint32_t roughnessTextureIndex;
+    uint32_t metallicTextureIndex;
+    uint32_t normalTextureIndex;
     uint32_t samplerIndex;     // Index into samplers
-    uint32_t padding[2];       // 8 bytes - align to 16 bytes
+    uint32_t lightCount;
+    uint32_t padding1;
+    uint32_t padding2;
     glm::mat4 viewProjection;
+    glm::vec4 cameraPos;
+};
+
+struct PointLight {
+    glm::vec4 position =  glm::vec4(0,0,0,1);
+    glm::vec4 color =  glm::vec4(0,0,0,1);
+    float range = 0;
+    float intensity = 0;
+    uint32_t padding1;
+    uint32_t padding2;
+
+    void reset(){
+        position = glm::vec4(0,0,0,1);
+        range = 0;
+        intensity = 0;
+        color = glm::vec4(0,0,0,1);
+    }
 };
 
 struct Camera {
@@ -76,20 +101,61 @@ struct Camera {
     float nearPlane;
     float farPlane;
     glm::mat4 viewProjection;
+    float yaw = -90.0f;
+    float pitch = 0.0f;
+    
+    void rotateYaw(float deltaYaw = 0.0f) {
+        yaw += deltaYaw;
+        // we keep yaw in 0-360 range
+        if (yaw > 360.0f) yaw -= 360.0f;
+        if (yaw < -360.0f) yaw += 360.0f;
+        updateTarget();
+    }
+    
+    void rotatePitch(float deltaPitch = 0.0f) {
+        pitch += deltaPitch;
+        // Constrain pitch to prevent gimbal lock
+        if (pitch > 89.0f) pitch = 89.0f;
+        if (pitch < -89.0f) pitch = -89.0f;
+        updateTarget();
+    }
+    
+    void moveCamera(glm::vec3 deltaPosition){
+        glm::vec3 forward = glm::normalize(target - position);
+        position += forward * deltaPosition.z;
+        position += glm::cross(forward,glm::vec3(0.0,1.0,0.0)) * deltaPosition.x;
+        updateTarget();
+    }
+
+    // update target based on current yaw and pitch
+    void updateTarget() {
+        glm::vec3 direction;
+        direction.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
+        direction.y = sin(glm::radians(pitch));
+        direction.z = sin(glm::radians(yaw)) * cos(glm::radians(pitch));
+        direction = glm::normalize(direction);
+        target = position + direction;
+        calculateViewProjectionMatrix();
+    }
+
+    void lookAt(const glm::vec3& targetPos) {
+        // Calculate yaw and pitch from the direction vector
+        target = targetPos;
+        glm::vec3 direction = glm::normalize(target - position);
+        yaw = glm::degrees(atan2(direction.z, direction.x));
+        pitch = glm::degrees(asin(direction.y));
+        calculateViewProjectionMatrix();
+    }
 
     void calculateViewProjectionMatrix() {
         // === VIEW MATRIX ===
         glm::vec3 upVector = glm::vec3(0.0f, 1.0f, 0.0f); // World up direction
-
         // Create view matrix using lookAt
         glm::mat4 viewMatrix = glm::lookAt(position, target, upVector);
-        
         // === PROJECTION MATRIX ===
-            
         // Create perspective projection matrix
         glm::mat4 projectionMatrix = glm::perspective(fov, aspectRatio, nearPlane, farPlane);
         projectionMatrix[1][1] *= -1.0f; // Flip Y axis for vulkan 
-
         // === VIEW-PROJECTION MATRIX ===
         viewProjection = projectionMatrix * viewMatrix;
     }

@@ -3,7 +3,6 @@
 #define VULKAN_HPP_NO_CONSTRUCTORS 1         // for structs constructors
 #include <algorithm>
 #include <array>
-#include <bindless_resources.hpp>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -12,6 +11,7 @@
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <resource_manager.hpp>
 #include <stdexcept>
 #include <structs.hpp>
 #include <swapchain.hpp>
@@ -45,19 +45,44 @@ class MeshLoader {
     MeshLoader(BindlessResourceManager& manager) : resourceManager(&manager) {}
 
     // Load mesh from vertex data
-    Mesh loadMesh(const std::vector<Vertex>& vertices, const std::string& texturePath, glm::vec3 position = glm::vec3(0.0f), glm::quat rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
+    Mesh loadMesh(const std::vector<Vertex>& vertices, const std::string& albedoTexturePath, const std::string& roughnessTexturePath, const std::string& metallicTexturePath,
+                  const std::string& normalTexturePath, glm::vec3 position = glm::vec3(0.0f), glm::quat rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
                   glm::vec3 scale = glm::vec3(1.0f)) {
 
         // Allocate vertex buffer space
         auto vertexInfo = resourceManager->allocateVertexBuffer(vertices.data(), vertices.size() * sizeof(Vertex), static_cast<uint32_t>(vertices.size()), sizeof(Vertex));
 
-        // Load texture
-        uint32_t textureIndex;
-        if (!texturePath.empty()) {
-            auto textureData = loadTextureFromFile(texturePath);
-            textureIndex = resourceManager->loadTexture(textureData.data, textureData.width, textureData.height);
+        // Load textures
+        uint32_t albedoTextureIndex;
+        if (!albedoTexturePath.empty()) {
+            auto albedoTextureData = loadTextureFromFile(albedoTexturePath);
+            albedoTextureIndex = resourceManager->loadTexture(albedoTextureData.data, albedoTextureData.width, albedoTextureData.height);
         } else {
-            textureIndex = resourceManager->getWhiteTextureIndex(); // Use default
+            albedoTextureIndex = resourceManager->getWhiteTextureIndex(); // Use default
+        }
+
+        uint32_t rougnessTextureIndex;
+        if (!roughnessTexturePath.empty()) {
+            auto roughnessTextureData = loadTextureFromFile(roughnessTexturePath);
+            rougnessTextureIndex = resourceManager->loadTexture(roughnessTextureData.data, roughnessTextureData.width, roughnessTextureData.height);
+        } else {
+            rougnessTextureIndex = resourceManager->getWhiteTextureIndex(); // Use default
+        }
+
+        uint32_t metallicTextureIndex;
+        if (!metallicTexturePath.empty()) {
+            auto metallicTextureData = loadTextureFromFile(metallicTexturePath);
+            metallicTextureIndex = resourceManager->loadTexture(metallicTextureData.data, metallicTextureData.width, metallicTextureData.height);
+        } else {
+            metallicTextureIndex = resourceManager->getBlackTextureIndex(); // Use default
+        }
+
+        uint32_t normalTextureIndex;
+        if (!normalTexturePath.empty()) {
+            auto normalTextureData = loadTextureFromFile(normalTexturePath);
+            normalTextureIndex = resourceManager->loadTexture(normalTextureData.data, normalTextureData.width, normalTextureData.height, vk::Format::eR8G8B8A8Unorm);
+        } else {
+            normalTextureIndex = resourceManager->getDefaultNormalIndex(); // Use default
         }
 
         // Create model matrix
@@ -72,17 +97,21 @@ class MeshLoader {
                     .vertexCount = vertexInfo.vertexCount,
                     .vertexStride = sizeof(Vertex),
                     .modelMatrixIndex = modelMatrixIndex,
-                    .textureIndex = textureIndex,
+                    .albedoTextureIndex = albedoTextureIndex,
+                    .roughnessTextureIndex = rougnessTextureIndex,
+                    .metallicTextureIndex = metallicTextureIndex,
+                    .normalTextureIndex = normalTextureIndex,
                     .samplerIndex = samplerIndex};
     }
 
     // load from file (OBJ, GLTF, etc.)
-    Mesh loadFromFile(const std::string& meshPath, const std::string& texturePath = "", glm::vec3 position = glm::vec3(0.0f),
-                      glm::quat rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f), glm::vec3 scale = glm::vec3(1.0f)) {
+    Mesh loadFromFile(const std::string& meshPath, const std::string& albedoTexturePath, const std::string& roughnessTexturePath, const std::string& metallicTexturePath,
+                      const std::string& normalTexturePath, glm::vec3 position = glm::vec3(0.0f), glm::quat rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
+                      glm::vec3 scale = glm::vec3(1.0f)) {
 
         auto meshData = loadMeshFromFile(meshPath);
 
-        return loadMesh(meshData.vertices, texturePath, position, rotation, scale);
+        return loadMesh(meshData.vertices, albedoTexturePath, roughnessTexturePath, metallicTexturePath, normalTexturePath, position, rotation, scale);
     }
 
     // Update mesh transform
@@ -124,7 +153,7 @@ class MeshLoader {
 
     TextureData loadTextureFromFile(const std::string& path) {
         int width, height, channels;
-        unsigned char* data = stbi_load(path.c_str(), &width, &height, &channels, STBI_rgb_alpha);
+        unsigned char* data = stbi_load(path.c_str(), &width, &height, &channels, STBI_rgb_alpha); 
         if (!data) {
             throw std::runtime_error("Failed to load texture: " + path);
         }
@@ -140,8 +169,8 @@ class MeshLoader {
         if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, meshPath.c_str())) {
             throw std::runtime_error(warn + err);
         }
-
         MeshData meshData = {};
+        size_t indexOffset = meshData.vertices.size();
 
         for (const auto& shape : shapes) {
             for (const auto& index : shape.mesh.indices) {
@@ -165,9 +194,62 @@ class MeshLoader {
                 } else {
                     vertex.texCoord = {0.0f, 0.0f};
                 }
+
                 meshData.vertices.push_back(vertex);
             }
+            // Second pass: calculate tangents for triangles
+            size_t vertexCount = meshData.vertices.size() - indexOffset;
+            for (size_t i = 0; i < vertexCount; i += 3) {
+                if (i + 2 >= vertexCount)
+                    break; // Ensure we have a complete triangle
+
+                size_t idx0 = indexOffset + i;
+                size_t idx1 = indexOffset + i + 1;
+                size_t idx2 = indexOffset + i + 2;
+
+                Vertex& v0 = meshData.vertices[idx0];
+                Vertex& v1 = meshData.vertices[idx1];
+                Vertex& v2 = meshData.vertices[idx2];
+
+                // Calculate triangle edges
+                glm::vec3 edge1 = v1.position - v0.position;
+                glm::vec3 edge2 = v2.position - v0.position;
+
+                // Calculate UV deltas
+                glm::vec2 deltaUV1 = v1.texCoord - v0.texCoord;
+                glm::vec2 deltaUV2 = v2.texCoord - v0.texCoord;
+
+                // Calculate tangent
+                float f = 1.0f / (deltaUV1.x * deltaUV2.y - deltaUV2.x * deltaUV1.y);
+
+                // Handle degenerate case
+                if (std::isfinite(f)) {
+                    glm::vec3 tangent = f * (deltaUV2.y * edge1 - deltaUV1.y * edge2);
+
+                    // Accumulate tangent for all three vertices of the triangle
+                    v0.tangent += tangent;
+                    v1.tangent += tangent;
+                    v2.tangent += tangent;
+                }
+            }
+
+            // Third pass: normalize accumulated tangents and orthogonalize
+            for (size_t i = indexOffset; i < meshData.vertices.size(); ++i) {
+                Vertex& vertex = meshData.vertices[i];
+
+                // Gram-Schmidt orthogonalize tangent against normal
+                vertex.tangent = vertex.tangent - glm::dot(vertex.tangent, vertex.normal) * vertex.normal;
+
+                // Normalize tangent
+                if (glm::length(vertex.tangent) > 0.0f) {
+                    vertex.tangent = glm::normalize(vertex.tangent);
+                } else {
+                    // Fallback tangent if calculation failed
+                    vertex.tangent = glm::vec3(1.0f, 0.0f, 0.0f);
+                }
+            }
         }
+
         return meshData;
     }
 };
