@@ -1,11 +1,11 @@
 // Push constants
 struct Line
 {
+    float4x4 viewProjection;
     uint allocIndex;
     uint offset;
     uint stride;
     uint padding;
-    float4x4 viewProjection;
 };
 
 [[vk::push_constant]]

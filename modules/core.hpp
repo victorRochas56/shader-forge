@@ -1,6 +1,11 @@
 #pragma once
+#ifndef VULKAN_HPP_DISPATCH_LOADER_DYNAMIC
 #define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1 // for raii
-#define VULKAN_HPP_NO_CONSTRUCTORS 1         // for structs constructors
+#endif
+#ifndef VULKAN_HPP_NO_CONSTRUCTORS
+#define VULKAN_HPP_NO_CONSTRUCTORS 1 // for structs constructors
+#endif
+
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -17,6 +22,10 @@
 #include <vulkan/vulkan_raii.hpp>
 #define GLFW_INCLUDE_VULKAN // REQUIRED only for GLFW CreateWindowSurface.
 #include <GLFW/glfw3.h>
+
+#include "include/imgui.h"
+#include "include/imgui_impl_glfw.h"
+#include "include/imgui_impl_vulkan.h"
 
 #define GLM_FORCE_RADIANS
 #define GLM_DEPTH_ZERO_TO_ONE
@@ -36,6 +45,7 @@
 #include <load_resources.hpp>
 #include <pipeline.hpp>
 #include <resource_manager.hpp>
+#include <scene_elements.hpp>
 #include <structs.hpp>
 #include <swapchain.hpp>
 #include <utils.hpp>
@@ -58,7 +68,7 @@ class Renderer {
         createSurface();
         devices = std::make_unique<Devices>(instance, requiredDeviceExtension, surface);
         msaaSamples = getMaxUsableSampleCount();
-        swapChain = std::make_unique<SwapChain>(window, &*devices, &surface, &instance);
+        swapChain = std::make_unique<SwapChain>(window, &*devices, &surface, &instance, vSync);
         createCommandPool();
         resources = std::make_unique<BindlessResourceManager>(&*devices, &commandPool);
         meshLoader = std::make_unique<MeshLoader>(*resources);
@@ -69,6 +79,9 @@ class Renderer {
         swapChain->createDepthResources(msaaSamples);
         createCommandBuffers();
         createSyncObjects();
+
+        std::fill_n(meshUsage, MAX_VERTEX_ALLOCATIONS, 0);
+        std::fill_n(lightUsage, MAX_LIGHTS, 0);
 
         activeCamera.position = glm::vec3(1.0f, 1.0f, 1.0f);
         activeCamera.lookAt(glm::vec3(0));
@@ -83,10 +96,10 @@ class Renderer {
         while (vk::Result::eTimeout == devices->getLogicalDevice().waitForFences(*inFlightFences[currentFrame], vk::True, UINT64_MAX))
             // wait for gpu to finish rendering the frame we just submitted
             ;
-        auto [result, imageIndex] = swapChain->getSwapChain().acquireNextImage(UINT64_MAX, *presentCompleteSemaphores[semaphoreIndex], nullptr);
+        auto [result, imageIndex] = swapChain->getSwapChain().acquireNextImage(UINT64_MAX, *presentCompleteSemaphores[currentFrame], nullptr);
 
         if (result == vk::Result::eErrorOutOfDateKHR) {
-            swapChain->recreateSwapChain(window, &*devices, msaaSamples);
+            swapChain->recreateSwapChain(window, &*devices, msaaSamples, vSync);
             int width = 0, height = 0;
             glfwGetFramebufferSize(window, &width, &height);
             activeCamera.aspectRatio = static_cast<float>(width) / static_cast<float>(height);
@@ -111,17 +124,17 @@ class Renderer {
 
         vk::PipelineStageFlags waitDestinationStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput);
         const vk::SubmitInfo submitInfo{.waitSemaphoreCount = 1,
-                                        .pWaitSemaphores = &*presentCompleteSemaphores[semaphoreIndex],
+                                        .pWaitSemaphores = &*presentCompleteSemaphores[currentFrame],
                                         .pWaitDstStageMask = &waitDestinationStageMask,
                                         .commandBufferCount = 1,
                                         .pCommandBuffers = &*commandBuffers[currentFrame],
                                         .signalSemaphoreCount = 1,
-                                        .pSignalSemaphores = &*renderFinishedSemaphores[semaphoreIndex]};
+                                        .pSignalSemaphores = &*renderFinishedSemaphores[imageIndex]};
 
         devices->getGraphicsQueue().submit(submitInfo, inFlightFences[currentFrame]);
 
         const vk::PresentInfoKHR presentInfoKHR{.waitSemaphoreCount = 1,
-                                                .pWaitSemaphores = &*renderFinishedSemaphores[semaphoreIndex],
+                                                .pWaitSemaphores = &*renderFinishedSemaphores[imageIndex],
                                                 .swapchainCount = 1,
                                                 .pSwapchains = &*swapChain->getSwapChain(),
                                                 .pImageIndices = &imageIndex};
@@ -134,7 +147,7 @@ class Renderer {
 
         if (result == vk::Result::eErrorOutOfDateKHR || result == vk::Result::eSuboptimalKHR || framebufferResized) {
             framebufferResized = false;
-            swapChain->recreateSwapChain(window, &*devices, msaaSamples);
+            swapChain->recreateSwapChain(window, &*devices, msaaSamples, vSync);
 
             int width = 0, height = 0;
             glfwGetFramebufferSize(window, &width, &height);
@@ -145,35 +158,87 @@ class Renderer {
             throw std::runtime_error("failed to present swap chain image!");
         }
 
-        semaphoreIndex = (semaphoreIndex + 1) % presentCompleteSemaphores.size();
         currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
     }
-
-    void addMeshFromFile(std::string meshPath, std::string albedoTexPath = "",std::string roughnessTexPath = "",std::string metallicTexPath = "",std::string normalTexPath = "", glm::vec3 location = glm::vec3(0.0f), glm::quat rotation = glm::quat(1.0, 0.0, 0.0, 0.0),
-                         glm::vec3 scale = glm::vec3(0.5f)) {
-        meshes.push_back(meshLoader->loadFromFile(meshPath, albedoTexPath, roughnessTexPath, metallicTexPath, normalTexPath, location, rotation, scale));
-    }
-
-    void addPointLight(glm::vec3 position, glm::vec3 color, float range, float intensity) {
-        PointLight light = {.position = glm::vec4(position,1), .color = glm::vec4(color,1), .range = range, .intensity = intensity};
-
-        resources->allocateLightBuffer(light);
-    }
-
-    const vk::Instance& getInstance() const {return *instance; }
+    
+    const vk::Instance& getInstance() const { return *instance; }
     const Devices* getDevices() { return &*devices; }
-    SwapChain* getSwapChain() {return &*swapChain; }
+    SwapChain* getSwapChain() { return &*swapChain; }
+    void cleanupSwapChain() { swapChain->cleanupSwapChain(); }
     
     BindlessResourceManager* getResourceManager() const { return &*resources; }
     void initializeResourceDefaults() { resources->initializeDefaults(); }
-
-    GLFWwindow* getWindow() const {return window; }
-    void setWindow(GLFWwindow* pWindow) { window = pWindow; }
-    const vk::raii::CommandBuffer& getCurrentCommandBuffer() { return commandBuffers[currentFrame]; }
-    const vk::SampleCountFlagBits& getMsaaSamples() const { return msaaSamples; }
-    const uint32_t getGraphicsIndex() const {return graphicsIndex; }
     
-    void cleanupSwapChain() { swapChain->cleanupSwapChain(); }
+    GLFWwindow* getWindow() const { return window; }
+    void setWindow(GLFWwindow* pWindow) { window = pWindow; }
+    
+    const vk::raii::CommandBuffer& getCurrentCommandBuffer() { return commandBuffers[currentFrame]; }
+    
+    const vk::SampleCountFlagBits& getMsaaSamples() const { return msaaSamples; }
+    
+    const uint32_t getGraphicsIndex() const { return graphicsIndex; }
+    
+    Node& getRootNode() {return rootNode; }
+
+    std::vector<Node&> rayCastNodes(glm::vec3 origin, glm::vec3 direction) {
+
+    };
+    
+    uint32_t addMeshFromFile(std::string meshPath, std::string albedoTexPath = "", std::string roughnessTexPath = "", std::string metallicTexPath = "",
+                                std::string normalTexPath = "") {
+
+        int i = 0;
+        for (i = 0; i < MAX_VERTEX_ALLOCATIONS; i++) {
+            if (meshUsage[i] == 0) {
+                meshes[i] = meshLoader->loadFromFile(meshPath, albedoTexPath, roughnessTexPath, metallicTexPath, normalTexPath);
+                meshUsage[i] = 1;
+                return i;
+            }
+        }
+        if (i == MAX_VERTEX_ALLOCATIONS) {
+            throw std::runtime_error("exceeded mesh limit!");
+        }
+        return 0;
+    }
+
+    uint32_t addPointLight(glm::vec3 color, float range, float intensity) {
+
+        int i = 0;
+        for (i = 0; i < MAX_LIGHTS; i++) {
+            if (lightUsage[i] == 0) {
+                Light light = {.position = glm::vec4(0, 0, 0, 1), .color = glm::vec4(color, 1), .range = range, .intensity = intensity};
+                light.allocationIndex = resources->allocateLightBuffer(light);
+                lights[i] = light;
+                lightUsage[i] = 1;
+                return i;
+            }
+        }
+        if (i == MAX_LIGHTS) {
+            throw std::runtime_error("exceeded light limit!");
+        }
+        return 0;
+    }
+
+    void addNode(Node* node, Node* parent, glm::vec3 position = glm::vec3(0), glm::quat rotation = glm::quat(1, 0, 0, 0), glm::vec3 scale = glm::vec3(1), bool worldSpace = false) {
+        node->resources = &*resources;
+        parent->addChild(node);
+        if (worldSpace) {
+            node->updateWorldTransform(position, rotation, scale);
+        }
+    };
+
+    void addMeshComponent(Node* node, uint32_t meshIndex) {
+        node->meshIndex = meshIndex;
+        node->meshes = meshes;
+    };
+    
+    void addLightComponent(Node* node, uint32_t lightIndex) {
+        node->lightIndex = lightIndex;
+        node->lights = lights;
+    };
+
+
+
 
   private:
     GLFWwindow* window = nullptr;
@@ -189,13 +254,17 @@ class Renderer {
     std::unique_ptr<MeshLoader> meshLoader = nullptr;
     std::unique_ptr<PipelineBuilder> pipelineBuilder = nullptr;
 
-    std::vector<Mesh> meshes;
-
     vk::raii::Pipeline graphicsPipeline = nullptr;
     vk::raii::Pipeline linePipeline = nullptr;
     vk::raii::CommandPool commandPool = nullptr;
     std::vector<vk::raii::CommandBuffer> commandBuffers;
     uint32_t graphicsIndex = 0;
+
+    Node rootNode;
+    Light lights[MAX_LIGHTS];
+    uint32_t lightUsage[MAX_LIGHTS];
+    Mesh meshes[MAX_VERTEX_ALLOCATIONS];
+    uint32_t meshUsage[MAX_VERTEX_ALLOCATIONS];
 
     std::vector<vk::raii::Semaphore> presentCompleteSemaphores;
     std::vector<vk::raii::Semaphore> renderFinishedSemaphores;
@@ -203,17 +272,11 @@ class Renderer {
     std::vector<vk::Fence> imagesInFlight;
 
     uint32_t currentFrame = 0;
-    uint32_t semaphoreIndex = 0;
 
     bool framebufferResized = false;
 
-    uint32_t mipLevels = 0;
-    vk::raii::Image textureImage = nullptr;
-    vk::raii::DeviceMemory textureImageMemory = nullptr;
-    vk::raii::ImageView textureImageView = nullptr;
-    vk::raii::Sampler textureSampler = nullptr;
-
     vk::SampleCountFlagBits msaaSamples = vk::SampleCountFlagBits::e1;
+    bool vSync = false;
 
     std::vector<const char*> requiredDeviceExtension = {VK_KHR_SWAPCHAIN_EXTENSION_NAME,           VK_KHR_SPIRV_1_4_EXTENSION_NAME,
                                                         VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,   VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME,
@@ -383,7 +446,11 @@ class Renderer {
             0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChain->getSwapChainExtent().width), static_cast<float>(swapChain->getSwapChainExtent().height), 0.0f, 1.0f));
         commandBuffers[currentFrame].setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChain->getSwapChainExtent()));
 
-        for (const auto& mesh : meshes) {
+        for (int i = 0; i < MAX_VERTEX_ALLOCATIONS; i++) {
+            if (meshUsage[i] == 0) {
+                continue;
+            }
+            Mesh mesh = meshes[i];
             PushConstants pushConstants = {.vertexBufferIndex = mesh.vertexAllocationIndex,
                                            .vertexOffset = static_cast<uint32_t>(mesh.vertexOffset), // Convert byte offset to element offset
                                            .vertexStride = mesh.vertexStride,
@@ -396,7 +463,7 @@ class Renderer {
                                            .lightCount = resources->getLightCount(),
                                            .viewProjection = activeCamera.viewProjection,
                                            .cameraPos = glm::vec4(activeCamera.position, 1.0)};
-            
+
             commandBuffers[currentFrame].pushConstants<PushConstants>(pipelineBuilder->getPipelineLayout(size_t(0)),
                                                                       vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pushConstants);
             commandBuffers[currentFrame].draw(mesh.vertexCount, 1, 0, 0);
@@ -407,11 +474,15 @@ class Renderer {
         commandBuffers[currentFrame].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineBuilder->getPipelineLayout(size_t(1)), 0, {resources->getDescriptorSet()},
                                                         nullptr);
         for (const auto& line : lines) {
-            Line lineConstants = {.allocIndex = line.allocIndex, .offset = line.offset, .stride = line.stride, .viewProjection = activeCamera.viewProjection};
+            Line lineConstants = {.viewProjection = activeCamera.viewProjection, .allocIndex = line.allocIndex, .offset = line.offset, .stride = line.stride};
             commandBuffers[currentFrame].pushConstants<Line>(pipelineBuilder->getPipelineLayout(size_t(1)), vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
                                                              0, lineConstants);
             commandBuffers[currentFrame].draw(2, 1, 0, 0);
         }
+
+        // ui
+        ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), *commandBuffers[currentFrame]);
+
         commandBuffers[currentFrame].endRendering();
 
         // After rendering, transition the swapchain image to PRESENT_SRC
@@ -464,16 +535,17 @@ class Renderer {
         inFlightFences.clear();
         imagesInFlight.clear();
 
-        // Change: semaphores per swapchain image (for GPU-GPU sync)
-        for (size_t i = 0; i < swapChain->getSwapImageSize(); i++) {
-            presentCompleteSemaphores.emplace_back(devices->getLogicalDevice(), vk::SemaphoreCreateInfo());
-            renderFinishedSemaphores.emplace_back(devices->getLogicalDevice(), vk::SemaphoreCreateInfo());
-        }
-        // Keep fences per frame (for CPU-GPU sync)
+        // Separate semaphores for acquisition (per frame) and rendering (per image)
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            presentCompleteSemaphores.emplace_back(devices->getLogicalDevice(), vk::SemaphoreCreateInfo());
             inFlightFences.emplace_back(devices->getLogicalDevice(), vk::FenceCreateInfo{.flags = vk::FenceCreateFlagBits::eSignaled});
         }
-        // Track which fence is using each swapchain image
+
+        // Render finished semaphores per swapchain image
+        for (size_t i = 0; i < swapChain->getSwapImageSize(); i++) {
+            renderFinishedSemaphores.emplace_back(devices->getLogicalDevice(), vk::SemaphoreCreateInfo());
+        }
+
         imagesInFlight.resize(swapChain->getSwapImageSize(), VK_NULL_HANDLE);
     }
 };

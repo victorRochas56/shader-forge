@@ -1,6 +1,10 @@
 #pragma once
+#ifndef VULKAN_HPP_DISPATCH_LOADER_DYNAMIC
 #define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1 // for raii
-#define VULKAN_HPP_NO_CONSTRUCTORS 1         // for structs constructors
+#endif
+#ifndef VULKAN_HPP_NO_CONSTRUCTORS  
+#define VULKAN_HPP_NO_CONSTRUCTORS 1 // for structs constructors
+#endif
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -35,7 +39,7 @@ constexpr uint32_t MAX_BINDLESS_SAMPLERS = 16;
 static constexpr vk::DeviceSize VERTEX_BUFFER_SIZE = 256 * 1024 * 1024; // max 256mb of vertex data
 static constexpr uint32_t MAX_VERTEX_ALLOCATIONS = 2048;
 constexpr uint32_t MAX_BINDLESS_MODEL_MATRICES = 2048;
-constexpr uint32_t MAX_POINT_LIGHTS = 1024;
+constexpr uint32_t MAX_LIGHTS = 1024;
 
 class BindlessResourceManager {
 
@@ -49,7 +53,7 @@ class BindlessResourceManager {
         samplerResources.reserve(MAX_BINDLESS_SAMPLERS);
         vertexAllocations.resize(MAX_VERTEX_ALLOCATIONS);
         modelMatrixSlots.resize(MAX_BINDLESS_MODEL_MATRICES);
-        lightSlots.resize(MAX_POINT_LIGHTS);
+        lightSlots.resize(MAX_LIGHTS);
     }
 
     void initializeDefaults() {
@@ -212,7 +216,7 @@ class BindlessResourceManager {
         if (index >= MAX_BINDLESS_MODEL_MATRICES || !modelMatrixSlots[index].inUse) {
             throw std::invalid_argument("Invalid model matrix index");
         }
-
+        printf("at slot %d \n",index);
         // Update CPU copy
         modelMatrixSlots[index].matrix = matrix;
 
@@ -221,7 +225,7 @@ class BindlessResourceManager {
         gpuMatrices[index] = matrix;
     }
 
-    uint32_t allocateLightBuffer(const PointLight light) {
+    uint32_t allocateLightBuffer(const Light light) {
         uint32_t index;
         if (!freeLightSlots.empty()) {
             index = freeLightSlots.front();
@@ -229,11 +233,11 @@ class BindlessResourceManager {
         } else {
             // Find first unused slot
             index = 0;
-            while (index < MAX_POINT_LIGHTS && lightSlots[index].inUse) {
+            while (index < MAX_LIGHTS && lightSlots[index].inUse) {
                 index++;
             }
             
-            if (index >= MAX_POINT_LIGHTS) {
+            if (index >= MAX_LIGHTS) {
                 throw std::runtime_error("Maximum point lights exceeded");
             }
         }
@@ -244,7 +248,7 @@ class BindlessResourceManager {
         lightSlots[index].inUse = true;
 
         // Update GPU buffer
-        PointLight* bufferData = static_cast<PointLight*>(lightBuffer.mappedData);
+        Light* bufferData = static_cast<Light*>(lightBuffer.mappedData);
         bufferData[index] = light;
 
         printf("allocating light: \n");
@@ -257,8 +261,8 @@ class BindlessResourceManager {
         return index;
     }
 
-    void updateLight(uint32_t index, const PointLight& light) {
-        if (index >= MAX_POINT_LIGHTS || !lightSlots[index].inUse) {
+    void updateLight(uint32_t index, const Light& light) {
+        if (index >= MAX_LIGHTS || !lightSlots[index].inUse) {
             throw std::invalid_argument("Invalid light index");
         }
 
@@ -266,7 +270,7 @@ class BindlessResourceManager {
         lightSlots[index].light = light;
 
         // Update GPU buffer directly
-        PointLight* bufferData = static_cast<PointLight*>(lightBuffer.mappedData);
+        Light* bufferData = static_cast<Light*>(lightBuffer.mappedData);
         bufferData[index] = light;
     }
 
@@ -308,10 +312,6 @@ class BindlessResourceManager {
             return;
         }
 
-        if (allocationIndex == defaultVertexAllocationIndex) {
-            throw std::runtime_error("Cannot free default vertex allocation");
-        }
-
         // Mark space as available (simple linear allocator for now)
         // TODO: Implement proper free space management
         vertexAllocations[allocationIndex].reset();
@@ -334,7 +334,7 @@ class BindlessResourceManager {
     }
 
     void freeLight(uint32_t index) {
-        if (index >= MAX_POINT_LIGHTS || !lightSlots[index].inUse) {
+        if (index >= MAX_LIGHTS || !lightSlots[index].inUse) {
             return;
         }
 
@@ -343,7 +343,7 @@ class BindlessResourceManager {
         freeLightSlots.push(index);
 
         // Reset to identity matrix in GPU buffer
-        PointLight* bufferData = static_cast<PointLight*>(lightBuffer.mappedData);
+        Light* bufferData = static_cast<Light*>(lightBuffer.mappedData);
         bufferData[index].reset();
     }
 
@@ -475,7 +475,7 @@ class BindlessResourceManager {
     };
 
     struct LightSlot {
-        PointLight light;
+        Light light;
         bool inUse;
 
         void reset() {
@@ -492,7 +492,6 @@ class BindlessResourceManager {
     VertexBufferResource vertexBuffer;
     std::vector<VertexAllocation> vertexAllocations;
     std::queue<uint32_t> freeVertexSlots;
-    uint32_t defaultVertexAllocationIndex;
 
     ModelMatrixBufferResource modelMatrixBuffer;
     std::vector<ModelMatrixSlot> modelMatrixSlots;
@@ -641,7 +640,7 @@ class BindlessResourceManager {
 
     void initializeLightBuffer() {
         // Create single large buffer for all point light
-        vk::DeviceSize bufferSize = sizeof(PointLight) * MAX_POINT_LIGHTS;
+        vk::DeviceSize bufferSize = sizeof(Light) * MAX_LIGHTS;
 
         vk::BufferCreateInfo bufferInfo{.size = bufferSize, .usage = vk::BufferUsageFlagBits::eStorageBuffer, .sharingMode = vk::SharingMode::eExclusive};
 
@@ -658,9 +657,9 @@ class BindlessResourceManager {
 
         lightBuffer.mappedData = lightBuffer.memory->mapMemory(0, bufferSize);
 
-        PointLight* lights = static_cast<PointLight*>(lightBuffer.mappedData);
-        for (uint32_t i = 0; i < MAX_POINT_LIGHTS; ++i) {
-            lights[i] = PointLight{};
+        Light* lights = static_cast<Light*>(lightBuffer.mappedData);
+        for (uint32_t i = 0; i < MAX_LIGHTS; ++i) {
+            lights[i] = Light{};
         }
 
         updateLightDescriptor();

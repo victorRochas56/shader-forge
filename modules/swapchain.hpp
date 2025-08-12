@@ -1,7 +1,10 @@
 #pragma once
-#define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
-
-#define VULKAN_HPP_NO_CONSTRUCTORS 1
+#ifndef VULKAN_HPP_DISPATCH_LOADER_DYNAMIC
+#define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1 // for raii
+#endif
+#ifndef VULKAN_HPP_NO_CONSTRUCTORS  
+#define VULKAN_HPP_NO_CONSTRUCTORS 1 // for structs constructors
+#endif
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -20,8 +23,8 @@
 class SwapChain {
 
   public:
-    SwapChain(GLFWwindow* window, const Devices* devices, vk::raii::SurfaceKHR* surface ,vk::raii::Instance* instance) : devices(devices), surface(surface) {
-        createSwapChain(*window);
+    SwapChain(GLFWwindow* window, const Devices* devices, vk::raii::SurfaceKHR* surface ,vk::raii::Instance* instance, bool& useVsync) : devices(devices), surface(surface) {
+        createSwapChain(*window, useVsync);
         createImageViews();
     }
 
@@ -36,7 +39,7 @@ class SwapChain {
     vk::raii::ImageView& getDepthImageView() { return depthImageView; }
     vk::raii::ImageView& getColorImageView() { return colorImageView; }
 
-    void recreateSwapChain(GLFWwindow* window, const Devices* devices, vk::SampleCountFlagBits msaaSamples) {
+    void recreateSwapChain(GLFWwindow* window, const Devices* devices, vk::SampleCountFlagBits msaaSamples, bool& useVsync) {
         int width = 0, height = 0;
         glfwGetFramebufferSize(window, &width, &height);
         while (width == 0 || height == 0) {
@@ -48,7 +51,7 @@ class SwapChain {
 
         cleanupSwapChain();
 
-        createSwapChain(*window);
+        createSwapChain(*window, useVsync);
         createImageViews();
         createColorResources(msaaSamples);
         createDepthResources(msaaSamples);
@@ -94,7 +97,7 @@ class SwapChain {
     vk::raii::DeviceMemory colorImageMemory = nullptr;
     vk::raii::ImageView colorImageView = nullptr;
 
-    void createSwapChain(GLFWwindow& window) {
+    void createSwapChain(GLFWwindow& window, bool& useVsync) {
         auto surfaceCapabilities = devices->getPhysicalDevice().getSurfaceCapabilitiesKHR(*surface);
         swapChainImageFormat = chooseSwapSurfaceFormat(devices->getPhysicalDevice().getSurfaceFormatsKHR(*surface)).format;
         swapChainExtent = chooseSwapExtent(surfaceCapabilities, &window);
@@ -110,7 +113,7 @@ class SwapChain {
                                                        .imageSharingMode = vk::SharingMode::eExclusive,
                                                        .preTransform = surfaceCapabilities.currentTransform,
                                                        .compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque,
-                                                       .presentMode = chooseSwapPresentMode(devices->getPhysicalDevice().getSurfacePresentModesKHR(*surface)),
+                                                       .presentMode = chooseSwapPresentMode(devices->getPhysicalDevice().getSurfacePresentModesKHR(*surface), useVsync),
                                                        .clipped = true};
 
         swapChain = vk::raii::SwapchainKHR(devices->getLogicalDevice(), swapChainCreateInfo);
@@ -126,10 +129,12 @@ class SwapChain {
         return availableFormats[0];
     }
 
-    vk::PresentModeKHR chooseSwapPresentMode(const std::vector<vk::PresentModeKHR>& availablePresentModes) {
-        for (const auto& availablePresentMode : availablePresentModes) {
-            if (availablePresentMode == vk::PresentModeKHR::eMailbox) {
-                return availablePresentMode;
+    vk::PresentModeKHR chooseSwapPresentMode(const std::vector<vk::PresentModeKHR>& availablePresentModes, bool& useVsync) {
+        if(!useVsync){
+            for (const auto& availablePresentMode : availablePresentModes) {
+                if (availablePresentMode == vk::PresentModeKHR::eMailbox) {
+                    return availablePresentMode;
+                }
             }
         }
         return vk::PresentModeKHR::eFifo;

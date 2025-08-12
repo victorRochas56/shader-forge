@@ -1,6 +1,10 @@
 #pragma once
+#ifndef VULKAN_HPP_DISPATCH_LOADER_DYNAMIC
 #define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1 // for raii
-#define VULKAN_HPP_NO_CONSTRUCTORS 1         // for structs constructors
+#endif
+#ifndef VULKAN_HPP_NO_CONSTRUCTORS  
+#define VULKAN_HPP_NO_CONSTRUCTORS 1 // for structs constructors
+#endif
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_raii.hpp>
 
@@ -66,4 +70,23 @@ static std::vector<char> readFile(const std::string& filename) {
     file.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
     file.close();
     return buffer;
+}
+
+void decomposeMatrix(const glm::mat4& matrix, glm::vec3& translation, glm::quat& rotation, glm::vec3& scale) {
+    // Extract translation (4th column)
+    translation = glm::vec3(matrix[3]);
+    
+    // Extract scale (length of first 3 columns)
+    scale.x = glm::length(glm::vec3(matrix[0]));
+    scale.y = glm::length(glm::vec3(matrix[1]));
+    scale.z = glm::length(glm::vec3(matrix[2]));
+    
+    // Remove scaling from the matrix to extract rotation
+    glm::mat3 rotMatrix = glm::mat3(matrix);
+    rotMatrix[0] = glm::normalize(rotMatrix[0]);
+    rotMatrix[1] = glm::normalize(rotMatrix[1]);
+    rotMatrix[2] = glm::normalize(rotMatrix[2]);
+    
+    // Convert rotation matrix to quaternion
+    rotation = glm::quat_cast(rotMatrix);
 }

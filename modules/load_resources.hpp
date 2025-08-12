@@ -1,6 +1,10 @@
 #pragma once
+#ifndef VULKAN_HPP_DISPATCH_LOADER_DYNAMIC
 #define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1 // for raii
-#define VULKAN_HPP_NO_CONSTRUCTORS 1         // for structs constructors
+#endif
+#ifndef VULKAN_HPP_NO_CONSTRUCTORS  
+#define VULKAN_HPP_NO_CONSTRUCTORS 1 // for structs constructors
+#endif
 #include <algorithm>
 #include <array>
 #include <chrono>

@@ -1,6 +1,10 @@
 #pragma once
+#ifndef VULKAN_HPP_DISPATCH_LOADER_DYNAMIC
 #define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1 // for raii
-#define VULKAN_HPP_NO_CONSTRUCTORS 1         // for structs constructors
+#endif
+#ifndef VULKAN_HPP_NO_CONSTRUCTORS  
+#define VULKAN_HPP_NO_CONSTRUCTORS 1 // for structs constructors
+#endif
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -45,7 +49,7 @@ std::vector<Line> lines;
 void addLine(glm::vec3 startPoint, glm::vec3 endPoint, glm::vec4 color, BindlessResourceManager* resourceManager){
 
     std::vector<Point> lineData{ {.position = glm::vec4(startPoint,1.0), .color = color}, {.position = glm::vec4(endPoint,1.0), .color = color}};
-    auto vertexInfo = resourceManager->allocateVertexBuffer(lineData.data(),lineData.size() * sizeof(Point),2,sizeof(Point));
+    auto vertexInfo = resourceManager->allocateVertexBuffer(lineData.data(),2 * sizeof(Point),2,sizeof(Point));
     
     Line line{
         .allocIndex = vertexInfo.allocationIndex,
@@ -57,7 +61,7 @@ void addLine(glm::vec3 startPoint, glm::vec3 endPoint, glm::vec4 color, Bindless
 };
 
 void addAxes(glm::vec3 origin, float size, BindlessResourceManager* resourceManager){
-    addLine(glm::vec3(0), glm::vec3(0, size, 0), glm::vec4(0.0, 1.0, 0.0, 1.0), resourceManager);
-    addLine(glm::vec3(0), glm::vec3(0, 0, size), glm::vec4(0.0, 0.0, 1.0, 1.0), resourceManager);
-    addLine(glm::vec3(0), glm::vec3(size, 0, 0), glm::vec4(1.0, 0.0, 0.0, 1.0), resourceManager);
+    addLine(origin,origin+glm::vec3(0, size, 0), glm::vec4(0.0, 1.0, 0.0, 1.0), resourceManager);
+    addLine(origin,origin+glm::vec3(0, 0, size), glm::vec4(0.0, 0.0, 1.0, 1.0), resourceManager);
+    addLine(origin,origin+glm::vec3(size, 0, 0), glm::vec4(1.0, 0.0, 0.0, 1.0), resourceManager);
 }
