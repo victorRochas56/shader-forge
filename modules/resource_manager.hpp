@@ -67,6 +67,7 @@ class ResourceManager {
         initializeVertexBuffer();
         initializeModelMatrixBuffer();
         initializeLightBuffer();
+        
 
         // Create default sampler
         vk::SamplerCreateInfo samplerInfo{};
@@ -85,20 +86,19 @@ class ResourceManager {
 
         // Create depth default sampler
         vk::SamplerCreateInfo depthSamplerInfo{};
-        samplerInfo.magFilter = vk::Filter::eNearest;
-        samplerInfo.minFilter = vk::Filter::eNearest;
-        samplerInfo.addressModeU = vk::SamplerAddressMode::eClampToEdge;
-        samplerInfo.addressModeV = vk::SamplerAddressMode::eClampToEdge;
-        samplerInfo.addressModeW = vk::SamplerAddressMode::eClampToEdge;
-        samplerInfo.anisotropyEnable = VK_FALSE;
-        samplerInfo.borderColor = vk::BorderColor::eFloatOpaqueWhite;
-        samplerInfo.unnormalizedCoordinates = VK_FALSE;
-        samplerInfo.compareEnable = VK_FALSE;
-        samplerInfo.mipmapMode = vk::SamplerMipmapMode::eNearest;
+        depthSamplerInfo.magFilter = vk::Filter::eNearest;
+        depthSamplerInfo.minFilter = vk::Filter::eNearest;
+        depthSamplerInfo.addressModeU = vk::SamplerAddressMode::eClampToEdge;
+        depthSamplerInfo.addressModeV = vk::SamplerAddressMode::eClampToEdge;
+        depthSamplerInfo.addressModeW = vk::SamplerAddressMode::eClampToEdge;
+        depthSamplerInfo.anisotropyEnable = VK_FALSE;
+        depthSamplerInfo.unnormalizedCoordinates = VK_FALSE;
+        depthSamplerInfo.compareEnable = VK_FALSE;
+        depthSamplerInfo.mipmapMode = vk::SamplerMipmapMode::eNearest;
 
         vk::raii::Sampler defaultSampler(devices->getLogicalDevice(), samplerInfo);
         vk::raii::Sampler depthSampler(devices->getLogicalDevice(), depthSamplerInfo);
-        updateSamplerDescriptor(*depthDescriptorSet, 1, *depthSampler);
+        updateSamplerDescriptor(*depthDescriptorSet, 0, *depthSampler);
         defaultSamplerIndex = allocateSamplerImpl(std::move(defaultSampler));
 
         // Create default textures (1x1 pixel images)
@@ -505,8 +505,8 @@ class ResourceManager {
         endSingleTimeCommands(commandBuffer);
     }
 
-    void updateImageDescriptorSet(vk::raii::DescriptorSet& descriptorSet, uint32_t index, vk::ImageView imageView) {
-        vk::DescriptorImageInfo imageInfo{.imageView = imageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal};
+    void updateImageDescriptorSet(vk::raii::DescriptorSet& descriptorSet, uint32_t index, vk::ImageView imageView, vk::ImageLayout layout = vk::ImageLayout::eShaderReadOnlyOptimal) {
+        vk::DescriptorImageInfo imageInfo{.imageView = imageView, .imageLayout = layout};
 
         vk::WriteDescriptorSet write{.sType = vk::StructureType::eWriteDescriptorSet,
                                      .dstSet = *descriptorSet,

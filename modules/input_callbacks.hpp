@@ -82,6 +82,9 @@ class InputManager {
         if (current.keyStates[GLFW_KEY_N] == GLFW_PRESS && previous.keyStates[GLFW_KEY_N] != GLFW_PRESS) {
             renderer->showMap(SHOW_NORMAL);
         }
+        if (current.keyStates[GLFW_KEY_F] == GLFW_PRESS && previous.keyStates[GLFW_KEY_F] != GLFW_PRESS) {
+            renderer->toggleDepthBuffering();
+        }
 
         current.mouseDelta = current.mousePos - previous.mousePos;
         previous = current;

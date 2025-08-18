@@ -39,6 +39,7 @@ class SwapChain {
     vk::raii::Image& getDepthImage() { return depthImage; }
     vk::raii::Image& getColorImage() { return colorImage; }
     vk::raii::ImageView& getDepthImageView() { return depthImageView; }
+    vk::raii::ImageView& getDepthResolveImageView() { return depthResolveImageView; }
     vk::raii::ImageView& getColorImageView() { return colorImageView; }
 
     void recreateSwapChain(GLFWwindow* window, const Devices* devices, vk::SampleCountFlagBits msaaSamples, bool& useVsync) {
@@ -62,6 +63,8 @@ class SwapChain {
     void cleanupSwapChain() {
 
         swapChainImageViews.clear();
+        depthImageView.clear();
+        depthResolveImageView.clear(); 
         swapChain = nullptr;
     }
 
@@ -76,13 +79,21 @@ class SwapChain {
 
     void createDepthResources(vk::SampleCountFlagBits msaaSamples) {
         vk::Format depthFormat = findDepthFormat(&*devices);
+        
         resourceManager->createImage(swapChainExtent.width, swapChainExtent.height, 1, msaaSamples, depthFormat, vk::ImageTiling::eOptimal,
-                                     vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, depthImage,
-                                     depthImageMemory);
+                                    vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, depthImage,
+                                    depthImageMemory);
         depthImageView = resourceManager->createImageView(depthImage, depthFormat, vk::ImageAspectFlagBits::eDepth, 1);
-
         resourceManager->transitionImageLayout(depthImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal, 1);
-        resourceManager->updateImageDescriptorSet(resourceManager->getDepthDescriptorSet(), 0, depthImageView);
+
+        resourceManager->createImage(swapChainExtent.width, swapChainExtent.height, 1, vk::SampleCountFlagBits::e1, depthFormat, vk::ImageTiling::eOptimal,
+                                    vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, depthResolveImage,
+                                    depthResolveImageMemory);
+
+        depthResolveImageView = resourceManager->createImageView(depthResolveImage, depthFormat, vk::ImageAspectFlagBits::eDepth, 1);
+        resourceManager->transitionImageLayout(depthResolveImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal, 1);
+
+        resourceManager->updateImageDescriptorSet(resourceManager->getDepthDescriptorSet(), 0, depthResolveImageView, vk::ImageLayout::eShaderReadOnlyOptimal);
     }
 
   private:
@@ -99,6 +110,10 @@ class SwapChain {
     vk::raii::Image depthImage = nullptr;
     vk::raii::DeviceMemory depthImageMemory = nullptr;
     vk::raii::ImageView depthImageView = nullptr;
+
+    vk::raii::Image depthResolveImage = nullptr;
+    vk::raii::DeviceMemory depthResolveImageMemory = nullptr;
+    vk::raii::ImageView depthResolveImageView = nullptr;
 
     vk::raii::Image colorImage = nullptr;
     vk::raii::DeviceMemory colorImageMemory = nullptr;

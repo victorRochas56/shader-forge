@@ -84,12 +84,12 @@ class Renderer {
         skyboxPipeline = pipelineBuilder->createCubemapPipeline(msaaSamples);
         std::tie(depthPipelineIndex, depthPipeline) = pipelineBuilder->createDepthPipeline(msaaSamples);
 
-        swapChain->createColorResources(msaaSamples);
-        swapChain->createDepthResources(msaaSamples);
         createCommandBuffers();
         createSyncObjects();
+        swapChain->createColorResources(msaaSamples);
+        swapChain->createDepthResources(msaaSamples);
         resourceManager->initializeDefaults();
-
+        
         (*meshUsage).fill(0);
         (*lightUsage).fill(0);
         (*nodeUsage).fill(0);
@@ -99,7 +99,7 @@ class Renderer {
         activeCamera.fov = glm::radians(45.0f);
         activeCamera.aspectRatio = start_width / start_height;
         activeCamera.nearPlane = 0.05f;
-        activeCamera.farPlane = 1000.0f;
+        activeCamera.farPlane = 10.0f;
         activeCamera.calculateViewProjectionMatrix();
 
         rootNode.name = "Scene Root";
@@ -324,6 +324,11 @@ class Renderer {
         return 1;
     }
 
+    void toggleDepthBuffering(){
+        if(doDepthBuffering != 0 ){ doDepthBuffering = 0;}
+        else doDepthBuffering = 1;
+    }
+
   private:
     GLFWwindow* window = nullptr;
     vk::raii::Context context;
@@ -369,6 +374,8 @@ class Renderer {
 
     uint32_t environmentMapIndex = MAX_BINDLESS_TEXTURES;
     uint32_t debugMaps = 0;
+    uint32_t doDepthBuffering = 0;
+
 
     std::vector<const char*> requiredDeviceExtension = {VK_KHR_SWAPCHAIN_EXTENSION_NAME,           VK_KHR_SPIRV_1_4_EXTENSION_NAME,
                                                         VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,   VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME,
@@ -497,11 +504,6 @@ class Renderer {
                                        vk::AccessFlagBits2::eColorAttachmentWrite, vk::PipelineStageFlagBits2::eTopOfPipe, vk::PipelineStageFlagBits2::eColorAttachmentOutput,
                                        vk::ImageAspectFlagBits::eColor);
 
-        // Transition the depth image to DEPTH_ATTACHMENT_OPTIMAL
-        transition_image_layout_custom(swapChain->getDepthImage(), vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthAttachmentOptimal, {},
-                                       vk::AccessFlagBits2::eDepthStencilAttachmentWrite, vk::PipelineStageFlagBits2::eTopOfPipe, vk::PipelineStageFlagBits2::eEarlyFragmentTests,
-                                       vk::ImageAspectFlagBits::eDepth);
-
         vk::ClearValue clearColor{.color = vk::ClearColorValue(std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f})};
         vk::ClearValue clearDepth{.depthStencil = vk::ClearDepthStencilValue{1.0f, 0}};
 
@@ -518,6 +520,9 @@ class Renderer {
         // depth attachment
         vk::RenderingAttachmentInfo depthAttachmentInfo = {.imageView = swapChain->getDepthImageView(),
                                                            .imageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
+                                                           .resolveMode = vk::ResolveModeFlagBits::eMin,
+                                                           .resolveImageView = swapChain->getDepthResolveImageView(),
+                                                           .resolveImageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
                                                            .loadOp = vk::AttachmentLoadOp::eClear,
                                                            .storeOp = vk::AttachmentStoreOp::eDontCare,
                                                            .clearValue = clearDepth};
@@ -594,7 +599,7 @@ class Renderer {
         commandBuffers[currentFrame].bindPipeline(vk::PipelineBindPoint::eGraphics, *depthPipeline);
         commandBuffers[currentFrame].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineBuilder->getPipelineLayout(depthPipelineIndex), 0,
                                                         {resourceManager->getDepthDescriptorSet()}, nullptr);
-        DepthPushConstants depthConstants = {.nearPlane = activeCamera.nearPlane, .farPlane = activeCamera.farPlane, .linearize = 1};
+        DepthPushConstants depthConstants = {.nearPlane = activeCamera.nearPlane, .farPlane = activeCamera.farPlane, .linearize = 1, .doDepthBuffering = doDepthBuffering};
         commandBuffers[currentFrame].pushConstants<DepthPushConstants>(pipelineBuilder->getPipelineLayout(depthPipelineIndex),
                                                                        vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, depthConstants);
         commandBuffers[currentFrame].draw(3, 1, 0, 0);

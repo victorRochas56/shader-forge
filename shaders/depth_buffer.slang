@@ -3,7 +3,7 @@ struct PushConstants
     float nearPlane;
     float farPlane;
     int linearize;
-    int padding;
+    int depthBuffer;
 };
 
 [[vk::push_constant]]
@@ -26,7 +26,6 @@ VertexOutput vertMain(uint vertexID : SV_VertexID)
 {
     VertexOutput output;
     
-    // Generate fullscreen triangle
     output.texCoord = float2((vertexID << 1) & 2, vertexID & 2);
     output.texCoord.y = 1.0 - output.texCoord.y;
     output.position = float4(output.texCoord * 2.0 - 1.0, 0.0, 1.0);
@@ -37,6 +36,7 @@ VertexOutput vertMain(uint vertexID : SV_VertexID)
 [shader("fragment")]
 float4 fragMain(VertexOutput input) : SV_Target0
 {
+    if(pushConstants.depthBuffer ==0 ) { discard;}
     float depth = depthTexture[0].Sample(depthSampler[0], input.texCoord).r;
     
     if (pushConstants.linearize != 0)
@@ -47,6 +47,6 @@ float4 fragMain(VertexOutput input) : SV_Target0
                             depth * (pushConstants.farPlane - pushConstants.nearPlane));
         depth = linearDepth;
     }
-    
+    depth = pow(depth, 0.5);
     return float4(depth, depth, depth, 1.0);
 }

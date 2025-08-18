@@ -98,7 +98,7 @@ struct DepthPushConstants {
     float nearPlane;
     float farPlane;
     uint32_t linearize;
-    uint32_t padding1;
+    uint32_t doDepthBuffering;
 };
 
 struct Light {
