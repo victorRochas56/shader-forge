@@ -10,13 +10,13 @@ struct Line
 
 [[vk::push_constant]]
 ConstantBuffer<Line> lineConsts;
-/*
+
 [[vk::binding(0, 0)]]
 Texture2D bindlessTextures[];
 
 [[vk::binding(1, 0)]]
 SamplerState bindlessSamplers[];
-*/
+
 [[vk::binding(2, 0)]]
 ByteAddressBuffer bindlessVertexBuffers[];
 
@@ -57,7 +57,7 @@ VertexOutput vertMain(uint vertexID : SV_VertexID)
 {
     // load vertex data from bindless buffer
     Point point = loadPoint(
-        lineConsts.allocIndex,
+        0,
         vertexID,
         lineConsts.stride,
         lineConsts.offset

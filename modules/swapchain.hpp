@@ -2,7 +2,7 @@
 #ifndef VULKAN_HPP_DISPATCH_LOADER_DYNAMIC
 #define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1 // for raii
 #endif
-#ifndef VULKAN_HPP_NO_CONSTRUCTORS  
+#ifndef VULKAN_HPP_NO_CONSTRUCTORS
 #define VULKAN_HPP_NO_CONSTRUCTORS 1 // for structs constructors
 #endif
 #include <algorithm>
@@ -12,6 +12,7 @@
 #include <devices.hpp>
 #include <iostream>
 #include <limits>
+#include <resource_manager.hpp>
 #include <stdexcept>
 #include <unordered_map>
 #include <vector>
@@ -23,7 +24,8 @@
 class SwapChain {
 
   public:
-    SwapChain(GLFWwindow* window, const Devices* devices, vk::raii::SurfaceKHR* surface ,vk::raii::Instance* instance, bool& useVsync) : devices(devices), surface(surface) {
+    SwapChain(GLFWwindow* window, const Devices* devices, vk::raii::SurfaceKHR* surface, vk::raii::Instance* instance, ResourceManager* resourceManager, bool& useVsync)
+        : devices(devices), surface(surface), resourceManager(resourceManager) {
         createSwapChain(*window, useVsync);
         createImageViews();
     }
@@ -66,21 +68,26 @@ class SwapChain {
     void createColorResources(vk::SampleCountFlagBits msaaSamples) {
         vk::Format colorFormat = swapChainImageFormat;
 
-        createImage(swapChainExtent.width, swapChainExtent.height, 1, msaaSamples, colorFormat, vk::ImageTiling::eOptimal,
-                    vk::ImageUsageFlagBits::eTransientAttachment | vk::ImageUsageFlagBits::eColorAttachment, vk::MemoryPropertyFlagBits::eDeviceLocal, colorImage,
-                    colorImageMemory);
-        colorImageView = createImageView(colorImage, colorFormat, vk::ImageAspectFlagBits::eColor, 1);
+        resourceManager->createImage(swapChainExtent.width, swapChainExtent.height, 1, msaaSamples, colorFormat, vk::ImageTiling::eOptimal,
+                                     vk::ImageUsageFlagBits::eTransientAttachment | vk::ImageUsageFlagBits::eColorAttachment, vk::MemoryPropertyFlagBits::eDeviceLocal, colorImage,
+                                     colorImageMemory);
+        colorImageView = resourceManager->createImageView(colorImage, colorFormat, vk::ImageAspectFlagBits::eColor, 1);
     }
 
     void createDepthResources(vk::SampleCountFlagBits msaaSamples) {
         vk::Format depthFormat = findDepthFormat(&*devices);
-        createImage(swapChainExtent.width, swapChainExtent.height, 1, msaaSamples, depthFormat, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eDepthStencilAttachment,
-                    vk::MemoryPropertyFlagBits::eDeviceLocal, depthImage, depthImageMemory);
-        depthImageView = createImageView(depthImage, depthFormat, vk::ImageAspectFlagBits::eDepth, 1);
+        resourceManager->createImage(swapChainExtent.width, swapChainExtent.height, 1, msaaSamples, depthFormat, vk::ImageTiling::eOptimal,
+                                     vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, depthImage,
+                                     depthImageMemory);
+        depthImageView = resourceManager->createImageView(depthImage, depthFormat, vk::ImageAspectFlagBits::eDepth, 1);
+
+        resourceManager->transitionImageLayout(depthImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal, 1);
+        resourceManager->updateImageDescriptorSet(resourceManager->getDepthDescriptorSet(), 0, depthImageView);
     }
 
   private:
     const Devices* devices;
+    ResourceManager* resourceManager;
     vk::raii::SurfaceKHR* surface;
 
     vk::raii::SwapchainKHR swapChain = nullptr;
@@ -130,7 +137,7 @@ class SwapChain {
     }
 
     vk::PresentModeKHR chooseSwapPresentMode(const std::vector<vk::PresentModeKHR>& availablePresentModes, bool& useVsync) {
-        if(!useVsync){
+        if (!useVsync) {
             for (const auto& availablePresentMode : availablePresentModes) {
                 if (availablePresentMode == vk::PresentModeKHR::eMailbox) {
                     return availablePresentMode;
@@ -149,36 +156,6 @@ class SwapChain {
 
         return {std::clamp<uint32_t>(width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width),
                 std::clamp<uint32_t>(height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height)};
-    }
-
-    void createImage(uint32_t width, uint32_t height, uint32_t mipLevels, vk::SampleCountFlagBits numSamples, vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage,
-                     vk::MemoryPropertyFlags properties, vk::raii::Image& image, vk::raii::DeviceMemory& imageMemory) {
-
-        vk::ImageCreateInfo imageInfo{.imageType = vk::ImageType::e2D,
-                                      .format = format,
-                                      .extent = {width, height, 1},
-                                      .mipLevels = mipLevels,
-                                      .arrayLayers = 1,
-                                      .samples = numSamples,
-                                      .tiling = tiling,
-                                      .usage = usage,
-                                      .sharingMode = vk::SharingMode::eExclusive,
-                                      .initialLayout = vk::ImageLayout::eUndefined};
-
-        image = vk::raii::Image(devices->getLogicalDevice(), imageInfo);
-        vk::MemoryRequirements memRequirements = image.getMemoryRequirements();
-        vk::MemoryAllocateInfo allocInfo{.allocationSize = memRequirements.size, .memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties, &*devices)};
-
-        imageMemory = vk::raii::DeviceMemory(devices->getLogicalDevice(), allocInfo);
-        image.bindMemory(imageMemory, 0);
-    }
-
-    [[nodiscard]] vk::raii::ImageView createImageView(vk::raii::Image& image, vk::Format format, vk::ImageAspectFlags aspectFlags, uint32_t mipLevels) const {
-        vk::ImageViewCreateInfo viewInfo{.image = image,
-                                         .viewType = vk::ImageViewType::e2D,
-                                         .format = format,
-                                         .subresourceRange = {.aspectMask = aspectFlags, .baseMipLevel = 0, .levelCount = mipLevels, .baseArrayLayer = 0, .layerCount = 1}};
-        return vk::raii::ImageView(devices->getLogicalDevice(), viewInfo);
     }
 
     void createImageViews() {

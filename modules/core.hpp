@@ -40,7 +40,6 @@
 #endif
 
 // my modules
-#include <debug.hpp>
 #include <devices.hpp>
 #include <load_resources.hpp>
 #include <pipeline.hpp>
@@ -52,6 +51,12 @@
 ///
 
 constexpr int MAX_FRAMES_IN_FLIGHT = 2;
+constexpr int MAX_NODES = 2048;
+
+constexpr uint32_t SHOW_ALBEDO = 1;
+constexpr uint32_t SHOW_ROUGHNESS = 2;
+constexpr uint32_t SHOW_METALLIC = 3;
+constexpr uint32_t SHOW_NORMAL = 4;
 
 const std::vector validationLayers = {"VK_LAYER_KHRONOS_validation"};
 
@@ -59,8 +64,9 @@ class Renderer {
 
   public:
     Camera activeCamera;
-
+    bool canRayCast = false;
     Renderer() = default;
+    uint32_t selectedNode = MAX_NODES;
 
     void initVulkan(uint32_t start_width, uint32_t start_height) {
         createInstance();
@@ -68,20 +74,25 @@ class Renderer {
         createSurface();
         devices = std::make_unique<Devices>(instance, requiredDeviceExtension, surface);
         msaaSamples = getMaxUsableSampleCount();
-        swapChain = std::make_unique<SwapChain>(window, &*devices, &surface, &instance, vSync);
         createCommandPool();
-        resources = std::make_unique<BindlessResourceManager>(&*devices, &commandPool);
-        meshLoader = std::make_unique<MeshLoader>(*resources);
-        pipelineBuilder = std::make_unique<PipelineBuilder>(&*devices, &*resources, &*swapChain);
+        resourceManager = std::make_unique<ResourceManager>(&*devices, &commandPool);
+        swapChain = std::make_unique<SwapChain>(window, &*devices, &surface, &instance, &*resourceManager, vSync);
+        meshLoader = std::make_unique<MeshLoader>(*resourceManager, *devices);
+        pipelineBuilder = std::make_unique<PipelineBuilder>(&*devices, &*resourceManager, &*swapChain);
         graphicsPipeline = pipelineBuilder->createGraphicsPipeline(msaaSamples);
         linePipeline = pipelineBuilder->createLinePipeline(msaaSamples);
+        skyboxPipeline = pipelineBuilder->createCubemapPipeline(msaaSamples);
+        std::tie(depthPipelineIndex, depthPipeline) = pipelineBuilder->createDepthPipeline(msaaSamples);
+
         swapChain->createColorResources(msaaSamples);
         swapChain->createDepthResources(msaaSamples);
         createCommandBuffers();
         createSyncObjects();
+        resourceManager->initializeDefaults();
 
-        std::fill_n(meshUsage, MAX_VERTEX_ALLOCATIONS, 0);
-        std::fill_n(lightUsage, MAX_LIGHTS, 0);
+        (*meshUsage).fill(0);
+        (*lightUsage).fill(0);
+        (*nodeUsage).fill(0);
 
         activeCamera.position = glm::vec3(1.0f, 1.0f, 1.0f);
         activeCamera.lookAt(glm::vec3(0));
@@ -90,6 +101,8 @@ class Renderer {
         activeCamera.nearPlane = 0.05f;
         activeCamera.farPlane = 1000.0f;
         activeCamera.calculateViewProjectionMatrix();
+
+        rootNode.name = "Scene Root";
     }
 
     void drawFrame() {
@@ -160,111 +173,187 @@ class Renderer {
 
         currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
     }
-    
+
+    const vk::CommandPool& getCommandPool() const { return *commandPool; }
     const vk::Instance& getInstance() const { return *instance; }
     const Devices* getDevices() { return &*devices; }
+    ResourceManager* getResourceManager() const { return &*resourceManager; }
     SwapChain* getSwapChain() { return &*swapChain; }
     void cleanupSwapChain() { swapChain->cleanupSwapChain(); }
-    
-    BindlessResourceManager* getResourceManager() const { return &*resources; }
-    void initializeResourceDefaults() { resources->initializeDefaults(); }
-    
+
     GLFWwindow* getWindow() const { return window; }
     void setWindow(GLFWwindow* pWindow) { window = pWindow; }
-    
-    const vk::raii::CommandBuffer& getCurrentCommandBuffer() { return commandBuffers[currentFrame]; }
-    
+
     const vk::SampleCountFlagBits& getMsaaSamples() const { return msaaSamples; }
-    
+
     const uint32_t getGraphicsIndex() const { return graphicsIndex; }
-    
-    Node& getRootNode() {return rootNode; }
 
-    std::vector<Node&> rayCastNodes(glm::vec3 origin, glm::vec3 direction) {
+    ///////////////////////////////////////////////////////////////////////////////////////
+    // NODES
+    ///////////////////////////////////////////////////////////////////////////////////////
 
+    Node& getRootNode() { return rootNode; }
+    std::array<Node, MAX_NODES>& getNodes() { return *nodes; }
+
+    uint32_t addNode(Node* parent, std::string name = "empty", glm::vec3 position = glm::vec3(0), glm::quat rotation = glm::quat(1, 0, 0, 0), glm::vec3 scale = glm::vec3(1),
+                     bool worldSpace = false) {
+        int i = 0;
+        for (i = 0; i < MAX_NODES; i++) {
+            if ((*nodeUsage)[i] == 0) {
+                Node node;
+                (*nodes)[i] = node;
+                (*nodes)[i].name = name;
+                (*nodes)[i].resourceManager = &*resourceManager;
+                parent->addChild(&(*nodes)[i]);
+                if (worldSpace) {
+                    (*nodes)[i].updateWorldTransform(position, rotation, scale);
+                }
+                (*nodeUsage)[i] = 1;
+                return i;
+            }
+        }
+        if (i == MAX_NODES) {
+            throw std::runtime_error("exceeded node limit!");
+        }
+        return MAX_NODES;
     };
-    
+
+    std::vector<uint32_t> rayCastNodes(glm::vec3 origin, glm::vec3 direction) {
+        float margin = 0.05f;
+        glm::vec3 dir = glm::normalize(direction);
+        std::vector<uint32_t> foundNodes;
+
+        for (int i = 0; i < MAX_NODES; i++) {
+            if ((*nodeUsage)[i] == 0)
+                continue;
+
+            glm::vec3 nodeWorldLoc = glm::vec3((*nodes)[i].worldTransform[3]);
+            glm::vec3 toNode = nodeWorldLoc - origin;
+            // Project toNode onto the ray direction
+            float projectionLength = glm::dot(toNode, dir);
+            // Skip nodes behind the ray origin
+            if (projectionLength < 0)
+                continue;
+            // Find closest point on ray to the node
+            glm::vec3 closestPointOnRay = origin + dir * projectionLength;
+            // Calculate perpendicular distance from node to ray
+            float distanceToRay = glm::distance(nodeWorldLoc, closestPointOnRay);
+            if (distanceToRay < margin) {
+                foundNodes.push_back(i);
+            }
+        }
+        return foundNodes;
+    }
+
+    void selectNode(uint32_t nodeIndex) {
+        if ((*nodeUsage)[nodeIndex] != 0) {
+            selectedNode = nodeIndex;
+        }
+    }
+
+    void deSelectNode() { selectedNode = MAX_NODES; }
+
+    void addMeshComponent(Node* node, uint32_t meshIndex) {
+        node->meshIndex = meshIndex;
+        node->meshes = &*meshes;
+    };
+
+    void addLightComponent(Node* node, uint32_t lightIndex) {
+        node->lightIndex = lightIndex;
+        node->lights = &*lights;
+    };
+
+    ///////////////////////////////////////////////////////////////////////////////////////
+    // LOADING ASSETS
+    ///////////////////////////////////////////////////////////////////////////////////////
+
     uint32_t addMeshFromFile(std::string meshPath, std::string albedoTexPath = "", std::string roughnessTexPath = "", std::string metallicTexPath = "",
-                                std::string normalTexPath = "") {
+                             std::string normalTexPath = "") {
 
         int i = 0;
         for (i = 0; i < MAX_VERTEX_ALLOCATIONS; i++) {
-            if (meshUsage[i] == 0) {
-                meshes[i] = meshLoader->loadFromFile(meshPath, albedoTexPath, roughnessTexPath, metallicTexPath, normalTexPath);
-                meshUsage[i] = 1;
+            if ((*meshUsage)[i] == 0) {
+                (*meshes)[i] = meshLoader->loadFromFile(meshPath, albedoTexPath, roughnessTexPath, metallicTexPath, normalTexPath);
+                (*meshUsage)[i] = 1;
                 return i;
             }
         }
         if (i == MAX_VERTEX_ALLOCATIONS) {
             throw std::runtime_error("exceeded mesh limit!");
         }
-        return 0;
+        return MAX_VERTEX_ALLOCATIONS;
     }
 
-    uint32_t addPointLight(glm::vec3 color, float range, float intensity) {
+    void addEnvironmentMap(uint32_t width, uint32_t height, std::string posX, std::string negX, std::string posY, std::string negY, std::string posZ, std::string negZ) {
+        environmentMapIndex = meshLoader->loadCubeMapFromFiles(width, height, posX, negX, posY, negY, posZ, negZ);
+    }
 
+    ///////////////////////////////////////////////////////////////////////////////////////
+    // RENDERER FEATURES
+    ///////////////////////////////////////////////////////////////////////////////////////
+
+    uint32_t addPointLight(glm::vec3 color, float range, float intensity) {
         int i = 0;
         for (i = 0; i < MAX_LIGHTS; i++) {
-            if (lightUsage[i] == 0) {
-                Light light = {.position = glm::vec4(0, 0, 0, 1), .color = glm::vec4(color, 1), .range = range, .intensity = intensity};
-                light.allocationIndex = resources->allocateLightBuffer(light);
-                lights[i] = light;
-                lightUsage[i] = 1;
+            if ((*lightUsage)[i] == 0) {
+                Light light = {.position = glm::vec4(0, 0, 0, 1.0), .color = glm::vec4(color, 1), .range = range, .intensity = intensity};
+                light.allocationIndex = resourceManager->allocateLightBuffer(light);
+                (*lights)[i] = light;
+                (*lightUsage)[i] = 1;
                 return i;
             }
         }
         if (i == MAX_LIGHTS) {
             throw std::runtime_error("exceeded light limit!");
         }
-        return 0;
+        return MAX_LIGHTS;
     }
 
-    void addNode(Node* node, Node* parent, glm::vec3 position = glm::vec3(0), glm::quat rotation = glm::quat(1, 0, 0, 0), glm::vec3 scale = glm::vec3(1), bool worldSpace = false) {
-        node->resources = &*resources;
-        parent->addChild(node);
-        if (worldSpace) {
-            node->updateWorldTransform(position, rotation, scale);
+    void toggleVsync() {
+        vSync = !vSync;
+        swapChain->recreateSwapChain(window, &*devices, msaaSamples, vSync);
+    }
+
+    void showMap(uint32_t map) { debugMaps = map; }
+
+    uint32_t showFullPBR() {
+        if (debugMaps != 0) {
+            debugMaps = 0;
+            return 0;
         }
-    };
-
-    void addMeshComponent(Node* node, uint32_t meshIndex) {
-        node->meshIndex = meshIndex;
-        node->meshes = meshes;
-    };
-    
-    void addLightComponent(Node* node, uint32_t lightIndex) {
-        node->lightIndex = lightIndex;
-        node->lights = lights;
-    };
-
-
-
+        return 1;
+    }
 
   private:
     GLFWwindow* window = nullptr;
     vk::raii::Context context;
     vk::raii::Instance instance = nullptr;
     vk::raii::DebugUtilsMessengerEXT debugMessenger = nullptr;
-
     vk::raii::SurfaceKHR surface = nullptr;
 
     std::unique_ptr<Devices> devices = nullptr;
     std::unique_ptr<SwapChain> swapChain = nullptr;
-    std::unique_ptr<BindlessResourceManager> resources = nullptr;
+    std::unique_ptr<ResourceManager> resourceManager = nullptr;
     std::unique_ptr<MeshLoader> meshLoader = nullptr;
     std::unique_ptr<PipelineBuilder> pipelineBuilder = nullptr;
 
     vk::raii::Pipeline graphicsPipeline = nullptr;
     vk::raii::Pipeline linePipeline = nullptr;
+    vk::raii::Pipeline skyboxPipeline = nullptr;
+    vk::raii::Pipeline depthPipeline = nullptr;
+    size_t depthPipelineIndex = 0;
+
     vk::raii::CommandPool commandPool = nullptr;
     std::vector<vk::raii::CommandBuffer> commandBuffers;
     uint32_t graphicsIndex = 0;
 
     Node rootNode;
-    Light lights[MAX_LIGHTS];
-    uint32_t lightUsage[MAX_LIGHTS];
-    Mesh meshes[MAX_VERTEX_ALLOCATIONS];
-    uint32_t meshUsage[MAX_VERTEX_ALLOCATIONS];
+    std::unique_ptr<std::array<Node, MAX_NODES>> nodes = std::make_unique<std::array<Node, MAX_NODES>>();
+    std::unique_ptr<std::array<uint32_t, MAX_NODES>> nodeUsage = std::make_unique<std::array<uint32_t, MAX_NODES>>();
+    std::unique_ptr<std::array<Light, MAX_LIGHTS>> lights = std::make_unique<std::array<Light, MAX_LIGHTS>>();
+    std::unique_ptr<std::array<uint32_t, MAX_LIGHTS>> lightUsage = std::make_unique<std::array<uint32_t, MAX_LIGHTS>>();
+    std::unique_ptr<std::array<Mesh, MAX_VERTEX_ALLOCATIONS>> meshes = std::make_unique<std::array<Mesh, MAX_VERTEX_ALLOCATIONS>>();
+    std::unique_ptr<std::array<uint32_t, MAX_VERTEX_ALLOCATIONS>> meshUsage = std::make_unique<std::array<uint32_t, MAX_VERTEX_ALLOCATIONS>>();
 
     std::vector<vk::raii::Semaphore> presentCompleteSemaphores;
     std::vector<vk::raii::Semaphore> renderFinishedSemaphores;
@@ -276,7 +365,10 @@ class Renderer {
     bool framebufferResized = false;
 
     vk::SampleCountFlagBits msaaSamples = vk::SampleCountFlagBits::e1;
-    bool vSync = false;
+    bool vSync = true;
+
+    uint32_t environmentMapIndex = MAX_BINDLESS_TEXTURES;
+    uint32_t debugMaps = 0;
 
     std::vector<const char*> requiredDeviceExtension = {VK_KHR_SWAPCHAIN_EXTENSION_NAME,           VK_KHR_SPIRV_1_4_EXTENSION_NAME,
                                                         VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,   VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME,
@@ -438,19 +530,30 @@ class Renderer {
 
         commandBuffers[currentFrame].beginRendering(renderingInfo);
 
-        // drawing meshes
-        commandBuffers[currentFrame].bindPipeline(vk::PipelineBindPoint::eGraphics, *graphicsPipeline);
-        commandBuffers[currentFrame].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineBuilder->getPipelineLayout(size_t(0)), 0, {resources->getDescriptorSet()},
-                                                        nullptr);
         commandBuffers[currentFrame].setViewport(
             0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapChain->getSwapChainExtent().width), static_cast<float>(swapChain->getSwapChainExtent().height), 0.0f, 1.0f));
         commandBuffers[currentFrame].setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChain->getSwapChainExtent()));
 
+        // skybox
+        commandBuffers[currentFrame].bindPipeline(vk::PipelineBindPoint::eGraphics, *skyboxPipeline);
+        commandBuffers[currentFrame].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineBuilder->getPipelineLayout(size_t(2)), 0, {resourceManager->getDescriptorSet()},
+                                                        nullptr);
+        SkyBoxConstants skyboxConstants = {
+            .skyboxIndex = environmentMapIndex, .padding1 = 0, .padding2 = 0, .padding3 = 0, .invViewProjMatrix = glm::inverse(activeCamera.viewProjection)};
+        commandBuffers[currentFrame].pushConstants<SkyBoxConstants>(pipelineBuilder->getPipelineLayout(size_t(2)),
+                                                                    vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, skyboxConstants);
+        commandBuffers[currentFrame].draw(3, 1, 0, 0);
+
+        // drawing meshes
+        commandBuffers[currentFrame].bindPipeline(vk::PipelineBindPoint::eGraphics, *graphicsPipeline);
+        commandBuffers[currentFrame].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineBuilder->getPipelineLayout(size_t(0)), 0, {resourceManager->getDescriptorSet()},
+                                                        nullptr);
+
         for (int i = 0; i < MAX_VERTEX_ALLOCATIONS; i++) {
-            if (meshUsage[i] == 0) {
+            if ((*meshUsage)[i] == 0) {
                 continue;
             }
-            Mesh mesh = meshes[i];
+            Mesh mesh = (*meshes)[i];
             PushConstants pushConstants = {.vertexBufferIndex = mesh.vertexAllocationIndex,
                                            .vertexOffset = static_cast<uint32_t>(mesh.vertexOffset), // Convert byte offset to element offset
                                            .vertexStride = mesh.vertexStride,
@@ -460,7 +563,9 @@ class Renderer {
                                            .metallicTextureIndex = mesh.metallicTextureIndex,
                                            .normalTextureIndex = mesh.normalTextureIndex,
                                            .samplerIndex = mesh.samplerIndex,
-                                           .lightCount = resources->getLightCount(),
+                                           .lightCount = resourceManager->getLightCount(),
+                                           .environmentMapIndex = environmentMapIndex,
+                                           .debugMaps = debugMaps,
                                            .viewProjection = activeCamera.viewProjection,
                                            .cameraPos = glm::vec4(activeCamera.position, 1.0)};
 
@@ -471,15 +576,29 @@ class Renderer {
 
         // drawing lines
         commandBuffers[currentFrame].bindPipeline(vk::PipelineBindPoint::eGraphics, *linePipeline);
-        commandBuffers[currentFrame].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineBuilder->getPipelineLayout(size_t(1)), 0, {resources->getDescriptorSet()},
+        commandBuffers[currentFrame].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineBuilder->getPipelineLayout(size_t(1)), 0, {resourceManager->getDescriptorSet()},
                                                         nullptr);
-        for (const auto& line : lines) {
-            Line lineConstants = {.viewProjection = activeCamera.viewProjection, .allocIndex = line.allocIndex, .offset = line.offset, .stride = line.stride};
-            commandBuffers[currentFrame].pushConstants<Line>(pipelineBuilder->getPipelineLayout(size_t(1)), vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
-                                                             0, lineConstants);
-            commandBuffers[currentFrame].draw(2, 1, 0, 0);
+        for (int i = 0; i < MAX_LINES; i++) {
+            if ((*lineUsage)[i] != 0) {
+                std::array<uint32_t, MAX_LINES> lineused = *lineUsage;
+                LineAlloc line = (*lineAllocs)[i];
+                LineAlloc lineConstants = {.viewProjection = activeCamera.viewProjection, .allocIndex = line.allocIndex, .offset = line.offset, .stride = line.stride};
+                commandBuffers[currentFrame].pushConstants<LineAlloc>(pipelineBuilder->getPipelineLayout(size_t(1)),
+                                                                      vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, lineConstants);
+                commandBuffers[currentFrame].draw(2, 1, 0, 0);
+            }
         }
 
+        // depth buffer view
+        resourceManager->transitionImageLayout(swapChain->getDepthImage(), vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, 1);
+        commandBuffers[currentFrame].bindPipeline(vk::PipelineBindPoint::eGraphics, *depthPipeline);
+        commandBuffers[currentFrame].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineBuilder->getPipelineLayout(depthPipelineIndex), 0,
+                                                        {resourceManager->getDepthDescriptorSet()}, nullptr);
+        DepthPushConstants depthConstants = {.nearPlane = activeCamera.nearPlane, .farPlane = activeCamera.farPlane, .linearize = 1};
+        commandBuffers[currentFrame].pushConstants<DepthPushConstants>(pipelineBuilder->getPipelineLayout(depthPipelineIndex),
+                                                                       vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, depthConstants);
+        commandBuffers[currentFrame].draw(3, 1, 0, 0);
+        resourceManager->transitionImageLayout(swapChain->getDepthImage(), vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal, 1);
         // ui
         ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), *commandBuffers[currentFrame]);
 

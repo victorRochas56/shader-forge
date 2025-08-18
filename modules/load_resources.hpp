@@ -2,7 +2,7 @@
 #ifndef VULKAN_HPP_DISPATCH_LOADER_DYNAMIC
 #define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1 // for raii
 #endif
-#ifndef VULKAN_HPP_NO_CONSTRUCTORS  
+#ifndef VULKAN_HPP_NO_CONSTRUCTORS
 #define VULKAN_HPP_NO_CONSTRUCTORS 1 // for structs constructors
 #endif
 #include <algorithm>
@@ -43,10 +43,11 @@
 #include <tiny_obj_loader.h>
 
 class MeshLoader {
-    BindlessResourceManager* resourceManager;
+    ResourceManager* resourceManager;
+    Devices* devices;
 
   public:
-    MeshLoader(BindlessResourceManager& manager) : resourceManager(&manager) {}
+    MeshLoader(ResourceManager& manager, Devices& devices) : resourceManager(&manager), devices(&devices) {}
 
     // Load mesh from vertex data
     Mesh loadMesh(const std::vector<Vertex>& vertices, const std::string& albedoTexturePath, const std::string& roughnessTexturePath, const std::string& metallicTexturePath,
@@ -59,32 +60,31 @@ class MeshLoader {
         // Load textures
         uint32_t albedoTextureIndex;
         if (!albedoTexturePath.empty()) {
-            auto albedoTextureData = loadTextureFromFile(albedoTexturePath);
-            albedoTextureIndex = resourceManager->loadTexture(albedoTextureData.data, albedoTextureData.width, albedoTextureData.height);
+            auto albedoTextureData = loadTextureFromFileImpl(albedoTexturePath);
+            albedoTextureIndex = resourceManager->allocateTexture(albedoTextureData.data, albedoTextureData.width, albedoTextureData.height);
         } else {
             albedoTextureIndex = resourceManager->getWhiteTextureIndex(); // Use default
         }
-
         uint32_t rougnessTextureIndex;
         if (!roughnessTexturePath.empty()) {
-            auto roughnessTextureData = loadTextureFromFile(roughnessTexturePath);
-            rougnessTextureIndex = resourceManager->loadTexture(roughnessTextureData.data, roughnessTextureData.width, roughnessTextureData.height);
+            auto roughnessTextureData = loadTextureFromFileImpl(roughnessTexturePath);
+            rougnessTextureIndex = resourceManager->allocateTexture(roughnessTextureData.data, roughnessTextureData.width, roughnessTextureData.height);
         } else {
             rougnessTextureIndex = resourceManager->getWhiteTextureIndex(); // Use default
         }
 
         uint32_t metallicTextureIndex;
         if (!metallicTexturePath.empty()) {
-            auto metallicTextureData = loadTextureFromFile(metallicTexturePath);
-            metallicTextureIndex = resourceManager->loadTexture(metallicTextureData.data, metallicTextureData.width, metallicTextureData.height);
+            auto metallicTextureData = loadTextureFromFileImpl(metallicTexturePath);
+            metallicTextureIndex = resourceManager->allocateTexture(metallicTextureData.data, metallicTextureData.width, metallicTextureData.height);
         } else {
             metallicTextureIndex = resourceManager->getBlackTextureIndex(); // Use default
         }
 
         uint32_t normalTextureIndex;
         if (!normalTexturePath.empty()) {
-            auto normalTextureData = loadTextureFromFile(normalTexturePath);
-            normalTextureIndex = resourceManager->loadTexture(normalTextureData.data, normalTextureData.width, normalTextureData.height, vk::Format::eR8G8B8A8Unorm);
+            auto normalTextureData = loadTextureFromFileImpl(normalTexturePath);
+            normalTextureIndex = resourceManager->allocateTexture(normalTextureData.data, normalTextureData.width, normalTextureData.height, vk::Format::eR8G8B8A8Unorm);
         } else {
             normalTextureIndex = resourceManager->getDefaultNormalIndex(); // Use default
         }
@@ -92,10 +92,10 @@ class MeshLoader {
         // Create model matrix
         uint32_t modelMatrixIndex = resourceManager->allocateModelMatrixBuffer(position, rotation, scale);
 
-        // Use default sampler (or create custom one)
+        // Use default sampler
         uint32_t samplerIndex = resourceManager->getDefaultSamplerIndex();
 
-        // Create mesh object
+        // Create mesh struct
         return Mesh{.vertexAllocationIndex = vertexInfo.allocationIndex,
                     .vertexOffset = vertexInfo.offset,
                     .vertexCount = vertexInfo.vertexCount,
@@ -109,9 +109,9 @@ class MeshLoader {
     }
 
     // load from file (OBJ, GLTF, etc.)
-    Mesh loadFromFile(const std::string& meshPath, const std::string& albedoTexturePath, const std::string& roughnessTexturePath, const std::string& metallicTexturePath,
-                      const std::string& normalTexturePath, glm::vec3 position = glm::vec3(0.0f), glm::quat rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
-                      glm::vec3 scale = glm::vec3(1.0f)) {
+    Mesh loadFromFile(const std::string& meshPath, const std::string& albedoTexturePath = "", const std::string& roughnessTexturePath = "",
+                      const std::string& metallicTexturePath = "", const std::string& normalTexturePath = "", glm::vec3 position = glm::vec3(0.0f),
+                      glm::quat rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f), glm::vec3 scale = glm::vec3(1.0f)) {
 
         auto meshData = loadMeshFromFile(meshPath);
 
@@ -124,7 +124,7 @@ class MeshLoader {
         resourceManager->updateModelMatrix(mesh.modelMatrixIndex, position, rotation, scale);
     }
 
-    // Update mesh vertices (for dynamic meshes)
+    // Update mesh vertices
     void updateMeshVertices(Mesh& mesh, const std::vector<Vertex>& newVertices) {
         if (newVertices.size() != mesh.vertexCount) {
             throw std::runtime_error("Vertex count mismatch - cannot update");
@@ -138,7 +138,36 @@ class MeshLoader {
         resourceManager->freeVertexBuffer(mesh.vertexAllocationIndex);
         resourceManager->freeModelMatrix(mesh.modelMatrixIndex);
 
-        // Don't free texture/sampler if they might be shared
+        // Don't free texture/sampler as they might be shared
+    }
+
+    uint32_t loadTextureFromFile(const std::string& path, vk::Format format = vk::Format::eR8G8B8A8Srgb, vk::ImageType imageType = vk::ImageType::e2D,
+                                 vk::ImageViewType viewType = vk::ImageViewType::e2D) {
+        auto textureData = loadTextureFromFileImpl(path);
+        return resourceManager->allocateTexture(textureData.data, textureData.width, textureData.height, format, imageType, viewType);
+    }
+
+    uint32_t loadCubeMapFromFiles(uint32_t width, uint32_t height, std::string posX, std::string negX, std::string posY, std::string negY, std::string posZ,
+                                  std::string negZ) {
+
+        std::vector<std::string> faceFiles = {posX, negX, posY, negY, posZ, negZ};
+        // Load all 6 face data into a single buffer
+        size_t faceSize = width * height * 4;
+        size_t totalSize = faceSize * 6;
+        std::vector<unsigned char> allFaceData(totalSize);
+
+        for (int face = 0; face < 6; face++) {
+            int imgWidth, imgHeight, channels;
+            unsigned char* imageData = stbi_load(faceFiles[face].c_str(), &imgWidth, &imgHeight, &channels, STBI_rgb_alpha);
+            if (!imageData) {
+                throw std::runtime_error("Failed to load face: " + faceFiles[face]);
+            }
+
+            // Copy face data to the combined buffer
+            memcpy(allFaceData.data() + face * faceSize, imageData, faceSize);
+            stbi_image_free(imageData);
+        }
+        return resourceManager->allocateCubemap(allFaceData.data(), width, height, vk::Format::eR8G8B8A8Srgb, vk::ImageType::e2D, vk::ImageViewType::eCube);
     }
 
   private:
@@ -155,9 +184,9 @@ class MeshLoader {
         std::vector<Vertex> vertices;
     };
 
-    TextureData loadTextureFromFile(const std::string& path) {
+    TextureData loadTextureFromFileImpl(const std::string& path) {
         int width, height, channels;
-        unsigned char* data = stbi_load(path.c_str(), &width, &height, &channels, STBI_rgb_alpha); 
+        unsigned char* data = stbi_load(path.c_str(), &width, &height, &channels, STBI_rgb_alpha);
         if (!data) {
             throw std::runtime_error("Failed to load texture: " + path);
         }

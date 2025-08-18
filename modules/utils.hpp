@@ -58,7 +58,9 @@ vk::Format findDepthFormat(const Devices* devices) {
                                 vk::FormatFeatureFlagBits::eDepthStencilAttachment, &*devices);
 }
 
-//READING FILES///
+///////////////////////////////////////////////////////////////////////////////////////
+// READING FILES
+///////////////////////////////////////////////////////////////////////////////////////
 
 static std::vector<char> readFile(const std::string& filename) {
     std::ifstream file(filename, std::ios::ate | std::ios::binary);
@@ -72,6 +74,9 @@ static std::vector<char> readFile(const std::string& filename) {
     return buffer;
 }
 
+///////////////////////////////////////////////////////////////////////////////////////
+// EXTRA MATH
+///////////////////////////////////////////////////////////////////////////////////////
 void decomposeMatrix(const glm::mat4& matrix, glm::vec3& translation, glm::quat& rotation, glm::vec3& scale) {
     // Extract translation (4th column)
     translation = glm::vec3(matrix[3]);

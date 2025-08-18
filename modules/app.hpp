@@ -10,9 +10,14 @@
 #include "include/imgui_impl_vulkan.h"
 #include <chrono>
 #include <core.hpp>
-#include <debug.hpp>
 #include <gui.hpp>
 #include <input_callbacks.hpp>
+#include <scene_elements.hpp>
+
+#define GLM_FORCE_RADIANS
+#define GLM_DEPTH_ZERO_TO_ONE
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 class App {
 
@@ -23,41 +28,37 @@ class App {
         initWindow();
         inputManager = &InputManager::getInstance();
         inputManager->setRenderer(&renderer);
+
         renderer.setWindow(window);
         renderer.initVulkan(start_width, start_height);
-        renderer.initializeResourceDefaults();
         initIMGUI(&renderer);
 
-        Node meshNode;
-        renderer.addNode(&meshNode,&renderer.getRootNode());
-        renderer.addMeshComponent(&meshNode,
-            renderer.addMeshFromFile("models/vase.obj", "textures/vase_diffuse.jpg", "textures/vase_roughness.jpg", "", "textures/vase_normal.png"));
-        
-        meshNode.updateWorldScale(glm::vec3(0.001));
-        
-        addAxes(glm::vec3(0, 0, 0), 0.1, renderer.getResourceManager());
+        uint32_t meshNode = renderer.addNode(&renderer.getRootNode(), "mesh");
+        renderer.addMeshComponent(&renderer.getNodes()[meshNode],
+                                  renderer.addMeshFromFile("models/vase.obj", "textures/vase_diffuse.jpg", "textures/vase_roughness.jpg", "", "textures/vase_normal.png"));
 
-        Node lightNode0 ;
-        renderer.addNode(&lightNode0,&renderer.getRootNode());
-        Node lightNode1 ;
-        renderer.addNode(&lightNode1,&renderer.getRootNode());
-        Node lightNode2 ;
-        renderer.addNode(&lightNode2,&renderer.getRootNode());
-        renderer.addLightComponent(&lightNode0,renderer.addPointLight(glm::vec3(1.0), 100, 20));
-        renderer.addLightComponent(&lightNode1,renderer.addPointLight(glm::vec3(1.0), 100, 10));
-        renderer.addLightComponent(&lightNode2,renderer.addPointLight(glm::vec3(1.0), 100, 20));
-        
-        lightNode0.updateWorldPosition(glm::vec3(0.5,0.5,0));
-        lightNode1.updateWorldPosition(glm::vec3(-0.5,-0.5,-0.5));
-        lightNode2.updateWorldPosition(glm::vec3(0.5,0,0.5));
+        renderer.addEnvironmentMap(2048, 2048, "textures/posx.jpg", "textures/negx.jpg", "textures/posy.jpg", "textures/negy.jpg", "textures/posz.jpg",
+                                   "textures/negz.jpg");
+
+        renderer.getNodes()[meshNode].updateWorldScale(glm::vec3(0.001));
+
+        uint32_t lightNode0 = renderer.addNode(&renderer.getRootNode(), "light0");
+        uint32_t lightNode1 = renderer.addNode(&renderer.getRootNode(), "light1");
+        uint32_t lightNode2 = renderer.addNode(&renderer.getRootNode(), "light2");
+        renderer.addLightComponent(&renderer.getNodes()[lightNode0], renderer.addPointLight(glm::vec3(1.0), 100, 20));
+        renderer.addLightComponent(&renderer.getNodes()[lightNode1], renderer.addPointLight(glm::vec3(1.0), 100, 10));
+        renderer.addLightComponent(&renderer.getNodes()[lightNode2], renderer.addPointLight(glm::vec3(1.0,0,0), 100, 20));
+
+        renderer.getNodes()[lightNode0].updateWorldPosition(glm::vec3(0.5, 0.5, 0));
+        renderer.getNodes()[lightNode1].updateWorldPosition(glm::vec3(-0.5, -0.5, -0.5));
+        renderer.getNodes()[lightNode2].updateWorldPosition(glm::vec3(0.5, 0, 0.5));
 
         for (auto& node : renderer.getRootNode().children) {
-            addAxes(node->transform.position,0.1,renderer.getResourceManager());
-            glm::vec3 currentWorldPos;
-            glm::quat currentWorldRot;
-            glm::vec3 currentWorldScale;
-            decomposeMatrix(node->worldTransform, currentWorldPos, currentWorldRot, currentWorldScale);
-            addAxes(currentWorldPos,0.1,renderer.getResourceManager());
+            Gizmo gizmo = {.resourceManager = renderer.getResourceManager()};
+            gizmo.addAxes(glm::vec3(0, 0, 0), 0.1);
+            node->gizmo = gizmo;
+            node->hasGizmo = true;
+            node->calculateWorldTransform();
         }
         mainLoop();
         cleanup();
@@ -92,11 +93,13 @@ class App {
         std::chrono::steady_clock::time_point frame_end = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> frame_time = frame_end - frame_start;
 
+        //main app loop
         while (!glfwWindowShouldClose(window)) {
             frame_start = std::chrono::high_resolution_clock::now();
 
             glfwPollEvents();
-
+            
+            //start the imgui frame
             ImGui_ImplVulkan_NewFrame();
             ImGui_ImplGlfw_NewFrame();
             ImGui::NewFrame();
@@ -104,14 +107,24 @@ class App {
             std::string frame_time_str = std::to_string(frame_time.count() * 1000) + " ms";
             ImGui::Text(frame_time_str.c_str());
             ImGui::End();
+            
+            ImGui::Begin("node tree");
+            traverseNodeTree(renderer.getRootNode(),0, &renderer);
+            ImGui::End();
+
+            //show info about the selected node
+            if (renderer.selectedNode != MAX_NODES) {
+                renderer.getNodes()[renderer.selectedNode].showInfo();
+            }
+            //render the imgui frame
             ImGui::Render();
-
+            //finally draw the frame
             renderer.drawFrame();
-
-            inputManager->tickInputState();
-
+            
             frame_end = std::chrono::high_resolution_clock::now();
             frame_time = frame_end - frame_start;
+            
+            inputManager->tickInputState();
         }
         renderer.getDevices()->getLogicalDevice().waitIdle();
     }

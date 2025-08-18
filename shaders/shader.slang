@@ -11,8 +11,8 @@ struct PushConstants
     uint normalTextureIndex;
     uint samplerIndex;
     uint lightCount;
-    uint padding1;
-    uint padding2;
+    uint environmentMapIndex;
+    uint debugMaps;
     float4x4 viewProjection;
     float4 cameraPos;
 };
@@ -34,6 +34,9 @@ StructuredBuffer<float4x4> bindlessModelMatrices[];
 
 [[vk::binding(4,0)]]
 StructuredBuffer<PointLight> lights[];
+
+[[vk::binding(5,0)]]
+TextureCube cubemaps[];
 
 struct PointLight{
     float4 position;
@@ -110,10 +113,10 @@ VertexOutput vertMain(uint vertexID : SV_VertexID)
     return output;
 }
 
-float3 fresnelSchlick(float cosTheta, float3 F0)
+float3 fresnelSchlick(float cosTheta, float3 F0, float roughness)
 {
-    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
-}  
+    return F0 + (max(float3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+} 
 
 float DistributionGGX(float3 N, float3 H, float roughness)
 {
@@ -148,6 +151,30 @@ float GeometrySmith(float3 N, float3 V, float3 L, float roughness)
 	
     return ggx1 * ggx2;
 }
+
+// Calculate specular IBL contribution  
+float3 calculateSpecularIBL(float3 N, float3 V, float roughness, float3 F0, TextureCube envMap, SamplerState envSampler)
+{
+    // Calculate reflection vector
+    float3 R = reflect(-V, N);
+    
+    // Sample environment map with roughness-based mip level
+    // For proper IBL, you'd use a prefiltered environment map
+    float mipLevel = roughness * 7.0; // Assuming 8 mip levels (0-7)
+    float3 prefilteredColor = envMap.SampleLevel(envSampler, R, mipLevel).rgb;
+    
+    // Simplified BRDF approximation (normally you'd use a BRDF LUT)
+    float NdotV = max(dot(N, V), 0.0);
+    float3 F = fresnelSchlick(NdotV, F0, roughness);
+    
+    // Simple approximation for the BRDF integration
+    float2 envBRDF;
+    envBRDF.x = lerp(0.0, 1.0, 1.0 - roughness);
+    envBRDF.y = lerp(0.0, 1.0, NdotV);
+    
+    return prefilteredColor * (F * envBRDF.x + envBRDF.y);
+}
+
 struct FragmentOutput
 {
     float4 color : SV_Target0;
@@ -166,6 +193,25 @@ FragmentOutput fragMain(VertexOutput input)
     float normalIntensity = 1.0;
     normalMap.xy *= normalIntensity; 
     normalMap = normalize(normalMap);
+
+    switch(pc.debugMaps){
+        case 1 : {
+            output.color  = albedo;
+            return output;
+        }
+        case 2 : {
+            output.color = roughness;
+            return output;
+        }
+        case 3 : {
+            output.color = metallic;
+            return output;
+        }
+        case 4 : {
+            output.color = float4(normalMap,1.0);
+            return output;
+        }
+    }
     // Create TBN matrix
     float3 T = normalize(input.tangent);
     float3 B = normalize(input.bitangent);
@@ -185,16 +231,19 @@ FragmentOutput fragMain(VertexOutput input)
     float3 Lo = float3(0.0);
 
     for(int i = 0; i<pc.lightCount; i++){
+        float distance    = length(lights[0][i].position.xyz - input.worldPos);
+        if(distance > lights[0][i].range){
+            continue;
+        }
         float3 L = normalize(lights[0][i].position.xyz - input.worldPos);
         float3 H = normalize(V + L);
-        float distance    = length(lights[0][i].position.xyz - input.worldPos);
         float attenuation = 1.0 / (distance * distance);
         float3 radiance     = lights[0][i].color.rgb * lights[0][i].intensity *attenuation;        
         
         // cook-torrance brdf
         float NDF = DistributionGGX(N, H, roughness.r);        
         float G   = GeometrySmith(N, V, L, roughness.r);      
-        float3 F    = fresnelSchlick(max(dot(H, V), 0.0), F0);       
+        float3 F    = fresnelSchlick(max(dot(H, V), 0.0), F0, roughness.r);       
         
         float3 kS = F;
         float3 kD = float3(1.0) - kS;
@@ -208,9 +257,21 @@ FragmentOutput fragMain(VertexOutput input)
         float NdotL = max(dot(N, L), 0.0);                
         Lo += (1.0* albedo.rgb / 3.14159265 + specular) * radiance * NdotL;
     }
-
-    float3 ambient = float3(0.03) * albedo.rgb;
-    float3 color = ambient + Lo;
+    
+    // Image-Based Lighting (IBL)
+    TextureCube envMap = cubemaps[pc.environmentMapIndex];
+    SamplerState envSampler = bindlessSamplers[pc.samplerIndex];
+        
+    // Calculate specular IBL
+    float3 specularIBL = calculateSpecularIBL(N, V, roughness.r, F0, envMap, envSampler);
+    
+    // Combine direct lighting with IBL
+    float3 kS = fresnelSchlick(max(dot(N, V), 0.0), F0, roughness.r);
+    
+    // Final IBL contribution
+    float ao = 1.0; // You might want to add an AO texture
+    float3 color = kS * specularIBL + Lo;
     output.color = float4(color, 1.0);
+
     return output;
 }

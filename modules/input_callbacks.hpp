@@ -1,7 +1,8 @@
 #pragma once
-#include <core.hpp>
 #include <GLFW/glfw3.h>
+#include <core.hpp>
 #include <glm/glm.hpp>
+#include <scene_elements.hpp>
 #include <unordered_map>
 
 struct InputState {
@@ -14,7 +15,7 @@ struct InputState {
 };
 
 class InputManager {
-public:
+  public:
     static InputManager& getInstance() {
         static InputManager instance;
         return instance;
@@ -47,6 +48,41 @@ public:
             renderer->activeCamera.moveCamera(moveVector);
         }
 
+        // raycast on left click
+        if (current.mouse_button == 0 && current.mouse_action == 1 && previous.mouse_action != 1) {
+            int width = 0, height = 0;
+            glfwGetWindowSize(renderer->getWindow(), &width, &height);
+            float NDCx = (current.mousePos.x / width) * 2.0 - 1.0;
+            float NDCy = (current.mousePos.y / height) * 2.0 - 1.0;
+            glm::vec3 origin;
+            glm::vec3 direction;
+            renderer->activeCamera.rayFromScreenCoords(NDCx, NDCy, &origin, &direction);
+            std::vector<uint32_t> hitNodes = renderer->rayCastNodes(origin, direction);
+            if (!hitNodes.empty()) {
+                renderer->selectNode(hitNodes.front());
+            }
+        }
+        if (current.keyStates[GLFW_KEY_ESCAPE] == GLFW_PRESS && previous.keyStates[GLFW_KEY_ESCAPE] != GLFW_PRESS) {
+            if (renderer->showFullPBR() == 1) {
+                renderer->deSelectNode();
+            }
+        }
+        if (current.keyStates[GLFW_KEY_V] == GLFW_PRESS && previous.keyStates[GLFW_KEY_V] != GLFW_PRESS) {
+            renderer->toggleVsync();
+        }
+        if (current.keyStates[GLFW_KEY_C] == GLFW_PRESS && previous.keyStates[GLFW_KEY_C] != GLFW_PRESS) {
+            renderer->showMap(SHOW_ALBEDO);
+        }
+        if (current.keyStates[GLFW_KEY_R] == GLFW_PRESS && previous.keyStates[GLFW_KEY_R] != GLFW_PRESS) {
+            renderer->showMap(SHOW_ROUGHNESS);
+        }
+        if (current.keyStates[GLFW_KEY_M] == GLFW_PRESS && previous.keyStates[GLFW_KEY_M] != GLFW_PRESS) {
+            renderer->showMap(SHOW_METALLIC);
+        }
+        if (current.keyStates[GLFW_KEY_N] == GLFW_PRESS && previous.keyStates[GLFW_KEY_N] != GLFW_PRESS) {
+            renderer->showMap(SHOW_NORMAL);
+        }
+
         current.mouseDelta = current.mousePos - previous.mousePos;
         previous = current;
     }
@@ -56,23 +92,15 @@ public:
         getInstance().current.mouse_action = action;
     }
 
-    static void cursor_position_callback(GLFWwindow* window, double xpos, double ypos) {
-        getInstance().current.mousePos = glm::vec2(xpos, ypos);
-    }
+    static void cursor_position_callback(GLFWwindow* window, double xpos, double ypos) { getInstance().current.mousePos = glm::vec2(xpos, ypos); }
 
-    static void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) {
-        getInstance().current.keyStates[key] = action;
-    }
+    static void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) { getInstance().current.keyStates[key] = action; }
 
-    static void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
-        // Handle scroll if needed
-    }
+    static void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {}
 
-    void setRenderer(Renderer* pRenderer) {
-        renderer = pRenderer;
-    }
+    void setRenderer(Renderer* pRenderer) { renderer = pRenderer; }
 
-private:
+  private:
     InputState current, previous;
     Renderer* renderer;
 };

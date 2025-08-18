@@ -43,7 +43,7 @@
 class PipelineBuilder {
 
   public:
-    PipelineBuilder(const Devices* devices, const BindlessResourceManager* resources, SwapChain* swapChain) : devices(devices), resources(resources), swapChain(swapChain) {}
+    PipelineBuilder(const Devices* devices, const ResourceManager* resources, SwapChain* swapChain) : devices(devices), resources(resources), swapChain(swapChain) {}
 
     const vk::raii::PipelineLayout& getPipelineLayout(int index) {
         if (index < pipelineLayouts.size()) {
@@ -165,7 +165,7 @@ class PipelineBuilder {
         std::vector dynamicStates = {vk::DynamicState::eViewport, vk::DynamicState::eScissor};
         vk::PipelineDynamicStateCreateInfo dynamicState{.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()), .pDynamicStates = dynamicStates.data()};
 
-        vk::PushConstantRange pushConstantRange{.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, .offset = 0, .size = sizeof(Line)};
+        vk::PushConstantRange pushConstantRange{.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, .offset = 0, .size = sizeof(LineAlloc)};
 
         vk::PipelineLayoutCreateInfo pipelineLayoutInfo{
             .setLayoutCount = 1, 
@@ -197,10 +197,152 @@ class PipelineBuilder {
         return vk::raii::Pipeline(devices->getLogicalDevice(), nullptr, pipelineInfo);
     }
 
+    vk::raii::Pipeline createCubemapPipeline(vk::SampleCountFlagBits msaaSamples) {
+        size_t index = pipelineLayouts.size();
+
+        vk::raii::ShaderModule shaderModule = createShaderModule(readFile("shaders/skybox.spv"), &*devices);
+        vk::PipelineShaderStageCreateInfo vertShaderStageInfo{.stage = vk::ShaderStageFlagBits::eVertex, .module = shaderModule, .pName = "vertMain"};
+
+        vk::PipelineShaderStageCreateInfo fragShaderStageInfo{.stage = vk::ShaderStageFlagBits::eFragment, .module = shaderModule, .pName = "fragMain"};
+
+        vk::PipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
+
+        vk::PipelineVertexInputStateCreateInfo vertexInputInfo{
+            .vertexBindingDescriptionCount = 0, .pVertexBindingDescriptions = nullptr, .vertexAttributeDescriptionCount = 0, .pVertexAttributeDescriptions = nullptr};
+        
+        vk::PipelineInputAssemblyStateCreateInfo inputAssembly{.topology = vk::PrimitiveTopology::eTriangleList};
+        vk::PipelineViewportStateCreateInfo viewportState{.viewportCount = 1, .scissorCount = 1};
+
+        vk::PipelineRasterizationStateCreateInfo rasterizer{.depthClampEnable = vk::False,
+                                                            .rasterizerDiscardEnable = vk::False,
+                                                            .polygonMode = vk::PolygonMode::eFill,
+                                                            .cullMode = vk::CullModeFlagBits::eNone,
+                                                            .frontFace = vk::FrontFace::eCounterClockwise,
+                                                            .depthBiasEnable = vk::False,
+                                                            .depthBiasSlopeFactor = 1.0f};
+
+        vk::PipelineMultisampleStateCreateInfo multisampling{.rasterizationSamples = msaaSamples, .sampleShadingEnable = vk::False, .minSampleShading = 0.2f};
+
+        vk::PipelineDepthStencilStateCreateInfo depthStencil{
+            .depthTestEnable = vk::False, .depthWriteEnable = vk::False, .depthCompareOp = vk::CompareOp::eLess, .depthBoundsTestEnable = vk::False, .stencilTestEnable = vk::False};
+        
+        vk::PipelineColorBlendAttachmentState colorBlendAttachment{.blendEnable = vk::False,
+                                                                   .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
+                                                                                     vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA};
+
+        vk::PipelineColorBlendStateCreateInfo colorBlending{.logicOpEnable = vk::False, .logicOp = vk::LogicOp::eCopy, .attachmentCount = 1, .pAttachments = &colorBlendAttachment};
+
+        std::vector dynamicStates = {vk::DynamicState::eViewport, vk::DynamicState::eScissor};
+        vk::PipelineDynamicStateCreateInfo dynamicState{.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()), .pDynamicStates = dynamicStates.data()};
+
+        vk::PushConstantRange pushConstantRange{.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, .offset = 0, .size = sizeof(SkyBoxConstants)};
+
+        vk::PipelineLayoutCreateInfo pipelineLayoutInfo{
+            .setLayoutCount = 1, 
+            .pSetLayouts = &*resources->getDescriptorSetLayout(), 
+            .pushConstantRangeCount = 1, 
+            .pPushConstantRanges = &pushConstantRange};
+        pipelineLayouts.emplace_back(vk::raii::PipelineLayout(devices->getLogicalDevice(), pipelineLayoutInfo));
+
+        vk::Format depthFormat = findDepthFormat(devices);
+        vk::PipelineRenderingCreateInfo pipelineRenderingCreateInfo{
+            .colorAttachmentCount = 1, .pColorAttachmentFormats = &swapChain->getSwapChainImageFormat(), .depthAttachmentFormat = depthFormat};
+
+        vk::GraphicsPipelineCreateInfo pipelineInfo{.pNext = &pipelineRenderingCreateInfo,
+                                                    .stageCount = 2,
+                                                    .pStages = shaderStages,
+                                                    .pVertexInputState = &vertexInputInfo,
+                                                    .pInputAssemblyState = &inputAssembly,
+                                                    .pViewportState = &viewportState,
+                                                    .pRasterizationState = &rasterizer,
+                                                    .pMultisampleState = &multisampling,
+                                                    .pDepthStencilState = &depthStencil,
+                                                    .pColorBlendState = &colorBlending,
+                                                    .pDynamicState = &dynamicState,
+                                                    .layout = *pipelineLayouts[index],
+                                                    .renderPass = nullptr, // is nullptr because we're using dynamic rendering
+                                                    .basePipelineHandle = VK_NULL_HANDLE,
+                                                    .basePipelineIndex = -1};
+
+        return vk::raii::Pipeline(devices->getLogicalDevice(), nullptr, pipelineInfo);
+
+    }
+
+    std::tuple<size_t,vk::raii::Pipeline> createDepthPipeline(vk::SampleCountFlagBits msaaSamples) {
+        size_t index = pipelineLayouts.size();
+
+        vk::raii::ShaderModule shaderModule = createShaderModule(readFile("shaders/depth_buffer.spv"), &*devices);
+        vk::PipelineShaderStageCreateInfo vertShaderStageInfo{.stage = vk::ShaderStageFlagBits::eVertex, .module = shaderModule, .pName = "vertMain"};
+
+        vk::PipelineShaderStageCreateInfo fragShaderStageInfo{.stage = vk::ShaderStageFlagBits::eFragment, .module = shaderModule, .pName = "fragMain"};
+
+        vk::PipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
+
+        vk::PipelineVertexInputStateCreateInfo vertexInputInfo{
+            .vertexBindingDescriptionCount = 0, .pVertexBindingDescriptions = nullptr, .vertexAttributeDescriptionCount = 0, .pVertexAttributeDescriptions = nullptr};
+        
+        vk::PipelineInputAssemblyStateCreateInfo inputAssembly{.topology = vk::PrimitiveTopology::eTriangleList};
+        vk::PipelineViewportStateCreateInfo viewportState{.viewportCount = 1, .scissorCount = 1};
+
+        vk::PipelineRasterizationStateCreateInfo rasterizer{.depthClampEnable = vk::False,
+                                                            .rasterizerDiscardEnable = vk::False,
+                                                            .polygonMode = vk::PolygonMode::eFill,
+                                                            .cullMode = vk::CullModeFlagBits::eNone,
+                                                            .frontFace = vk::FrontFace::eCounterClockwise,
+                                                            .depthBiasEnable = vk::False,
+                                                            .depthBiasSlopeFactor = 1.0f};
+
+        vk::PipelineMultisampleStateCreateInfo multisampling{.rasterizationSamples = msaaSamples, .sampleShadingEnable = vk::False, .minSampleShading = 0.2f};
+
+        vk::PipelineDepthStencilStateCreateInfo depthStencil{
+            .depthTestEnable = vk::False, .depthWriteEnable = vk::False, .depthCompareOp = vk::CompareOp::eNever, .depthBoundsTestEnable = vk::False, .stencilTestEnable = vk::False};
+        
+        vk::PipelineColorBlendAttachmentState colorBlendAttachment{.blendEnable = vk::False,
+                                                                   .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
+                                                                                     vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA};
+
+        vk::PipelineColorBlendStateCreateInfo colorBlending{.logicOpEnable = vk::False, .logicOp = vk::LogicOp::eCopy, .attachmentCount = 1, .pAttachments = &colorBlendAttachment};
+
+        std::vector dynamicStates = {vk::DynamicState::eViewport, vk::DynamicState::eScissor};
+        vk::PipelineDynamicStateCreateInfo dynamicState{.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()), .pDynamicStates = dynamicStates.data()};
+
+        vk::PushConstantRange pushConstantRange{.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, .offset = 0, .size = sizeof(DepthPushConstants)};
+
+        vk::PipelineLayoutCreateInfo pipelineLayoutInfo{
+            .setLayoutCount = 1, 
+            .pSetLayouts = &*resources->getDepthDescriptorSetLayout(), 
+            .pushConstantRangeCount = 1, 
+            .pPushConstantRanges = &pushConstantRange};
+        pipelineLayouts.emplace_back(vk::raii::PipelineLayout(devices->getLogicalDevice(), pipelineLayoutInfo));
+        size_t layoutIndex = pipelineLayouts.size() -1 ;
+        vk::Format depthFormat = findDepthFormat(devices);
+        vk::PipelineRenderingCreateInfo pipelineRenderingCreateInfo{
+            .colorAttachmentCount = 1, .pColorAttachmentFormats = &swapChain->getSwapChainImageFormat(), .depthAttachmentFormat = depthFormat};
+
+        vk::GraphicsPipelineCreateInfo pipelineInfo{.pNext = &pipelineRenderingCreateInfo,
+                                                    .stageCount = 2,
+                                                    .pStages = shaderStages,
+                                                    .pVertexInputState = &vertexInputInfo,
+                                                    .pInputAssemblyState = &inputAssembly,
+                                                    .pViewportState = &viewportState,
+                                                    .pRasterizationState = &rasterizer,
+                                                    .pMultisampleState = &multisampling,
+                                                    .pDepthStencilState = &depthStencil,
+                                                    .pColorBlendState = &colorBlending,
+                                                    .pDynamicState = &dynamicState,
+                                                    .layout = *pipelineLayouts[index],
+                                                    .renderPass = nullptr, // is nullptr because we're using dynamic rendering
+                                                    .basePipelineHandle = VK_NULL_HANDLE,
+                                                    .basePipelineIndex = -1};
+
+        return std::make_tuple(layoutIndex, vk::raii::Pipeline(devices->getLogicalDevice(), nullptr, pipelineInfo));
+
+    }
+
   private:
     vk::PipelineCache pipelineCache;
     const Devices* devices;
-    const BindlessResourceManager* resources;
+    const ResourceManager* resources;
     SwapChain* swapChain;
 
     std::vector<vk::raii::PipelineLayout> pipelineLayouts;
