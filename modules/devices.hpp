@@ -2,35 +2,29 @@
 #ifndef VULKAN_HPP_DISPATCH_LOADER_DYNAMIC
 #define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1 // for raii
 #endif
-#ifndef VULKAN_HPP_NO_CONSTRUCTORS  
+#ifndef VULKAN_HPP_NO_CONSTRUCTORS
 #define VULKAN_HPP_NO_CONSTRUCTORS 1 // for structs constructors
 #endif
-#include <algorithm>
-#include <cstring>
-#include <iostream>
-#include <limits>
-#include <stdexcept>
+
 #include <vector>
+#include <iostream>
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_raii.hpp>
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
-class Devices {
-
-  public:
-    // constructor picks physical device and initialized logical device
-    Devices(vk::raii::Instance& instance, std::vector<const char*> requiredDeviceExtension, vk::raii::SurfaceKHR& surface) {
+class Device {
+public:
+    Device(vk::raii::Instance& instance, std::vector<const char*> requiredDeviceExtension, vk::raii::SurfaceKHR& surface) {
         pickPhysicalDevice(instance, requiredDeviceExtension, surface);
         createLogicalDevice(instance, requiredDeviceExtension, surface);
     }
 
+    const vk::raii::Device& getDevice() const { return logicalDevice; }
     const vk::raii::PhysicalDevice& getPhysicalDevice() const { return physicalDevice; }
-    const vk::raii::Device& getLogicalDevice() const { return logicalDevice; }
     const vk::raii::Queue& getGraphicsQueue() const { return graphicsQueue; }
     const vk::raii::Queue& getPresentQueue() const { return presentQueue; }
-
-  private:
+private:
     vk::raii::PhysicalDevice physicalDevice = nullptr;
     vk::raii::Device logicalDevice = nullptr;
     vk::raii::Queue graphicsQueue = nullptr;

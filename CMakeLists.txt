@@ -159,6 +159,7 @@ find_package(Ktx CONFIG REQUIRED) # !upper case K
 
 add_executable(shader-forge
     main.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/scene_elements.cpp
     ${IMGUI_SOURCES}
 )
 

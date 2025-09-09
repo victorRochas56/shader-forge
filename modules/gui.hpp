@@ -5,7 +5,7 @@
 #ifndef VULKAN_HPP_NO_CONSTRUCTORS  
 #define VULKAN_HPP_NO_CONSTRUCTORS 1 // for structs constructors
 #endif
-#include <core.hpp>
+#include "renderer.hpp"
 #include "include/imgui.h"
 #include "include/imgui_impl_glfw.h"
 #include "include/imgui_impl_vulkan.h"
@@ -45,7 +45,7 @@ void initIMGUI(Renderer* renderer) {
     pool_info.pPoolSizes = pool_sizes;
     
     VkDescriptorPool imguiPool;
-    VkResult result = vkCreateDescriptorPool(*renderer->getDevices()->getLogicalDevice(), &pool_info, nullptr, &imguiPool);
+    VkResult result = vkCreateDescriptorPool(*renderer->getDevice().getDevice(), &pool_info, nullptr, &imguiPool);
     check_vk_result(result);
     
     // Initialize ImGui
@@ -58,17 +58,17 @@ void initIMGUI(Renderer* renderer) {
     ImGui_ImplGlfw_InitForVulkan(renderer->getWindow(), true);
     
     // Get swapchain details
-    uint32_t swapchainImageCount = renderer->getSwapChain()->getSwapChainImages().size();
-    vk::Format colorFormat = renderer->getSwapChain()->getSwapChainImageFormat();
-    vk::Format depthFormat = findDepthFormat(renderer->getDevices());
+    uint32_t swapchainImageCount = renderer->getSwapchain().getSwapChainImages().size();
+    vk::Format colorFormat = renderer->getSwapchain().getSwapChainImageFormat();
+    vk::Format depthFormat = findDepthFormat(renderer->getDevice());
     
     ImGui_ImplVulkan_InitInfo init_info = {};
     init_info.ApiVersion = VK_API_VERSION_1_4;
     init_info.Instance = renderer->getInstance();
-    init_info.PhysicalDevice = *renderer->getDevices()->getPhysicalDevice();
-    init_info.Device = *renderer->getDevices()->getLogicalDevice();
+    init_info.PhysicalDevice = *renderer->getDevice().getPhysicalDevice();
+    init_info.Device = *renderer->getDevice().getDevice();
     init_info.QueueFamily = renderer->getGraphicsIndex();
-    init_info.Queue = *renderer->getDevices()->getGraphicsQueue();
+    init_info.Queue = *renderer->getDevice().getGraphicsQueue();
     init_info.DescriptorPool = imguiPool;
     init_info.Subpass = 0;
     init_info.MinImageCount = swapchainImageCount;
@@ -145,8 +145,8 @@ void traverseNodeTree(Node& node, uint32_t level ,Renderer* renderer){
     }
     displayText += "|_ " + node.name;
     ImGui::Text(displayText.c_str());
-    if(!node.children.empty()){
-        for( auto childNode : node.children){
+    if(!node.getChildren().empty()){
+        for( auto childNode : node.getChildren()){
             traverseNodeTree(*childNode, level + 1, renderer);
         }
     }

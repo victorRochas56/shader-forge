@@ -5,123 +5,25 @@
 #ifndef VULKAN_HPP_NO_CONSTRUCTORS
 #define VULKAN_HPP_NO_CONSTRUCTORS 1 // for structs constructors
 #endif
-#include <algorithm>
-#include <array>
-#include <chrono>
-#include <cstring>
-#include <devices.hpp>
-#include <iostream>
-#include <limits>
-#include <resource_manager.hpp>
-#include <stdexcept>
-#include <unordered_map>
-#include <vector>
+
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_raii.hpp>
-#define GLFW_INCLUDE_VULKAN
+#define GLFW_INCLUDE_VULKAN // REQUIRED only for GLFW CreateWindowSurface.
 #include <GLFW/glfw3.h>
 
-class SwapChain {
+#include "devices.hpp"
+#include "resources.hpp"
+#include "utils.hpp"
+
+class Swapchain {
 
   public:
-    SwapChain(GLFWwindow* window, const Devices* devices, vk::raii::SurfaceKHR* surface, vk::raii::Instance* instance, ResourceManager* resourceManager, bool& useVsync)
-        : devices(devices), surface(surface), resourceManager(resourceManager) {
-        createSwapChain(*window, useVsync);
-        createImageViews();
-    }
+    Swapchain(Device& device, ResourceManager& resourceManager, vk::raii::SurfaceKHR& surface, vk::SampleCountFlagBits msaaSamples)
+        : msaaSamples(msaaSamples), resourceManager(resourceManager), device(device), surface(surface) {}
 
-    const vk::raii::SwapchainKHR& getSwapChain() { return swapChain; }
-    const std::vector<vk::Image>& getSwapChainImages() { return swapChainImages; }
-    const std::vector<vk::raii::ImageView>& getSwapChainImageViews() { return swapChainImageViews; }
-    const vk::Format& getSwapChainImageFormat() { return swapChainImageFormat; }
-    const vk::Extent2D& getSwapChainExtent() { return swapChainExtent; }
-    const size_t getSwapImageSize() { return swapChainImages.size(); }
-    vk::raii::Image& getDepthImage() { return depthImage; }
-    vk::raii::Image& getColorImage() { return colorImage; }
-    vk::raii::ImageView& getDepthImageView() { return depthImageView; }
-    vk::raii::ImageView& getDepthResolveImageView() { return depthResolveImageView; }
-    vk::raii::ImageView& getColorImageView() { return colorImageView; }
-
-    void recreateSwapChain(GLFWwindow* window, const Devices* devices, vk::SampleCountFlagBits msaaSamples, bool& useVsync) {
-        int width = 0, height = 0;
-        glfwGetFramebufferSize(window, &width, &height);
-        while (width == 0 || height == 0) {
-            glfwGetFramebufferSize(window, &width, &height);
-            glfwWaitEvents();
-        }
-
-        devices->getLogicalDevice().waitIdle();
-
-        cleanupSwapChain();
-
-        createSwapChain(*window, useVsync);
-        createImageViews();
-        createColorResources(msaaSamples);
-        createDepthResources(msaaSamples);
-    }
-
-    void cleanupSwapChain() {
-
-        swapChainImageViews.clear();
-        depthImageView.clear();
-        depthResolveImageView.clear(); 
-        swapChain = nullptr;
-    }
-
-    void createColorResources(vk::SampleCountFlagBits msaaSamples) {
-        vk::Format colorFormat = swapChainImageFormat;
-
-        resourceManager->createImage(swapChainExtent.width, swapChainExtent.height, 1, msaaSamples, colorFormat, vk::ImageTiling::eOptimal,
-                                     vk::ImageUsageFlagBits::eTransientAttachment | vk::ImageUsageFlagBits::eColorAttachment, vk::MemoryPropertyFlagBits::eDeviceLocal, colorImage,
-                                     colorImageMemory);
-        colorImageView = resourceManager->createImageView(colorImage, colorFormat, vk::ImageAspectFlagBits::eColor, 1);
-    }
-
-    void createDepthResources(vk::SampleCountFlagBits msaaSamples) {
-        vk::Format depthFormat = findDepthFormat(&*devices);
-        
-        resourceManager->createImage(swapChainExtent.width, swapChainExtent.height, 1, msaaSamples, depthFormat, vk::ImageTiling::eOptimal,
-                                    vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, depthImage,
-                                    depthImageMemory);
-        depthImageView = resourceManager->createImageView(depthImage, depthFormat, vk::ImageAspectFlagBits::eDepth, 1);
-        resourceManager->transitionImageLayout(depthImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal, 1);
-
-        resourceManager->createImage(swapChainExtent.width, swapChainExtent.height, 1, vk::SampleCountFlagBits::e1, depthFormat, vk::ImageTiling::eOptimal,
-                                    vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, depthResolveImage,
-                                    depthResolveImageMemory);
-
-        depthResolveImageView = resourceManager->createImageView(depthResolveImage, depthFormat, vk::ImageAspectFlagBits::eDepth, 1);
-        resourceManager->transitionImageLayout(depthResolveImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal, 1);
-
-        resourceManager->updateImageDescriptorSet(resourceManager->getDepthDescriptorSet(), 0, depthResolveImageView, vk::ImageLayout::eShaderReadOnlyOptimal);
-    }
-
-  private:
-    const Devices* devices;
-    ResourceManager* resourceManager;
-    vk::raii::SurfaceKHR* surface;
-
-    vk::raii::SwapchainKHR swapChain = nullptr;
-    std::vector<vk::Image> swapChainImages;
-    vk::Format swapChainImageFormat = vk::Format::eUndefined;
-    vk::Extent2D swapChainExtent;
-    std::vector<vk::raii::ImageView> swapChainImageViews;
-
-    vk::raii::Image depthImage = nullptr;
-    vk::raii::DeviceMemory depthImageMemory = nullptr;
-    vk::raii::ImageView depthImageView = nullptr;
-
-    vk::raii::Image depthResolveImage = nullptr;
-    vk::raii::DeviceMemory depthResolveImageMemory = nullptr;
-    vk::raii::ImageView depthResolveImageView = nullptr;
-
-    vk::raii::Image colorImage = nullptr;
-    vk::raii::DeviceMemory colorImageMemory = nullptr;
-    vk::raii::ImageView colorImageView = nullptr;
-
-    void createSwapChain(GLFWwindow& window, bool& useVsync) {
-        auto surfaceCapabilities = devices->getPhysicalDevice().getSurfaceCapabilitiesKHR(*surface);
-        swapChainImageFormat = chooseSwapSurfaceFormat(devices->getPhysicalDevice().getSurfaceFormatsKHR(*surface)).format;
+    void create(GLFWwindow& window, bool& useVsync) {
+        auto surfaceCapabilities = device.getPhysicalDevice().getSurfaceCapabilitiesKHR(*surface);
+        swapChainImageFormat = chooseSwapSurfaceFormat(device.getPhysicalDevice().getSurfaceFormatsKHR(*surface)).format;
         swapChainExtent = chooseSwapExtent(surfaceCapabilities, &window);
         auto minImageCount = std::max(3u, surfaceCapabilities.minImageCount);
         minImageCount = (surfaceCapabilities.maxImageCount > 0 && minImageCount > surfaceCapabilities.maxImageCount) ? surfaceCapabilities.maxImageCount : minImageCount;
@@ -135,12 +37,76 @@ class SwapChain {
                                                        .imageSharingMode = vk::SharingMode::eExclusive,
                                                        .preTransform = surfaceCapabilities.currentTransform,
                                                        .compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque,
-                                                       .presentMode = chooseSwapPresentMode(devices->getPhysicalDevice().getSurfacePresentModesKHR(*surface), useVsync),
+                                                       .presentMode = chooseSwapPresentMode(device.getPhysicalDevice().getSurfacePresentModesKHR(*surface), useVsync),
                                                        .clipped = true};
 
-        swapChain = vk::raii::SwapchainKHR(devices->getLogicalDevice(), swapChainCreateInfo);
+        swapChain = vk::raii::SwapchainKHR(device.getDevice(), swapChainCreateInfo);
         swapChainImages = swapChain.getImages();
+        createImageViews();
+        createColorResources();
+        createDepthResources();
     }
+
+    void recreate(GLFWwindow* window, bool& useVsync) {
+        int width = 0, height = 0;
+        glfwGetFramebufferSize(window, &width, &height);
+        while (width == 0 || height == 0) {
+            glfwGetFramebufferSize(window, &width, &height);
+            glfwWaitEvents();
+        }
+        device.getDevice().waitIdle();
+
+        cleanupSwapChain();
+
+        create(*window, useVsync);
+        createImageViews();
+        createColorResources();
+        createDepthResources();
+    }
+
+    void cleanupSwapChain() {
+
+        swapChainImageViews.clear();
+        depthImageView.clear();
+        depthResolveImageView.clear();
+        swapChain = nullptr;
+    }
+
+    const vk::raii::SwapchainKHR& getSwapChain() { return swapChain; }
+    const size_t getSwapImageSize() { return swapChainImages.size(); }
+    const vk::Extent2D& getSwapChainExtent() {return swapChainExtent; } 
+    const vk::Format& getSwapChainImageFormat() { return swapChainImageFormat; }
+    const vk::raii::Image& getColorImage() { return colorImage; }
+    const vk::raii::ImageView& getColorImageView() {return colorImageView; }
+    const vk::raii::ImageView& getDepthImageView() {return depthImageView; }
+    const std::vector<vk::raii::ImageView>& getSwapChainImageViews() { return swapChainImageViews;}
+    const std::vector<vk::Image>& getSwapChainImages() {return swapChainImages; }
+
+
+  private:
+    Device& device;
+    ResourceManager& resourceManager;
+    vk::raii::SurfaceKHR& surface;
+    vk::SampleCountFlagBits msaaSamples;
+
+    vk::raii::SwapchainKHR swapChain = nullptr;
+    std::vector<vk::Image> swapChainImages;
+    vk::Format swapChainImageFormat = vk::Format::eUndefined;
+    vk::Extent2D swapChainExtent;
+    std::vector<vk::raii::ImageView> swapChainImageViews;
+
+    vk::raii::Image colorImage = nullptr;
+    vk::raii::DeviceMemory colorImageMemory = nullptr;
+    vk::raii::ImageView colorImageView = nullptr;
+
+    vk::raii::Image depthImage = nullptr;
+    vk::raii::DeviceMemory depthImageMemory = nullptr;
+    vk::raii::ImageView depthImageView = nullptr;
+
+    vk::raii::Image depthResolveImage = nullptr;
+    vk::raii::DeviceMemory depthResolveImageMemory = nullptr;
+    vk::raii::ImageView depthResolveImageView = nullptr;
+    uint32_t depthResolveIndex = 0xFFFFFFFF;
 
     vk::SurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<vk::SurfaceFormatKHR>& availableFormats) {
         for (const auto& availableFormat : availableFormats) {
@@ -178,7 +144,27 @@ class SwapChain {
             .viewType = vk::ImageViewType::e2D, .format = swapChainImageFormat, .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
         for (auto image : swapChainImages) {
             imageViewCreateInfo.image = image;
-            swapChainImageViews.emplace_back(devices->getLogicalDevice(), imageViewCreateInfo);
+            swapChainImageViews.emplace_back(device.getDevice(), imageViewCreateInfo);
         }
+    }
+
+    void createColorResources() {
+        vk::Format colorFormat = swapChainImageFormat;
+        resourceManager.createImage(swapChainExtent.width, swapChainExtent.height, 1, msaaSamples, colorFormat, vk::ImageTiling::eOptimal,
+                                    vk::ImageUsageFlagBits::eTransientAttachment | vk::ImageUsageFlagBits::eColorAttachment, vk::MemoryPropertyFlagBits::eDeviceLocal, colorImage,
+                                    colorImageMemory);
+        colorImageView = resourceManager.createImageView(colorImage, colorFormat, vk::ImageAspectFlagBits::eColor, 1);
+        resourceManager.transitionImageLayout(nullptr,depthImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal, 1);
+    }
+
+    void createDepthResources() {
+        vk::Format depthFormat = findSupportedFormat({vk::Format::eD32Sfloat, vk::Format::eD32SfloatS8Uint, vk::Format::eD24UnormS8Uint}, vk::ImageTiling::eOptimal,
+                                                     vk::FormatFeatureFlagBits::eDepthStencilAttachment, device);
+
+        resourceManager.createImage(swapChainExtent.width, swapChainExtent.height, 1, msaaSamples, depthFormat, vk::ImageTiling::eOptimal,
+                                    vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, depthImage,
+                                    depthImageMemory);
+        depthImageView = resourceManager.createImageView(depthImage, depthFormat, vk::ImageAspectFlagBits::eDepth, 1);
+        resourceManager.transitionImageLayout(nullptr,depthImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal, 1);
     }
 };

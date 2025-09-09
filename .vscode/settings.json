@@ -104,6 +104,7 @@
         "xutility": "cpp",
         "expected": "cpp",
         "queue": "cpp",
-        "codecvt": "cpp"
+        "codecvt": "cpp",
+        "typeindex": "cpp"
     }
 }

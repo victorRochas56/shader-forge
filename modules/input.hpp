@@ -1,9 +1,9 @@
 #pragma once
 #include <GLFW/glfw3.h>
-#include <core.hpp>
 #include <glm/glm.hpp>
-#include <scene_elements.hpp>
 #include <unordered_map>
+#include "renderer.hpp"
+#include "scene_elements.hpp"
 
 struct InputState {
     glm::vec2 mousePos = glm::vec2(0);
@@ -47,7 +47,7 @@ class InputManager {
         if (glm::length(moveVector) > 0) {
             renderer->activeCamera.moveCamera(moveVector);
         }
-
+/*
         // raycast on left click
         if (current.mouse_button == 0 && current.mouse_action == 1 && previous.mouse_action != 1) {
             int width = 0, height = 0;
@@ -84,7 +84,7 @@ class InputManager {
         }
         if (current.keyStates[GLFW_KEY_F] == GLFW_PRESS && previous.keyStates[GLFW_KEY_F] != GLFW_PRESS) {
             renderer->toggleDepthBuffering();
-        }
+        }*/
 
         current.mouseDelta = current.mousePos - previous.mousePos;
         previous = current;
