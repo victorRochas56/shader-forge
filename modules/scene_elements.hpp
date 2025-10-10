@@ -6,10 +6,12 @@
 #define VULKAN_HPP_NO_CONSTRUCTORS 1 // for structs constructors
 #endif
 
+#include <imgui.h>
+#include <string>
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_raii.hpp>
-#include <string>
 
+#include "constants.hpp"
 #include "descriptor_sets.hpp"
 #include "structs.hpp"
 
@@ -20,19 +22,33 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/hash.hpp>
 
-
 class Renderer;
 
 class Node {
   public:
     std::string name = "empty";
-    
+    bool changingMaterials = false;
+
     Node(Renderer* pRenderer, uint32_t arrayIndex, Node* parent = nullptr, glm::vec3 position = glm::vec3(0.0f), glm::quat rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
          glm::vec3 scale = glm::vec3(1.0f), bool keepWorldTransform = false);
 
+    void showInfo() {
+        ImGui::Begin("selected node");
+        ImGui::Text(name.c_str());
+
+        showMeshInfo();
+        if (changingMaterials) {
+            showMaterialDialog();
+        }
+        showLightInfo();
+        showTransformInfo();
+        update();
+        ImGui::End();
+    }
+
     glm::vec3 getWorldPosition() { return glm::vec3(worldTransform[3]); }
     glm::vec3 getRelativePosition() { return relativePosition; }
-
+    glm::mat4 getTransform() { return worldTransform; }
     glm::vec3 getWorldScale() {
         glm::vec3 scale;
         scale.x = glm::length(glm::vec3(worldTransform[0]));
@@ -56,34 +72,32 @@ class Node {
     glm::vec3 getWorldRotationEuler() { return glm::eulerAngles(getWorldRotation()); }
     glm::vec3 getRelativeRotationEuler() { return relativeRotationEuler; }
 
+    uint32_t getIndex() { return nodeIndex; }
     uint32_t getModelMatrixIndex() { return modelMatrixIndex; }
 
     void update();
 
+    void setParent(Node* newParent) { parent = newParent; }
+
     void addChild(Node* child, bool keepRelativeTransform = false) {
         children.push_back(child);
-        child->parent = this;
+        child->setParent(this);
         if (keepRelativeTransform) {
-            // Calculate relative transform using matrix approach for accuracy
             glm::mat4 parentInverse = glm::inverse(worldTransform);
             glm::mat4 relativeTransform = parentInverse * child->worldTransform;
 
-            // Extract position
             child->relativePosition = glm::vec3(relativeTransform[3]);
 
-            // Extract scale
             child->relativeScale.x = glm::length(glm::vec3(relativeTransform[0]));
             child->relativeScale.y = glm::length(glm::vec3(relativeTransform[1]));
             child->relativeScale.z = glm::length(glm::vec3(relativeTransform[2]));
 
-            // Extract rotation
             glm::mat3 rotMatrix;
             rotMatrix[0] = glm::vec3(relativeTransform[0]) / child->relativeScale.x;
             rotMatrix[1] = glm::vec3(relativeTransform[1]) / child->relativeScale.y;
             rotMatrix[2] = glm::vec3(relativeTransform[2]) / child->relativeScale.z;
             child->relativeRotation = glm::quat_cast(rotMatrix);
 
-            // Update Euler angles
             child->relativeRotationEuler = glm::eulerAngles(child->relativeRotation);
         }
         child->update();
@@ -97,32 +111,46 @@ class Node {
         }
     }
 
-    std::vector<Node*>& getChildren() {return children;}
+    std::vector<Node*>& getChildren() { return children; }
 
-    void addMesh(uint32_t meshIndex) { this->meshIndex = meshIndex; }
+    void addMesh(uint32_t meshIndex);
 
-    uint32_t getMeshIndex() {return meshIndex;}
+    uint32_t getMeshIndex() { return meshIndex; }
+    uint32_t getLightIndex() { return lightIndex; }
     void addMaterial(uint32_t index, uint32_t materialIndex);
 
-    void addLight(uint32_t lightIndex) { this->lightIndex = lightIndex; }
+    void addLight(Light light);
 
   private:
     Renderer* renderer;
+    ResourceManager* resourceManager;
     uint32_t nodeIndex;
 
     glm::vec3 relativePosition;
     glm::vec3 relativeScale;
     glm::quat relativeRotation;
     glm::vec3 relativeRotationEuler;
+    glm::vec3 worldRotationEuler;
     glm::mat4 worldTransform; // aka model matrix
     uint32_t modelMatrixIndex;
     glm::mat4 localTransform; // relative to parent
     std::vector<Node*> children;
     Node* parent = nullptr;
 
-    uint32_t meshIndex;
+    uint32_t meshIndex = MAX_MESHES;
     std::vector<uint32_t> materialIndices;
-    uint32_t lightIndex;
+    uint32_t lightIndex = MAX_LIGHTS;
+
+    bool changingMesh = false;
+    char textBuffer[256];
+    std::vector<std::string> materialList;
+    std::vector<uint32_t> selectedMaterials;
+    bool lightShadow = false;
+
+    void showMeshInfo();
+    void showMaterialDialog();
+    void showLightInfo();
+    void showTransformInfo();
 };
 
 struct Camera {
@@ -139,11 +167,11 @@ struct Camera {
     float pitch = 0.0f;
 
     void rayFromScreenCoords(float x, float y, glm::vec3* origin, glm::vec3* direction) {
-        // Two points along the ray in clip space (NDC with w=1)
-        glm::vec4 nearClip = glm::vec4(x, y, -1.0f, 1.0f); // Near plane
-        glm::vec4 farClip = glm::vec4(x, y, 1.0f, 1.0f);   // Far plane
 
-        // Transform to view space
+        glm::vec4 nearClip = glm::vec4(x, y, -1.0f, 1.0f);
+        glm::vec4 farClip = glm::vec4(x, y, 1.0f, 1.0f);
+
+        // view space
         glm::vec4 nearView = glm::inverse(projectionMatrix) * nearClip;
         glm::vec4 farView = glm::inverse(projectionMatrix) * farClip;
 
@@ -162,7 +190,6 @@ struct Camera {
 
     void rotateYaw(float deltaYaw = 0.0f) {
         yaw += deltaYaw;
-        // we keep yaw in 0-360 range
         if (yaw > 360.0f)
             yaw -= 360.0f;
         if (yaw < -360.0f)
@@ -172,7 +199,7 @@ struct Camera {
 
     void rotatePitch(float deltaPitch = 0.0f) {
         pitch += deltaPitch;
-        // Constrain pitch to prevent gimbal lock
+        // prevents gimbal lock
         if (pitch > 89.0f)
             pitch = 89.0f;
         if (pitch < -89.0f)
@@ -187,7 +214,7 @@ struct Camera {
         updateTarget();
     }
 
-    // update target based on current yaw and pitch
+    // based on current yaw and pitch
     void updateTarget() {
         glm::vec3 direction;
         direction.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
@@ -199,7 +226,7 @@ struct Camera {
     }
 
     void lookAt(const glm::vec3& targetPos) {
-        // Calculate yaw and pitch from the direction vector
+        // Calculates yaw and pitch
         target = targetPos;
         glm::vec3 direction = glm::normalize(target - position);
         yaw = glm::degrees(atan2(direction.z, direction.x));
@@ -208,15 +235,16 @@ struct Camera {
     }
 
     void calculateViewProjectionMatrix() {
-        // === VIEW MATRIX ===
         glm::vec3 upVector = glm::vec3(0.0f, 1.0f, 0.0f); // World up direction
         // Create view matrix using lookAt
         viewMatrix = glm::lookAt(position, target, upVector);
-        // === PROJECTION MATRIX ===
-        // Create perspective projection matrix
         projectionMatrix = glm::perspective(fov, aspectRatio, nearPlane, farPlane);
         projectionMatrix[1][1] *= -1.0f; // Flip Y axis for vulkan
-        // === VIEW-PROJECTION MATRIX ===
         viewProjection = projectionMatrix * viewMatrix;
     }
+
 };
+
+std::vector<glm::vec4> getCameraFrustumCorners(Camera& camera);
+glm::mat4 calculateLightSpaceMatrix(Light& light, Camera& camera);
+void calculateCascadedLightSpaceMatrices(Light& light, Camera& camera);

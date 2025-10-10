@@ -65,7 +65,11 @@ private:
                         break;
                     }
                 }
-
+                std::cout<<"hasPresentSupport: "<<hasPresentSupport<<std::endl;
+                std::cout<<"supportsVulkan1_3: "<<supportsVulkan1_3<<std::endl;
+                std::cout<<"supportsGraphics: "<<supportsGraphics<<std::endl;
+                std::cout<<"supportsAllRequiredExtensions: "<<supportsAllRequiredExtensions<<std::endl;
+                std::cout<<"supportsRequiredFeatures: "<<supportsRequiredFeatures<<std::endl;
                 return supportsVulkan1_3 && supportsGraphics && supportsAllRequiredExtensions && supportsRequiredFeatures && hasPresentSupport;
             });
 

@@ -2,13 +2,13 @@
 #ifndef VULKAN_HPP_DISPATCH_LOADER_DYNAMIC
 #define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1 // for raii
 #endif
-#ifndef VULKAN_HPP_NO_CONSTRUCTORS  
+#ifndef VULKAN_HPP_NO_CONSTRUCTORS
 #define VULKAN_HPP_NO_CONSTRUCTORS 1 // for structs constructors
 #endif
-#include "renderer.hpp"
 #include "include/imgui.h"
 #include "include/imgui_impl_glfw.h"
 #include "include/imgui_impl_vulkan.h"
+#include "renderer.hpp"
 #define GLFW_INCLUDE_NONE
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
@@ -23,45 +23,43 @@ static void check_vk_result(VkResult err) {
 
 void initIMGUI(Renderer* renderer) {
     // Create descriptor pool for IMGUI
-    VkDescriptorPoolSize pool_sizes[] = {
-        { VK_DESCRIPTOR_TYPE_SAMPLER, 1000 },
-        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000 },
-        { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000 },
-        { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1000 },
-        { VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1000 },
-        { VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 1000 },
-        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000 },
-        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000 },
-        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000 },
-        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000 },
-        { VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000 }
-    };
-    
+    VkDescriptorPoolSize pool_sizes[] = {{VK_DESCRIPTOR_TYPE_SAMPLER, 1000},
+                                         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000},
+                                         {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000},
+                                         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1000},
+                                         {VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1000},
+                                         {VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 1000},
+                                         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000},
+                                         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000},
+                                         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000},
+                                         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000},
+                                         {VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000}};
+
     VkDescriptorPoolCreateInfo pool_info = {};
     pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
     pool_info.maxSets = 1000;
     pool_info.poolSizeCount = std::size(pool_sizes);
     pool_info.pPoolSizes = pool_sizes;
-    
+
     VkDescriptorPool imguiPool;
     VkResult result = vkCreateDescriptorPool(*renderer->getDevice().getDevice(), &pool_info, nullptr, &imguiPool);
     check_vk_result(result);
-    
+
     // Initialize ImGui
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-    
+
     // Setup Platform/Renderer backends
     ImGui_ImplGlfw_InitForVulkan(renderer->getWindow(), true);
-    
+
     // Get swapchain details
     uint32_t swapchainImageCount = renderer->getSwapchain().getSwapChainImages().size();
     vk::Format colorFormat = renderer->getSwapchain().getSwapChainImageFormat();
     vk::Format depthFormat = findDepthFormat(renderer->getDevice());
-    
+
     ImGui_ImplVulkan_InitInfo init_info = {};
     init_info.ApiVersion = VK_API_VERSION_1_4;
     init_info.Instance = renderer->getInstance();
@@ -77,7 +75,7 @@ void initIMGUI(Renderer* renderer) {
     init_info.Allocator = nullptr;
     init_info.CheckVkResultFn = check_vk_result;
     init_info.UseDynamicRendering = true;
-    
+
     // Setup pipeline rendering create info for dynamic rendering
     vk::Format colorAttachmentFormat = colorFormat;
     VkPipelineRenderingCreateInfo pipelineRenderingInfo = {};
@@ -86,68 +84,90 @@ void initIMGUI(Renderer* renderer) {
     pipelineRenderingInfo.pColorAttachmentFormats = reinterpret_cast<VkFormat*>(&colorAttachmentFormat);
     pipelineRenderingInfo.depthAttachmentFormat = static_cast<VkFormat>(depthFormat);
     pipelineRenderingInfo.stencilAttachmentFormat = VK_FORMAT_UNDEFINED;
-    
+
     init_info.PipelineRenderingCreateInfo = pipelineRenderingInfo;
-    
+
     // Initialize Vulkan backend
     bool initResult = ImGui_ImplVulkan_Init(&init_info);
     if (!initResult) {
         throw std::runtime_error("Failed to initialize ImGui Vulkan backend");
     }
     /*
-    // Upload fonts to GPU 
+    // Upload fonts to GPU
     VkCommandBuffer command_buffer;
-    VkCommandPool command_pool = renderer->getCommandPool(); 
-    
+    VkCommandPool command_pool = renderer->getCommandPool();
+
     VkCommandBufferAllocateInfo alloc_info = {};
     alloc_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     alloc_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     alloc_info.commandPool = command_pool;
     alloc_info.commandBufferCount = 1;
-    
+
     result = vkAllocateCommandBuffers(*renderer->getDevices()->getLogicalDevice(), &alloc_info, &command_buffer);
     check_vk_result(result);
-    
+
     VkCommandBufferBeginInfo begin_info = {};
     begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     begin_info.flags |= VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    
+
     result = vkBeginCommandBuffer(command_buffer, &begin_info);
     check_vk_result(result);
-    
+
     ImGui_ImplVulkan_CreateFontsTexture();
-    
-    
+
+
     result = vkEndCommandBuffer(command_buffer);
     check_vk_result(result);
-    
+
     VkSubmitInfo submit_info = {};
     submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submit_info.commandBufferCount = 1;
     submit_info.pCommandBuffers = &command_buffer;
-    
+
     result = vkQueueSubmit(*renderer->getDevices()->getGraphicsQueue(), 1, &submit_info, VK_NULL_HANDLE);
     check_vk_result(result);
-    
+
     result = vkQueueWaitIdle(*renderer->getDevices()->getGraphicsQueue());
     check_vk_result(result);
-    
+
     ImGui_ImplVulkan_DestroyFontsTexture();
-    
+
     vkFreeCommandBuffers(*renderer->getDevices()->getLogicalDevice(), command_pool, 1, &command_buffer);*/
 }
 
-
-void traverseNodeTree(Node& node, uint32_t level ,Renderer* renderer){
+void traverseNodeTree(Node* node, uint32_t level, uint32_t selectedNode, Renderer* renderer) {
     std::string displayText = " ";
-    for(int i=0;i<level;i++){
-        displayText+= " ";
+    for (int i = 0; i < level; i++) {
+        displayText += " ";
     }
-    displayText += "|_ " + node.name;
+    if (node->getIndex() == selectedNode) {
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(200, 200, 0, 255));
+        displayText += "|_[" + node->name + "]";
+    } else {
+        displayText += "|_ " + node->name;
+    }
     ImGui::Text(displayText.c_str());
-    if(!node.getChildren().empty()){
-        for( auto childNode : node.getChildren()){
-            traverseNodeTree(*childNode, level + 1, renderer);
+    if (node->getIndex() == selectedNode) {
+        ImGui::PopStyleColor();
+    }
+    if (!node->getChildren().empty()) {
+        for (auto* childNode : node->getChildren()) {
+            traverseNodeTree(childNode, level + 1, selectedNode, renderer);
         }
     }
+}
+
+void showActionMenu(uint32_t context, Renderer* pRenderer, float posX, float posY) {
+    ImGui::SetNextWindowPos(ImVec2{posX, posY});
+    ImGui::Begin("Action");
+    if (ImGui::Button("Add Node")) {
+        glm::vec3 origin;
+        glm::vec3 direction;
+        int width = 0, height = 0;
+        glfwGetWindowSize(pRenderer->getWindow(), &width, &height);
+        pRenderer->activeCamera.rayFromScreenCoords((posX / width) * 2.0 - 1.0, (posY / height) * 2.0 - 1.0, &origin, &direction);
+        pRenderer->addNode(0, origin + direction);
+    }
+
+    ImGui::End();
 }

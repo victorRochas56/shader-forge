@@ -16,63 +16,77 @@ struct InputState {
 
 class InputManager {
   public:
+
+    bool contextMenuShown = false;
+    bool canMove = true;
+    float contextMenuPinX = 0;
+    float contextMenuPinY = 0;
+  
     static InputManager& getInstance() {
         static InputManager instance;
         return instance;
     }
 
-    void tickInputState() {
-        if (current.mouse_button == 1 && current.mouse_action == 1) {
-            renderer->activeCamera.rotatePitch(current.mouseDelta.y * -0.1f);
-            renderer->activeCamera.rotateYaw(current.mouseDelta.x * 0.1f);
+    static void tickInputState() {
+        InputManager& inst = getInstance();
+        if (inst.current.mouse_button == 2 && inst.current.mouse_action == 1) {
+            inst.renderer->activeCamera.rotatePitch(inst.current.mouseDelta.y * -0.1f);
+            inst.renderer->activeCamera.rotateYaw(inst.current.mouseDelta.x * 0.1f);
         }
 
         glm::vec3 moveVector(0.0f);
 
         // Check the state of all relevant keys
-        if (current.keyStates[GLFW_KEY_W] == GLFW_PRESS || current.keyStates[GLFW_KEY_W] == GLFW_REPEAT) {
-            moveVector.z += 0.01f;
-        }
-        if (current.keyStates[GLFW_KEY_S] == GLFW_PRESS || current.keyStates[GLFW_KEY_S] == GLFW_REPEAT) {
-            moveVector.z -= 0.01f;
-        }
-        if (current.keyStates[GLFW_KEY_A] == GLFW_PRESS || current.keyStates[GLFW_KEY_A] == GLFW_REPEAT) {
-            moveVector.x -= 0.01f;
-        }
-        if (current.keyStates[GLFW_KEY_D] == GLFW_PRESS || current.keyStates[GLFW_KEY_D] == GLFW_REPEAT) {
-            moveVector.x += 0.01f;
+        if(inst.canMove){
+            if (inst.current.keyStates[GLFW_KEY_W] == GLFW_PRESS || inst.current.keyStates[GLFW_KEY_W] == GLFW_REPEAT) {
+                moveVector.z += 0.01f;
+            }
+            if (inst.current.keyStates[GLFW_KEY_S] == GLFW_PRESS || inst.current.keyStates[GLFW_KEY_S] == GLFW_REPEAT) {
+                moveVector.z -= 0.01f;
+            }
+            if (inst.current.keyStates[GLFW_KEY_A] == GLFW_PRESS || inst.current.keyStates[GLFW_KEY_A] == GLFW_REPEAT) {
+                moveVector.x -= 0.01f;
+            }
+            if (inst.current.keyStates[GLFW_KEY_D] == GLFW_PRESS || inst.current.keyStates[GLFW_KEY_D] == GLFW_REPEAT) {
+                moveVector.x += 0.01f;
+            }
         }
 
         // Apply the combined movement
         if (glm::length(moveVector) > 0) {
-            renderer->activeCamera.moveCamera(moveVector);
+            inst.renderer->activeCamera.moveCamera(moveVector);
         }
-/*
+
         // raycast on left click
-        if (current.mouse_button == 0 && current.mouse_action == 1 && previous.mouse_action != 1) {
+        if (inst.current.mouse_button == 0 && inst.current.mouse_action == 1 && inst.previous.mouse_action != 1) {
             int width = 0, height = 0;
-            glfwGetWindowSize(renderer->getWindow(), &width, &height);
-            float NDCx = (current.mousePos.x / width) * 2.0 - 1.0;
-            float NDCy = (current.mousePos.y / height) * 2.0 - 1.0;
+            glfwGetWindowSize(inst.renderer->getWindow(), &width, &height);
+            float NDCx = (inst.current.mousePos.x / width) * 2.0 - 1.0;
+            float NDCy = (inst.current.mousePos.y / height) * 2.0 - 1.0;
             glm::vec3 origin;
             glm::vec3 direction;
-            renderer->activeCamera.rayFromScreenCoords(NDCx, NDCy, &origin, &direction);
-            std::vector<uint32_t> hitNodes = renderer->rayCastNodes(origin, direction);
+            inst.renderer->activeCamera.rayFromScreenCoords(NDCx, NDCy, &origin, &direction);
+            std::vector<uint32_t> hitNodes = inst.renderer->rayCastNodes(origin, direction);
             if (!hitNodes.empty()) {
-                renderer->selectNode(hitNodes.front());
+                inst.renderer->selectNode(hitNodes.front());
             }
         }
-        if (current.keyStates[GLFW_KEY_ESCAPE] == GLFW_PRESS && previous.keyStates[GLFW_KEY_ESCAPE] != GLFW_PRESS) {
-            if (renderer->showFullPBR() == 1) {
-                renderer->deSelectNode();
-            }
+        // contextual menu on right click
+        if(inst.current.mouse_button == 1 && inst.current.mouse_action == 0 && inst.previous.mouse_action == 1){
+            inst.contextMenuShown = !inst.contextMenuShown;
+            inst.contextMenuPinX = inst.current.mousePos.x;
+            inst.contextMenuPinY = inst.current.mousePos.y;
+        } 
+
+        if (inst.current.keyStates[GLFW_KEY_ESCAPE] == GLFW_PRESS && inst.previous.keyStates[GLFW_KEY_ESCAPE] != GLFW_PRESS) {
+            inst.renderer->deSelectNode();
         }
-        if (current.keyStates[GLFW_KEY_V] == GLFW_PRESS && previous.keyStates[GLFW_KEY_V] != GLFW_PRESS) {
-            renderer->toggleVsync();
+        if (inst.current.keyStates[GLFW_KEY_V] == GLFW_PRESS && inst.previous.keyStates[GLFW_KEY_V] != GLFW_PRESS) {
+            inst.renderer->toggleVsync();
         }
-        if (current.keyStates[GLFW_KEY_C] == GLFW_PRESS && previous.keyStates[GLFW_KEY_C] != GLFW_PRESS) {
-            renderer->showMap(SHOW_ALBEDO);
-        }
+        if (inst.current.keyStates[GLFW_KEY_C] == GLFW_PRESS && inst.previous.keyStates[GLFW_KEY_C] != GLFW_PRESS) {
+            inst.renderer->showShadowMap();
+        }/*
         if (current.keyStates[GLFW_KEY_R] == GLFW_PRESS && previous.keyStates[GLFW_KEY_R] != GLFW_PRESS) {
             renderer->showMap(SHOW_ROUGHNESS);
         }
@@ -81,13 +95,13 @@ class InputManager {
         }
         if (current.keyStates[GLFW_KEY_N] == GLFW_PRESS && previous.keyStates[GLFW_KEY_N] != GLFW_PRESS) {
             renderer->showMap(SHOW_NORMAL);
-        }
-        if (current.keyStates[GLFW_KEY_F] == GLFW_PRESS && previous.keyStates[GLFW_KEY_F] != GLFW_PRESS) {
-            renderer->toggleDepthBuffering();
         }*/
-
-        current.mouseDelta = current.mousePos - previous.mousePos;
-        previous = current;
+        if (inst.current.keyStates[GLFW_KEY_F] == GLFW_PRESS && inst.previous.keyStates[GLFW_KEY_F] != GLFW_PRESS) {
+            inst.renderer->toggleDepthView();
+        }
+        inst.canMove = true;
+        inst.current.mouseDelta = inst.current.mousePos - inst.previous.mousePos;
+        inst.previous = inst.current;
     }
 
     static void mouse_button_callback(GLFWwindow* window, int button, int action, int mods) {
@@ -101,7 +115,9 @@ class InputManager {
 
     static void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {}
 
-    void setRenderer(Renderer* pRenderer) { renderer = pRenderer; }
+    static void setRenderer(Renderer* pRenderer) { getInstance().renderer = pRenderer; }
+
+    InputState& getCurrentState() {return current;}
 
   private:
     InputState current, previous;

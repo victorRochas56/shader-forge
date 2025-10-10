@@ -18,8 +18,8 @@
 class Swapchain {
 
   public:
-    Swapchain(Device& device, ResourceManager& resourceManager, vk::raii::SurfaceKHR& surface, vk::SampleCountFlagBits msaaSamples)
-        : msaaSamples(msaaSamples), resourceManager(resourceManager), device(device), surface(surface) {}
+    Swapchain(Device& device, ResourceManager& resourceManager, DescriptorSet& descriptorSet, vk::raii::SurfaceKHR& surface, vk::SampleCountFlagBits msaaSamples)
+        : msaaSamples(msaaSamples), resourceManager(resourceManager), descriptorSet(descriptorSet), device(device), surface(surface) {}
 
     void create(GLFWwindow& window, bool& useVsync) {
         auto surfaceCapabilities = device.getPhysicalDevice().getSurfaceCapabilitiesKHR(*surface);
@@ -55,37 +55,43 @@ class Swapchain {
             glfwWaitEvents();
         }
         device.getDevice().waitIdle();
-
         cleanupSwapChain();
-
         create(*window, useVsync);
-        createImageViews();
-        createColorResources();
-        createDepthResources();
     }
 
     void cleanupSwapChain() {
-
         swapChainImageViews.clear();
         depthImageView.clear();
+
+        colorImageView.clear();
+        colorImage.clear();
+        colorImageMemory.clear();
+        depthImage.clear();
+        depthImageMemory.clear();
         depthResolveImageView.clear();
+        depthResolveImage.clear();
+        depthResolveImageMemory.clear();
+
         swapChain = nullptr;
     }
 
     const vk::raii::SwapchainKHR& getSwapChain() { return swapChain; }
     const size_t getSwapImageSize() { return swapChainImages.size(); }
-    const vk::Extent2D& getSwapChainExtent() {return swapChainExtent; } 
+    const vk::Extent2D& getSwapChainExtent() { return swapChainExtent; }
     const vk::Format& getSwapChainImageFormat() { return swapChainImageFormat; }
     const vk::raii::Image& getColorImage() { return colorImage; }
-    const vk::raii::ImageView& getColorImageView() {return colorImageView; }
-    const vk::raii::ImageView& getDepthImageView() {return depthImageView; }
-    const std::vector<vk::raii::ImageView>& getSwapChainImageViews() { return swapChainImageViews;}
-    const std::vector<vk::Image>& getSwapChainImages() {return swapChainImages; }
-
+    const vk::raii::Image& getDepthImage() { return depthImage; }
+    const vk::raii::ImageView& getColorImageView() { return colorImageView; }
+    const vk::raii::ImageView& getDepthImageView() { return depthImageView; }
+    vk::raii::ImageView& getDepthResolveImageView() { return *descriptorSet.getTextureResource(depthResolveIndex).imageView; }
+    uint32_t getDepthResolveIndex() { return depthResolveIndex; }
+    const std::vector<vk::raii::ImageView>& getSwapChainImageViews() { return swapChainImageViews; }
+    const std::vector<vk::Image>& getSwapChainImages() { return swapChainImages; }
 
   private:
     Device& device;
     ResourceManager& resourceManager;
+    DescriptorSet& descriptorSet;
     vk::raii::SurfaceKHR& surface;
     vk::SampleCountFlagBits msaaSamples;
 
@@ -154,7 +160,7 @@ class Swapchain {
                                     vk::ImageUsageFlagBits::eTransientAttachment | vk::ImageUsageFlagBits::eColorAttachment, vk::MemoryPropertyFlagBits::eDeviceLocal, colorImage,
                                     colorImageMemory);
         colorImageView = resourceManager.createImageView(colorImage, colorFormat, vk::ImageAspectFlagBits::eColor, 1);
-        resourceManager.transitionImageLayout(nullptr,depthImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal, 1);
+        resourceManager.transitionImageLayout(nullptr, colorImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
     }
 
     void createDepthResources() {
@@ -164,7 +170,21 @@ class Swapchain {
         resourceManager.createImage(swapChainExtent.width, swapChainExtent.height, 1, msaaSamples, depthFormat, vk::ImageTiling::eOptimal,
                                     vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, depthImage,
                                     depthImageMemory);
+        resourceManager.createImage(swapChainExtent.width, swapChainExtent.height, 1, vk::SampleCountFlagBits::e1, depthFormat, vk::ImageTiling::eOptimal,
+                                    vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, depthResolveImage,
+                                    depthResolveImageMemory);
+
         depthImageView = resourceManager.createImageView(depthImage, depthFormat, vk::ImageAspectFlagBits::eDepth, 1);
-        resourceManager.transitionImageLayout(nullptr,depthImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal, 1);
+        depthResolveImageView = resourceManager.createImageView(depthResolveImage, depthFormat, vk::ImageAspectFlagBits::eDepth, 1);
+        resourceManager.transitionImageLayout(nullptr, depthImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal);
+        resourceManager.transitionImageLayout(nullptr, depthResolveImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal);
+
+        if (depthResolveIndex == 0xFFFFFFFF) {
+            // First time: allocate new slot
+            depthResolveIndex = descriptorSet.allocateTexture(std::move(depthResolveImage), std::move(depthResolveImageMemory), std::move(depthResolveImageView));
+        } else {
+            // Subsequent times: update existing slot
+            descriptorSet.updateTexture(depthResolveIndex, std::move(depthResolveImage), std::move(depthResolveImageMemory), std::move(depthResolveImageView));
+        }
     }
 };

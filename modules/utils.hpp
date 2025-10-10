@@ -111,6 +111,10 @@ static std::vector<char> readFile(const std::string& filename) {
     return buffer;
 }
 
+static bool hasFileChanged(const std::string& filePath) {
+    return false;
+}
+
 static void decomposeTransform(const glm::mat4& matrix, glm::vec3& translation, glm::quat& rotation, glm::vec3& scale) {
     // Extract translation (4th column)
     translation = glm::vec3(matrix[3]);
@@ -137,3 +141,4 @@ static glm::mat4 makeTransform( glm::vec3 translation, glm::quat rotation, glm::
     
     return T * R * S;
 }
+

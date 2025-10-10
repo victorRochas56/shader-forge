@@ -24,6 +24,7 @@
 
 struct MeshData {
     std::vector<std::vector<Vertex>> subMeshes;
+    std::vector<std::vector<uint32_t>> subMeshIndices;
 };
 
 class ResourceManager {
@@ -64,18 +65,21 @@ class ResourceManager {
 
     std::tuple<vk::raii::Image, vk::raii::DeviceMemory, vk::raii::ImageView> createTexture(const void* data, uint32_t width, uint32_t height, vk::Format format,
                                                                                            vk::ImageType imageType = vk::ImageType::e2D,
-                                                                                           vk::ImageViewType viewType = vk::ImageViewType::e2D) {
+                                                                                           vk::ImageViewType viewType = vk::ImageViewType::e2D,
+                                                                                           vk::SampleCountFlagBits samples = vk::SampleCountFlagBits::e1) {
         bool isCubemap = (viewType == vk::ImageViewType::eCube);
+
+        uint32_t mipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(width, height)))) + 1;
         // Create image
         vk::ImageCreateInfo imageInfo{.flags = viewType == vk::ImageViewType::eCube ? vk::ImageCreateFlagBits::eCubeCompatible : vk::ImageCreateFlags{},
                                       .imageType = imageType,
                                       .format = format,
                                       .extent = {width, height, 1},
-                                      .mipLevels = 1,
+                                      .mipLevels = mipLevels,
                                       .arrayLayers = viewType == vk::ImageViewType::eCube ? static_cast<uint32_t>(6) : static_cast<uint32_t>(1),
-                                      .samples = vk::SampleCountFlagBits::e1,
+                                      .samples = samples,
                                       .tiling = vk::ImageTiling::eOptimal,
-                                      .usage = vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
+                                      .usage = vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferSrc,
                                       .sharingMode = vk::SharingMode::eExclusive,
                                       .initialLayout = vk::ImageLayout::eUndefined};
 
@@ -89,15 +93,15 @@ class ResourceManager {
 
         vk::raii::DeviceMemory imageMemory(device.getDevice(), allocInfo);
         image.bindMemory(*imageMemory, 0);
-        // upload the texture data
         uploadTextureData(image, data, width, height, format, isCubemap);
-        // Create image view
+        generateMipmaps(image, format, width, height, mipLevels, isCubemap ? 6 : 1);
+        // debugMipLevels(image, mipLevels, isCubemap ? 6 : 1);
         vk::ImageViewCreateInfo viewInfo{.image = *image,
                                          .viewType = viewType,
                                          .format = format,
                                          .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor,
                                                               .baseMipLevel = 0,
-                                                              .levelCount = 1,
+                                                              .levelCount = mipLevels,
                                                               .baseArrayLayer = 0,
                                                               .layerCount = viewType == vk::ImageViewType::eCube ? static_cast<uint32_t>(6) : static_cast<uint32_t>(1)}};
 
@@ -126,8 +130,10 @@ class ResourceManager {
         memcpy(mappedData, data, totalSize);
         stagingBufferMemory.unmapMemory();
 
-        // Transition image layout for transfer
-        transitionImageLayout(nullptr, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, 1, isCubemap ? 6 : 1);
+        uint32_t layerCount = isCubemap ? 6 : 1;
+        uint32_t mipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(width, height)))) + 1;
+
+        transitionImageLayout(nullptr, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, 0, mipLevels, 0, layerCount);
 
         // Copy buffer to image
         if (isCubemap) {
@@ -135,21 +141,17 @@ class ResourceManager {
         } else {
             copyBufferToImage(stagingBuffer, image, width, height);
         }
-        // Transition image layout for shader access
-        transitionImageLayout(nullptr, image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, 1, isCubemap ? 6 : 1);
+        // image is transitioned back for shader access in generate mip maps
     }
 
-    
     void transitionImageLayout(vk::raii::CommandBuffer* commandBuffer, const vk::Image& image, const vk::ImageLayout oldLayout, const vk::ImageLayout newLayout,
-                               uint32_t mipLevels = 1, uint32_t layerCount = 1) {
+                               uint32_t baseMipLevel = 0, uint32_t mipLevelCount = 1, uint32_t baseArrayLayer = 0, uint32_t layerCount = 1) {
         if (commandBuffer == nullptr) {
-            // Handle single-time command case
             auto singleTimeCmdBuffer = beginSingleTimeCommands();
-            executeImageTransition(singleTimeCmdBuffer, image, oldLayout, newLayout, mipLevels, layerCount);
+            executeImageTransition(singleTimeCmdBuffer, image, oldLayout, newLayout, baseMipLevel, mipLevelCount, baseArrayLayer, layerCount);
             endSingleTimeCommands(singleTimeCmdBuffer);
         } else {
-            // Handle existing command buffer case
-            executeImageTransition(*commandBuffer, image, oldLayout, newLayout, mipLevels, layerCount);
+            executeImageTransition(*commandBuffer, image, oldLayout, newLayout, baseMipLevel, mipLevelCount, baseArrayLayer, layerCount);
         }
     }
 
@@ -194,10 +196,9 @@ class ResourceManager {
     // load from file (OBJ, GLTF, etc.)
     MeshData loadMeshFromFile(const std::string& meshPath) { return loadMeshFromFileImpl(meshPath); }
 
-    // Clean up mesh resources
     void freeMesh(Mesh& mesh) {
         mesh.freed = true;
-        // Don't free texture/sampler as they might be shared
+        // don't free texture/sampler as they might be shared
     }
 
     std::tuple<vk::raii::Image, vk::raii::DeviceMemory, vk::raii::ImageView> loadTextureFromFile(const std::string& path, vk::Format format = vk::Format::eR8G8B8A8Srgb,
@@ -208,9 +209,9 @@ class ResourceManager {
         return std::make_tuple(std::move(image), std::move(memory), std::move(imageView));
     }
 
-    std::tuple<vk::raii::Image, vk::raii::DeviceMemory, vk::raii::ImageView> loadCubeMapFromFile(uint32_t width, uint32_t height, std::string posX, std::string negX,
-                                                                                                 std::string posY, std::string negY, std::string posZ, std::string negZ) {
-
+    std::tuple<vk::raii::Image, vk::raii::DeviceMemory, vk::raii::ImageView> loadCubeMapFromFile(std::string posX, std::string negX, std::string posY, std::string negY,
+                                                                                                 std::string posZ, std::string negZ, uint32_t width, uint32_t height) {
+        //TODO need to get imdgwidth and height from stbi load first so it doesnt have to be entered manually
         std::vector<std::string> faceFiles = {posX, negX, posY, negY, posZ, negZ};
         // Load all 6 face data into a single buffer
         size_t faceSize = width * height * 4;
@@ -229,6 +230,10 @@ class ResourceManager {
             stbi_image_free(imageData);
         }
         auto [image, memory, imageView] = createTexture(allFaceData.data(), width, height, vk::Format::eR8G8B8A8Srgb, vk::ImageType::e2D, vk::ImageViewType::eCube);
+#if DEBUG == 1
+        uint32_t expectedMipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(width, height)))) + 1;
+        std::cout << "Cubemap should have " << expectedMipLevels << " mip levels" << std::endl;
+#endif
         return std::make_tuple(std::move(image), std::move(memory), std::move(imageView));
     }
 
@@ -238,15 +243,18 @@ class ResourceManager {
     std::vector<Material> materials;
     std::vector<Shader> shaders;
 
-    void executeImageTransition(vk::raii::CommandBuffer& cmd, const vk::Image& image, const vk::ImageLayout oldLayout, const vk::ImageLayout newLayout, uint32_t mipLevels,
-                                uint32_t layerCount) {
-        vk::ImageMemoryBarrier2 barrier{
-            .oldLayout = oldLayout,
-            .newLayout = newLayout,
-            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .image = image,
-            .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor, .baseMipLevel = 0, .levelCount = mipLevels, .baseArrayLayer = 0, .layerCount = layerCount}};
+    void executeImageTransition(vk::raii::CommandBuffer& cmd, const vk::Image& image, const vk::ImageLayout oldLayout, const vk::ImageLayout newLayout, uint32_t baseMipLevel,
+                                uint32_t mipLevelCount, uint32_t baseArrayLayer, uint32_t layerCount) {
+        vk::ImageMemoryBarrier2 barrier{.oldLayout = oldLayout,
+                                        .newLayout = newLayout,
+                                        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                        .image = image,
+                                        .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+                                                             .baseMipLevel = baseMipLevel,
+                                                             .levelCount = mipLevelCount,
+                                                             .baseArrayLayer = baseArrayLayer,
+                                                             .layerCount = layerCount}};
 
         if (oldLayout == vk::ImageLayout::eUndefined && newLayout == vk::ImageLayout::eTransferDstOptimal) {
             barrier.srcAccessMask = {};
@@ -291,6 +299,8 @@ class ResourceManager {
             barrier.dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
             barrier.srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe;
             barrier.dstStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests;
+            barrier.subresourceRange = {
+                .aspectMask = vk::ImageAspectFlagBits::eDepth, .baseMipLevel = 0, .levelCount = mipLevelCount, .baseArrayLayer = 0, .layerCount = layerCount};
         }
 
         else if (oldLayout == vk::ImageLayout::eColorAttachmentOptimal && newLayout == vk::ImageLayout::ePresentSrcKHR) {
@@ -299,6 +309,20 @@ class ResourceManager {
             barrier.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
             barrier.dstStageMask = vk::PipelineStageFlagBits2::eBottomOfPipe;
             barrier.subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1};
+        }
+
+        else if (oldLayout == vk::ImageLayout::eTransferDstOptimal && newLayout == vk::ImageLayout::eTransferSrcOptimal) {
+            barrier.srcAccessMask = vk::AccessFlagBits2::eTransferWrite;
+            barrier.dstAccessMask = vk::AccessFlagBits2::eTransferRead;
+            barrier.srcStageMask = vk::PipelineStageFlagBits2::eTransfer;
+            barrier.dstStageMask = vk::PipelineStageFlagBits2::eTransfer;
+        }
+
+        else if (oldLayout == vk::ImageLayout::eTransferSrcOptimal && newLayout == vk::ImageLayout::eShaderReadOnlyOptimal) {
+            barrier.srcAccessMask = vk::AccessFlagBits2::eTransferRead;
+            barrier.dstAccessMask = vk::AccessFlagBits2::eShaderRead;
+            barrier.srcStageMask = vk::PipelineStageFlagBits2::eTransfer;
+            barrier.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
         }
 
         else {
@@ -326,6 +350,96 @@ class ResourceManager {
         return {data, width, height};
     }
 
+    void generateMipmaps(vk::raii::Image& image, vk::Format imageFormat, int32_t texWidth, int32_t texHeight, uint32_t mipLevels, uint32_t layerCount) {
+        vk::FormatProperties formatProperties = device.getPhysicalDevice().getFormatProperties(imageFormat);
+        if (!(formatProperties.optimalTilingFeatures & vk::FormatFeatureFlagBits::eSampledImageFilterLinear)) {
+            throw std::runtime_error("Texture image format does not support linear blitting!");
+        }
+#if DEBUG == 1
+        std::cout << "=== GENERATING MIPMAPS ===" << std::endl;
+        std::cout << "Size: " << texWidth << "x" << texHeight << std::endl;
+        std::cout << "Mip levels: " << mipLevels << std::endl;
+        std::cout << "Layers: " << layerCount << std::endl;
+#endif
+        auto commandBuffer = beginSingleTimeCommands();
+
+        int32_t mipWidth = texWidth;
+        int32_t mipHeight = texHeight;
+
+        for (uint32_t i = 1; i < mipLevels; i++) {
+
+            transitionImageLayout(&commandBuffer, *image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eTransferSrcOptimal, i - 1, 1, 0,
+                                  layerCount); // all layers at once
+
+            // Create separate blit for each layer
+            std::vector<vk::ImageBlit> blits;
+            for (uint32_t layer = 0; layer < layerCount; layer++) {
+                vk::ImageBlit blit;
+                blit.srcSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
+                blit.srcSubresource.mipLevel = i - 1;
+                blit.srcSubresource.baseArrayLayer = layer;
+                blit.srcSubresource.layerCount = 1;
+                blit.srcOffsets[0] = vk::Offset3D{0, 0, 0};
+                blit.srcOffsets[1] = vk::Offset3D{mipWidth, mipHeight, 1};
+
+                blit.dstSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
+                blit.dstSubresource.mipLevel = i;
+                blit.dstSubresource.baseArrayLayer = layer;
+                blit.dstSubresource.layerCount = 1;
+                blit.dstOffsets[0] = vk::Offset3D{0, 0, 0};
+                blit.dstOffsets[1] = vk::Offset3D{mipWidth > 1 ? mipWidth / 2 : 1, mipHeight > 1 ? mipHeight / 2 : 1, 1};
+
+                blits.push_back(blit);
+            }
+
+            commandBuffer.blitImage(*image, vk::ImageLayout::eTransferSrcOptimal, *image, vk::ImageLayout::eTransferDstOptimal, blits, vk::Filter::eLinear);
+
+            // Transition previous mip level (all layers) to shader read
+            transitionImageLayout(&commandBuffer, *image, vk::ImageLayout::eTransferSrcOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, i - 1, 1, 0, layerCount);
+
+            if (mipWidth > 1)
+                mipWidth /= 2;
+            if (mipHeight > 1)
+                mipHeight /= 2;
+        }
+        // finally transition the last mip level
+        transitionImageLayout(&commandBuffer, *image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, mipLevels - 1, 1, 0, layerCount);
+
+        endSingleTimeCommands(commandBuffer);
+
+        device.getGraphicsQueue().waitIdle();
+#if DEBUG == 1
+        std::cout << "=== MIPMAPS COMPLETE ===" << std::endl;
+#endif
+    }
+    void debugMipLevels(vk::raii::Image& image, uint32_t mipLevels, uint32_t layerCount) {
+        auto commandBuffer = beginSingleTimeCommands();
+
+        // Transition all mip levels to TRANSFER_DST_OPTIMAL
+        transitionImageLayout(&commandBuffer, *image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, 0, mipLevels, 0, layerCount);
+
+        // Clear ALL mip levels to magenta at once
+        vk::ClearColorValue clearColor{};
+        clearColor.float32[0] = 1.0f; // R
+        clearColor.float32[1] = 0.0f; // G
+        clearColor.float32[2] = 1.0f; // B
+        clearColor.float32[3] = 1.0f; // A
+
+        vk::ImageSubresourceRange range{.aspectMask = vk::ImageAspectFlagBits::eColor,
+                                        .baseMipLevel = 0,
+                                        .levelCount = mipLevels, // ALL mip levels at once
+                                        .baseArrayLayer = 0,
+                                        .layerCount = layerCount};
+
+        commandBuffer.clearColorImage(*image, vk::ImageLayout::eTransferDstOptimal, clearColor, range);
+        std::cout << "Cleared ALL mip levels to magenta" << std::endl;
+
+        // Transition all mip levels to SHADER_READ_ONLY_OPTIMAL
+        transitionImageLayout(&commandBuffer, *image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, 0, mipLevels, 0, layerCount);
+
+        endSingleTimeCommands(commandBuffer);
+    }
+
     MeshData loadMeshFromFileImpl(const std::string& meshPath) {
         tinyobj::attrib_t attrib;
         std::vector<tinyobj::shape_t> shapes;
@@ -335,16 +449,19 @@ class ResourceManager {
         if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, meshPath.c_str())) {
             throw std::runtime_error(warn + err);
         }
-        MeshData meshData = {};
 
-        meshData.subMeshes.reserve(shapes.size());
+        MeshData meshData = {};
+        meshData.subMeshes.resize(shapes.size());
+        meshData.subMeshIndices.resize(shapes.size());
+
         uint32_t subMeshIndex = 0;
         for (const auto& shape : shapes) {
+            std::unordered_map<Vertex, uint32_t> uniqueVertices{};
 
             for (const auto& index : shape.mesh.indices) {
                 Vertex vertex{};
 
-                // Load position (with bounds check)
+                // Load position
                 if (index.vertex_index >= 0 && index.vertex_index < attrib.vertices.size() / 3) {
                     vertex.position = {attrib.vertices[3 * index.vertex_index + 0], attrib.vertices[3 * index.vertex_index + 1], attrib.vertices[3 * index.vertex_index + 2]};
                 }
@@ -353,7 +470,7 @@ class ResourceManager {
                 if (index.normal_index >= 0 && index.normal_index < attrib.normals.size() / 3) {
                     vertex.normal = {attrib.normals[3 * index.normal_index + 0], attrib.normals[3 * index.normal_index + 1], attrib.normals[3 * index.normal_index + 2]};
                 } else {
-                    vertex.normal = {0.0f, 1.0f, 0.0f}; // Default up normal
+                    vertex.normal = {0.0f, 1.0f, 0.0f};
                 }
 
                 // Load texture coordinates
@@ -362,10 +479,73 @@ class ResourceManager {
                 } else {
                     vertex.texCoord = {0.0f, 0.0f};
                 }
-                meshData.subMeshes[subMeshIndex].push_back(vertex);
+
+                // Check if vertex already exists
+                if (uniqueVertices.count(vertex) == 0) {
+                    uniqueVertices[vertex] = static_cast<uint32_t>(meshData.subMeshes[subMeshIndex].size());
+                    meshData.subMeshes[subMeshIndex].push_back(vertex);
+                }
+
+                meshData.subMeshIndices[subMeshIndex].push_back(uniqueVertices[vertex]);
             }
             subMeshIndex++;
         }
+
+        // Calculate tangents using indices
+        for (size_t meshIdx = 0; meshIdx < meshData.subMeshes.size(); meshIdx++) {
+            auto& vertices = meshData.subMeshes[meshIdx];
+            auto& indices = meshData.subMeshIndices[meshIdx];
+
+            // Initialize tangents to zero
+            for (auto& vertex : vertices) {
+                vertex.tangent = glm::vec3(0.0f);
+            }
+
+            // Calculate tangents per triangle
+            for (size_t i = 0; i < indices.size(); i += 3) {
+                uint32_t idx0 = indices[i];
+                uint32_t idx1 = indices[i + 1];
+                uint32_t idx2 = indices[i + 2];
+
+                Vertex& v0 = vertices[idx0];
+                Vertex& v1 = vertices[idx1];
+                Vertex& v2 = vertices[idx2];
+
+                glm::vec3 edge1 = v1.position - v0.position;
+                glm::vec3 edge2 = v2.position - v0.position;
+
+                glm::vec2 deltaUV1 = v1.texCoord - v0.texCoord;
+                glm::vec2 deltaUV2 = v2.texCoord - v0.texCoord;
+
+                float denominator = deltaUV1.x * deltaUV2.y - deltaUV2.x * deltaUV1.y;
+
+                glm::vec3 tangent;
+                if (abs(denominator) < 0.0001f) {
+                    tangent = glm::vec3(1.0f, 0.0f, 0.0f);
+                } else {
+                    float f = 1.0f / denominator;
+                    tangent.x = f * (deltaUV2.y * edge1.x - deltaUV1.y * edge2.x);
+                    tangent.y = f * (deltaUV2.y * edge1.y - deltaUV1.y * edge2.y);
+                    tangent.z = f * (deltaUV2.y * edge1.z - deltaUV1.y * edge2.z);
+                    tangent = normalize(tangent);
+                }
+
+                // Accumulate tangents (for averaging at shared vertices)
+                v0.tangent += tangent;
+                v1.tangent += tangent;
+                v2.tangent += tangent;
+            }
+
+            // Normalize accumulated tangents
+            for (auto& vertex : vertices) {
+                if (glm::length(vertex.tangent) > 0.0001f) {
+                    vertex.tangent = normalize(vertex.tangent);
+                } else {
+                    vertex.tangent = glm::vec3(1.0f, 0.0f, 0.0f);
+                }
+            }
+        }
+
         return meshData;
     }
 
@@ -389,10 +569,9 @@ class ResourceManager {
         commandBuffer.end();
 
         vk::SubmitInfo submitInfo{};
-        submitInfo.commandBufferCount = 1;
-        submitInfo.pCommandBuffers = &*commandBuffer;
+        submitInfo.setCommandBuffers(*commandBuffer);
 
-        device.getGraphicsQueue().submit(submitInfo, nullptr);
+        device.getGraphicsQueue().submit(submitInfo);
         device.getGraphicsQueue().waitIdle();
     }
 };

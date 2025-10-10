@@ -11,7 +11,9 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <stb_image.h>
 #include <stdexcept>
+#include <unordered_set>
 #include <vector>
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_raii.hpp>
@@ -29,82 +31,164 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/hash.hpp>
 
+#include "constants.hpp"
 #include "descriptor_sets.hpp"
 #include "devices.hpp"
+#include "gizmo.hpp"
 #include "pipelines.hpp"
 #include "scene_elements.hpp"
 #include "swapchain.hpp"
 #include "utils.hpp"
-
-constexpr int MAX_FRAMES_IN_FLIGHT = 2;
+// TODO gpu side material data ("uber shader" approach)
 const std::vector validationLayers = {"VK_LAYER_KHRONOS_validation"};
 
 class Renderer {
   public:
+    void showShadowMap() {
+        debugShowShadow++;
+        if (debugShowShadow == 4) {
+            showShadowMapIndex = 0xFFFFFFFF;
+            return;
+        }
+        if (debugShowShadow >= 5) {
+            debugShowShadow = 0;
+            return;
+        }
+        
+    }
+    uint32_t debugShowShadow = 4;
+    uint32_t showShadowMapIndex = 0xFFFFFFFF;
     Camera activeCamera;
+    Gizmos* gizmos = nullptr;
+    uint32_t selectedNode = MAX_NODES;
+
+    Renderer() : nodes(new std::array<std::optional<Node>, MAX_NODES>()) {}
+    ~Renderer() { delete nodes; }
 
     void initVulkan(uint32_t startWidth, uint32_t startHeight) {
         createInstance();
         setupDebugMessenger();
         createSurface();
-        device = std::make_unique<Device>(instance, getRequiredExtensions(), surface);
+        device = std::make_unique<Device>(instance, requiredDeviceExtension, surface);
         msaaSamples = getMaxUsableSampleCount(*device);
         createCommandPool();
         createCommandBuffers();
-        resourceManager = std::make_unique<ResourceManager>(*device,commandPool);
-        swapchain = std::make_unique<Swapchain>(*device,*resourceManager, surface, msaaSamples);
-        createSyncObjects();
+        resourceManager = std::make_unique<ResourceManager>(*device, commandPool);
+        descriptorSet = std::make_unique<DescriptorSet>(*device, *resourceManager, &commandPool);
+        swapchain = std::make_unique<Swapchain>(*device, *resourceManager, *descriptorSet, surface, msaaSamples);
         pipelineManager = std::make_unique<PipelineManager>(*device, *swapchain, msaaSamples);
-        swapchain->create(*window, vSync);
 
         // initializing camera
-        activeCamera = Camera{.position = glm::vec3(2, 2, 2),
+        activeCamera = Camera{.position = glm::vec3(1, 1, 1),
                               .target = glm::vec3(0, 0, 0),
-                              .fov = 90.0,
+                              .fov = 45.0,
                               .aspectRatio = static_cast<float>(startWidth) / static_cast<float>(startHeight),
                               .nearPlane = 0.1,
                               .farPlane = 100.0};
         activeCamera.calculateViewProjectionMatrix();
 
-        // descriptor set
-        descriptorSet = std::make_unique<DescriptorSet>(*device, *resourceManager, &commandPool);
-
-        descriptorSet->createVariableBuffer(256 * 1024 * 1024);                 // 256 mb vertex buffer
-        modelMatrixBufferIndex = descriptorSet->createFixedBuffer<glm::mat4>(); // max 2048 model matrices by default
+        vertexBufferIndex = descriptorSet->createVariableBuffer(256 * 1024 * 1024);                                       // 256 mb vertex buffer
+        indexBufferIndex = descriptorSet->createVariableBuffer(128 * 1024 * 1024, vk::BufferUsageFlagBits::eIndexBuffer); // index buffer (128 MB)
+        modelMatrixBufferIndex = descriptorSet->createFixedBuffer<glm::mat4>();                                           // max 2048 model matrices by default
+        lightBufferIndex = descriptorSet->createFixedBuffer<Light>();                                                     // max 2048 lights by default
+        gizmos = new Gizmos(MAX_GIZMO_LINES, &*descriptorSet);
         descriptorSet->createDescriptorSet();
-        defaultSamplerIndex = descriptorSet->allocateSampler(vk::Filter::eLinear, vk::SamplerMipmapMode::eLinear, vk::SamplerAddressMode::eRepeat, VK_TRUE, 0.1, VK_FALSE,
-                                                             vk::CompareOp::eLessOrEqual, vk::BorderColor::eFloatOpaqueBlack);
+        swapchain->create(*window, vSync);
+        createSyncObjects();
 
-        // default normal texture
-        std::array<float, 4> normalColor = {0.5, 0.0, 0.5, 1.0};
-        auto [image, memory, imageView] = resourceManager->createTexture(normalColor.data(), 1, 1, vk::Format::eR8G8B8A8Srgb);
-        defaultNormalIndex = descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(imageView));
+#if DEBUG == 1
+        descriptorSet->debugDescriptorSet("after_createDescriptorSet");
+#endif
+
+        // DEFAULTS
+        defaultSamplerIndex = descriptorSet->allocateSampler(vk::Filter::eLinear, vk::SamplerMipmapMode::eLinear, vk::SamplerAddressMode::eRepeat, VK_TRUE, 16.0, VK_FALSE,
+                                                             vk::CompareOp::eLessOrEqual, vk::BorderColor::eFloatOpaqueBlack);
+        depthSamplerIndex = descriptorSet->allocateSampler(vk::Filter::eNearest, vk::SamplerMipmapMode::eNearest, vk::SamplerAddressMode::eClampToEdge, VK_FALSE, 16.0, VK_FALSE,
+                                                           vk::CompareOp::eLessOrEqual, vk::BorderColor::eFloatOpaqueBlack);
+        shadowSamplerIndex = descriptorSet->allocateSampler(vk::Filter::eLinear,                    // Bilinear filtering for PCF
+                                                            vk::SamplerMipmapMode::eNearest,        // No mipmaps
+                                                            vk::SamplerAddressMode::eClampToBorder, // Clamp to avoid wrapping
+                                                            VK_FALSE,                               // No anisotropy needed
+                                                            1.0f,
+                                                            VK_FALSE, // No comparison (or VK_TRUE for hardware PCF)
+                                                            vk::CompareOp::eLessOrEqual,
+                                                            vk::BorderColor::eFloatOpaqueWhite // 1.0 = max depth = not in shadow
+        );
+        // Default albedo (white)
+        std::array<uint8_t, 4> whiteColor = {255, 255, 255, 255};
+        auto [albedoImage, albedoMemory, albedoImageView] = resourceManager->createTexture(whiteColor.data(), 1, 1, vk::Format::eR8G8B8A8Srgb);
+        uint32_t defaultAlbedoIndex = descriptorSet->allocateTexture(std::move(albedoImage), std::move(albedoMemory), std::move(albedoImageView));
+
+        // Default normal (flat normal = 0.5, 0.5, 1.0 in RGB)
+        std::array<uint8_t, 4> normalColor = {128, 128, 255, 255}; // This is (0.5, 0.5, 1.0, 1.0) in normalized values
+        auto [normalImage, normalMemory, normalImageView] = resourceManager->createTexture(normalColor.data(), 1, 1, vk::Format::eR8G8B8A8Unorm);
+        defaultNormalIndex = descriptorSet->allocateTexture(std::move(normalImage), std::move(normalMemory), std::move(normalImageView));
+
+        // Default roughness (mid-gray = 0.5 roughness)
+        std::array<uint8_t, 4> roughnessColor = {128, 128, 128, 255};
+        auto [roughnessImage, roughnessMemory, roughnessImageView] = resourceManager->createTexture(roughnessColor.data(), 1, 1, vk::Format::eR8G8B8A8Unorm);
+        uint32_t defaultRoughnessIndex = descriptorSet->allocateTexture(std::move(roughnessImage), std::move(roughnessMemory), std::move(roughnessImageView));
+
+        // Default metallic (black = 0.0 metallic)
+        std::array<uint8_t, 4> metallicColor = {0, 0, 0, 255};
+        auto [metallicImage, metallicMemory, metallicImageView] = resourceManager->createTexture(metallicColor.data(), 1, 1, vk::Format::eR8G8B8A8Unorm);
+        uint32_t defaultMetallicIndex = descriptorSet->allocateTexture(std::move(metallicImage), std::move(metallicMemory), std::move(metallicImageView));
 
         // pipeline(s)
-        pipelineManager->createPipeline<PushConstants>(1, "/shaders/lit.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
-        fallbackLitShader = Shader{.sourceFile = "/shaders/lit.spv", .pipelineIndex = static_cast<uint32_t>(pipelineManager->getGeoPipelines().size())};
-        fallbackDefaultMaterial = Material{
-            .shaderSource = fallbackLitShader,
-            .textureMask = 0x00000000,
-            // 1st bit : hasAlbedo
-            // 2nd bit : hasRoughness
-            // 3rd bit : hasMetallic
-            // 4th bit : hasNormal
-            .color = glm::vec4(0.5, 0.5, 0.5, 1),
-            .metallic = 0.0,
-            .roughness = 0.75,
-            .normalTextureIndex = defaultNormalIndex // should be set to default normal if not present
-        };
+        skyboxPipelineIndex =
+            pipelineManager->createPipeline<SkyBoxPushConstants>(PipelineCategory::GEOMETRY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
+                                                                 vk::False, "shaders/skybox.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
 
-        nodes[0] =  Node(this, 0);
-        rootNode = &*nodes[0];
-        lastNode++;
+        shadowPipelineIndex = pipelineManager->createPipeline<ShadowPushConstants>(PipelineCategory::BEFORE_GEOMETRY, vk::PrimitiveTopology::eTriangleList,
+                                                                                   vk::CullModeFlagBits::eNone, vk::True, vk::True, "shaders/shadow_geometry.spv",
+                                                                                   descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
+
+        litPipelineIndex = pipelineManager->createPipeline<PushConstants>(PipelineCategory::GEOMETRY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eBack, vk::True,
+                                                                          vk::True, "shaders/lit.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
+        gizmoPipelineIndex =
+            pipelineManager->createPipeline<LinePushConstants>(PipelineCategory::GEOMETRY, vk::PrimitiveTopology::eLineList, vk::CullModeFlagBits::eNone, vk::False, vk::False,
+                                                               "shaders/line.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
+        depthPipelineIndex =
+            pipelineManager->createPipeline<DepthVisPushConstants>(PipelineCategory::AFTER_GEOMETRY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
+                                                                   vk::False, "shaders/depth_view.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
+
+        fallbackLitShader = Shader{.sourceFile = "shaders/lit.spv", .pipelineIndex = litPipelineIndex};
+        uint32_t defaultTexMask = 0x000000000;
+        //texMask |= (1U << 0);
+        //texMask |= (1U << 1);
+        //texMask |= (1U << 3);
+        Material defaultMaterial = Material{.shaderSource = fallbackLitShader,
+                                            .textureMask = defaultTexMask,
+                                            .color = glm::vec4(0.5, 0.5, 0.5, 1),
+                                            .albedoTextureIndex = defaultAlbedoIndex,
+                                            .metallic = 0.0,
+                                            .metallicTextureIndex = defaultMetallicIndex,
+                                            .roughness = 0.5,
+                                            .roughnessTextureIndex = defaultRoughnessIndex,
+                                            .normalTextureIndex = defaultNormalIndex};
+        fallbackDefaultMaterialIndex = addMaterial(defaultMaterial);
+
+#if DEBUG == 1
+        descriptorSet->debugDescriptorSet("after_pipeline_creation");
+#endif
+
+        (*nodes)[0] = Node(this, 0, nullptr, glm::vec3(0.0), glm::quat(1.0, 0, 0, 0), glm::vec3(1, 1, 1));
+        (*nodes)[0]->name = "root";
+        rootNode = &*(*nodes)[0];
+        std::cout << sizeof(Vertex) << std::endl;
     }
 
     void drawFrame() {
-        while (vk::Result::eTimeout == device->getDevice().waitForFences(*inFlightFences[currentFrame], vk::True, UINT64_MAX))
-            // wait for gpu to finish rendering the frame we just submitted
-            ;
+        for (auto& [id, light] : lights) {
+            if (light.castsShadows == 1) {
+                if (light.type == LightType::Directional) {
+                    calculateCascadedLightSpaceMatrices(light, activeCamera);
+                }
+                descriptorSet->updateFixedBuffer<Light>(lightBufferIndex, id, light);
+            }
+        }
+
+        device->getDevice().waitForFences(*inFlightFences[currentFrame], vk::True, UINT64_MAX);
         auto [result, imageIndex] = swapchain->getSwapChain().acquireNextImage(UINT64_MAX, *presentCompleteSemaphores[currentFrame], nullptr);
 
         if (result == vk::Result::eErrorOutOfDateKHR) {
@@ -168,12 +252,14 @@ class Renderer {
         }
 
         currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+        pipelineManager->checkForShaderUpdates(); //TODO enable this
     }
 
     GLFWwindow* getWindow() { return window; }
     void setWindow(GLFWwindow* pWindow) { window = pWindow; }
 
     Device& getDevice() { return *device; }
+    ResourceManager& getResourceManager() { return *resourceManager; }
 
     const vk::Instance& getInstance() const { return *instance; }
 
@@ -186,40 +272,124 @@ class Renderer {
 
     DescriptorSet& getDescriptorSet() { return *descriptorSet; }
     uint32_t getModelMatrixBufferIndex() { return modelMatrixBufferIndex; }
+    uint32_t getLightBufferIndex() { return lightBufferIndex; }
     std::vector<Material>& getMaterials() { return materials; }
-    void addMeshToShader(Node* node, uint32_t submeshIndex, Shader shader, Material material) { shaders[shader][material][node].push_back(submeshIndex); }
-    Shader getFallBackShader() { return fallbackLitShader; }
-    std::vector<Mesh>& getMeshes() { return meshes; }
-
-    uint32_t loadMeshFromFile(std::string filePath) {
-        auto meshData = resourceManager->loadMeshFromFile(filePath);
-        Mesh mainMesh {.sourceFile = filePath};
-        for( auto mesh : meshData.subMeshes){
-
-            uint32_t allocIndex = descriptorSet->allocateVariableBuffer<Vertex>(mesh);
-            VariableBufferAllocation alloc = descriptorSet->getVariableBufferAllocation(allocIndex);
-            SubMesh subMesh = {
-                .vertexAllocationIndex = allocIndex,
-                .vertexOffset = alloc.offset,
-                .vertexCount = alloc.size,
-                .vertexStride = alloc.stride
-            };
-            subMeshes.push_back(subMesh);
-            mainMesh.subMeshes.push_back(subMeshes.size()-1);
+    uint32_t addMaterial(Material material) {
+        // iterate through materials check if already exists
+        for (uint32_t i = 0; i < materials.size(); i++) {
+            if (materials[i] == material) {
+                return i;
+            }
         }
-        meshes.push_back(mainMesh);
-        return meshes.size()-1;
+        materials.push_back(material);
+        return materials.size() - 1;
     }
-    std::vector<Light>& getLights() { return lights; }
+    // don't call this directly, should only be called from a node with a valid mesh index
+    void addMeshToShader(Node* node, uint32_t submeshIndex, Shader shader, Material material) { shaders[shader][material][node].insert(submeshIndex); }
+    void removeMeshFromShader(Node* node, uint32_t subMeshIndex, Shader shader, Material material) { shaders[shader][material][node].erase(subMeshIndex); }
+    Shader getFallBackShader() { return fallbackLitShader; }
+    uint32_t getFallBackMaterial() { return fallbackDefaultMaterialIndex; }
+    std::vector<Mesh>& getMeshes() { return meshes; }
+    uint32_t loadMeshFromFile(std::string filePath) {
+
+        // if the mesh already exists in memory
+        for (int i = 0; i < meshes.size(); i++) {
+            if (meshes[i].sourceFile == filePath) {
+                return i;
+            }
+        }
+#if DEBUG == 1
+        std::cout << "Loading mesh from " << filePath << std::endl;
+#endif
+        auto meshData = resourceManager->loadMeshFromFile(filePath);
+        Mesh mainMesh{.sourceFile = filePath};
+
+        for (size_t i = 0; i < meshData.subMeshes.size(); i++) {
+            auto& vertices = meshData.subMeshes[i];
+            auto& indices = meshData.subMeshIndices[i];
+
+            // Allocate vertex buffer
+            uint32_t vertexAllocIndex = descriptorSet->allocateVariableBuffer<Vertex>(vertices, vertexBufferIndex);
+            VariableBufferAllocation vertexAlloc = descriptorSet->getVariableBufferAllocation(vertexBufferIndex, vertexAllocIndex);
+
+            // Allocate index buffer
+            uint32_t indexAllocIndex = descriptorSet->allocateVariableBuffer<uint32_t>(indices, indexBufferIndex);
+            VariableBufferAllocation indexAlloc = descriptorSet->getVariableBufferAllocation(indexBufferIndex, indexAllocIndex);
+
+            SubMesh subMesh = {.vertexAllocationIndex = vertexAllocIndex,
+                               .vertexOffset = vertexAlloc.offset,
+                               .vertexCount = vertexAlloc.count,
+                               .vertexStride = vertexAlloc.stride,
+                               .indexAllocationIndex = indexAllocIndex,
+                               .indexOffset = indexAlloc.offset,
+                               .indexCount = indexAlloc.count};
+
+            subMeshes.push_back(subMesh);
+            mainMesh.subMeshes.push_back(subMeshes.size() - 1);
+        }
+
+        meshes.push_back(mainMesh);
+        return meshes.size() - 1;
+    }
+
+    uint32_t loadTextureFromFile(std::string filePath, vk::Format format = vk::Format::eR8G8B8A8Srgb) {
+        auto [image, memory, view] = resourceManager->loadTextureFromFile(filePath, format);
+        return descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(view));
+    }
+
+    uint32_t loadCubemapFromFile(std::string posX, std::string posY, std::string posZ, std::string negX, std::string negY, std::string negZ, uint32_t width = 2048, uint32_t height = 2048) {
+        auto [image, memory, view] = resourceManager->loadCubeMapFromFile(posX, negX, posY, negY, posZ, negZ, width, height);
+        return descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(view), true);
+    }
+
+    std::map<uint32_t, Light>& getLights() { return lights; }
 
     Node* getRootNode() { return rootNode; }
-
+    std::array<std::optional<Node>, MAX_NODES>& getNodes() { return *nodes; }
     uint32_t addNode(uint32_t parentIndex = 0, glm::vec3 position = glm::vec3(0.0f), glm::quat rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f), glm::vec3 scale = glm::vec3(1.0f),
                      bool keepWorldTransform = false) {
-        nodes[lastNode].emplace(this, lastNode + 1, &*nodes[parentIndex], position, rotation, scale, keepWorldTransform);
+        (*nodes)[lastNode + 1].emplace(this, lastNode + 1, &*(*nodes)[parentIndex], position, rotation, scale, keepWorldTransform);
         lastNode++;
         return lastNode;
     }
+    void removeNode(uint32_t index) { throw std::runtime_error("remove node not implemented!"); }
+    std::vector<uint32_t> rayCastNodes(glm::vec3 origin, glm::vec3 direction) {
+        float margin = 0.05f;
+        glm::vec3 dir = glm::normalize(direction);
+        std::vector<uint32_t> foundNodes;
+
+        for (int i = 1; i <= lastNode; i++) {
+            glm::vec3 nodeWorldLoc = glm::vec3((*nodes)[i]->getWorldPosition());
+            glm::vec3 toNode = nodeWorldLoc - origin;
+            // Project toNode onto the ray direction
+            float projectionLength = glm::dot(toNode, dir);
+            // Skip nodes behind the ray origin
+            if (projectionLength < 0)
+                continue;
+            // Find closest point on ray to the node
+            glm::vec3 closestPointOnRay = origin + dir * projectionLength;
+            // Calculate perpendicular distance from node to ray
+            float distanceToRay = glm::distance(nodeWorldLoc, closestPointOnRay);
+            if (distanceToRay < margin) {
+                foundNodes.push_back(i);
+            }
+        }
+        return foundNodes;
+    }
+    void selectNode(uint32_t nodeIndex) {
+        if (nodeIndex <= lastNode) {
+            selectedNode = nodeIndex;
+        }
+    }
+    void deSelectNode() { selectedNode = MAX_NODES; }
+    uint32_t getNodeCount() { return lastNode + 1; }
+
+    void toggleVsync() {
+        vSync = !vSync;
+        swapchain->recreate(window, vSync);
+    }
+    void toggleDepthView() { depthView = !depthView; }
+    void setSkyBox(uint32_t skyboxIndex) { this->skyboxIndex = skyboxIndex; }
 
   private:
     GLFWwindow* window = nullptr;
@@ -228,6 +398,10 @@ class Renderer {
     vk::raii::Context context;
     vk::raii::DebugUtilsMessengerEXT debugMessenger = nullptr;
     vk::raii::SurfaceKHR surface = nullptr;
+
+    std::vector<const char*> requiredDeviceExtension = {VK_KHR_SWAPCHAIN_EXTENSION_NAME,           VK_KHR_SPIRV_1_4_EXTENSION_NAME,
+                                                        VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,   VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME,
+                                                        VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME, VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME};
 
     vk::raii::CommandPool commandPool = nullptr;
     std::vector<vk::raii::CommandBuffer> commandBuffers;
@@ -246,23 +420,38 @@ class Renderer {
     std::unique_ptr<DescriptorSet> descriptorSet;
 
     std::vector<Material> materials;
-    std::map<Shader, std::map<Material, std::map<Node*, std::vector<uint32_t>>>> shaders; // map between Shaders and Nodes + their submeshes to render
+    std::map<Shader, std::map<Material, std::map<Node*, std::unordered_set<uint32_t>>>> shaders; // map between Shaders and Nodes + their submeshes to render
     Shader fallbackLitShader;
-    Material fallbackDefaultMaterial;
+    uint32_t fallbackDefaultMaterialIndex;
     std::vector<Mesh> meshes;
+    std::queue<uint32_t> freeMeshes;
     std::vector<SubMesh> subMeshes;
-    std::vector<Light> lights;
+    std::queue<uint32_t> freeSubMeshes;
+    std::map<uint32_t, Light> lights;
+    uint32_t vertexBufferIndex;
+    uint32_t indexBufferIndex;
     uint32_t modelMatrixBufferIndex;
+    uint32_t lightBufferIndex;
+
+    uint32_t skyboxPipelineIndex;
+    uint32_t shadowPipelineIndex;
+    uint32_t litPipelineIndex;
+    uint32_t gizmoPipelineIndex;
+    uint32_t depthPipelineIndex;
 
     uint32_t defaultSamplerIndex;
+    uint32_t depthSamplerIndex;
+    uint32_t shadowSamplerIndex;
     uint32_t defaultNormalIndex;
+    uint32_t skyboxIndex;
 
     Node* rootNode = nullptr;
-    std::array<std::optional<Node>, 2048> nodes;
+    std::array<std::optional<Node>, MAX_NODES>* nodes;
     uint32_t lastNode = 0;
 
     vk::SampleCountFlagBits msaaSamples;
     bool vSync = true;
+    bool depthView = false;
 
     void createInstance() {
         constexpr vk::ApplicationInfo appInfo{.pApplicationName = "Shader Forge",
@@ -366,10 +555,17 @@ class Renderer {
 
         commandBuffers[currentFrame].begin({});
 
+        for (auto& [lightId, light] : lights) {
+            if (light.castsShadows == 1) {
+                recordShadowPass(commandBuffers[currentFrame], light);
+            }
+        }
+
         resourceManager->transitionImageLayout(&commandBuffers[currentFrame], swapchain->getSwapChainImages()[imageIndex], vk::ImageLayout::eUndefined,
                                                vk::ImageLayout::eColorAttachmentOptimal);
-        // Transition the multisampled color image to COLOR_ATTACHMENT_OPTIMAL
         resourceManager->transitionImageLayout(&commandBuffers[currentFrame], swapchain->getColorImage(), vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
+        resourceManager->transitionImageLayout(&commandBuffers[currentFrame], swapchain->getDepthImage(), vk::ImageLayout::eUndefined,
+                                               vk::ImageLayout::eDepthStencilAttachmentOptimal);
 
         vk::ClearValue clearColor{.color = vk::ClearColorValue(std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f})};
         vk::ClearValue clearDepth{.depthStencil = vk::ClearDepthStencilValue{1.0f, 0}};
@@ -388,6 +584,8 @@ class Renderer {
         vk::RenderingAttachmentInfo depthAttachmentInfo = {.imageView = swapchain->getDepthImageView(),
                                                            .imageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
                                                            .resolveMode = vk::ResolveModeFlagBits::eMin,
+                                                           .resolveImageView = swapchain->getDepthResolveImageView(),
+                                                           .resolveImageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
                                                            .loadOp = vk::AttachmentLoadOp::eClear,
                                                            .storeOp = vk::AttachmentStoreOp::eDontCare,
                                                            .clearValue = clearDepth};
@@ -403,47 +601,183 @@ class Renderer {
             0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapchain->getSwapChainExtent().width), static_cast<float>(swapchain->getSwapChainExtent().height), 0.0f, 1.0f));
         commandBuffers[currentFrame].setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapchain->getSwapChainExtent()));
 
+        // draw skybox
+        auto& currentSkyBoxPipeline = pipelineManager->getGeoPipelines()[skyboxPipelineIndex];
+        commandBuffers[currentFrame].bindPipeline(vk::PipelineBindPoint::eGraphics, currentSkyBoxPipeline->pipeline);
+        commandBuffers[currentFrame].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, currentSkyBoxPipeline->layout, 0, {**currentSkyBoxPipeline->descriptorSet}, {});
+        SkyBoxPushConstants skyboxConstants = {.skyboxIndex = skyboxIndex, .blur = 0.5, .invViewProjMatrix = glm::inverse(activeCamera.viewProjection)};
+        commandBuffers[currentFrame].pushConstants<SkyBoxPushConstants>(*currentSkyBoxPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0,
+                                                                        skyboxConstants);
+        commandBuffers[currentFrame].draw(3, 1, 0, 0);
+
         // draw geometry
+        vk::Buffer indexBufferHandle = descriptorSet->getVariableBuffer(indexBufferIndex);
         auto& geoPipelines = pipelineManager->getGeoPipelines();
         for (auto [shader, materials] : shaders) {
             auto currentPipeline = &(geoPipelines[shader.pipelineIndex]);
             commandBuffers[currentFrame].bindPipeline(vk::PipelineBindPoint::eGraphics, (*currentPipeline)->pipeline);
-            commandBuffers[currentFrame].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, (*currentPipeline)->layout, 0, {(*currentPipeline)->descriptorSet}, {});
+
+            commandBuffers[currentFrame].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, (*currentPipeline)->layout, 0, {*(*currentPipeline)->descriptorSet}, {});
+
             for (auto [material, node_mesh] : materials) {
                 for (auto [node, subMeshIndices] : node_mesh) {
 
-                    if (meshes[node->getMeshIndex()].freed == true) { // skip if the mesh was freed
-                        // TODO add function call to remove mesh from node
+                    if (meshes[node->getMeshIndex()].freed == true) { // skip if the mesh was marked to be freed and free the mesh memory
+                        for (uint32_t subMesh : meshes[node->getMeshIndex()].subMeshes) {
+                            descriptorSet->freeVariableBuffer(vertexBufferIndex, subMeshes[subMesh].vertexAllocationIndex);
+                            descriptorSet->freeVariableBuffer(indexBufferIndex, subMeshes[subMesh].indexAllocationIndex);
+                            freeSubMeshes.push(subMesh);
+                        }
+                        freeMeshes.push(node->getMeshIndex());
                         continue;
                     }
                     for (auto mesh : subMeshIndices) {
-                        PushConstants pushConstants = {.vertexAllocationIndex = subMeshes[mesh].vertexAllocationIndex, // Index into vertex allocations
-                                                       .vertexOffset = static_cast<uint32_t>(subMeshes[mesh].vertexOffset),                   // Byte offset in vertex buffer
-                                                       .vertexStride = subMeshes[mesh].vertexStride,                   // Size of each vertex (e.g., sizeof(Vertex))
-                                                       .modelMatrixIndex = node->getModelMatrixIndex(),                // Index into model matrices
-                                                       .albedoTextureIndex = material.albedoTextureIndex,              // Index into textures
+
+                        commandBuffers[currentFrame].bindIndexBuffer(indexBufferHandle, subMeshes[mesh].indexOffset, vk::IndexType::eUint32);
+                        PushConstants pushConstants = {.vertexAllocationIndex = subMeshes[mesh].vertexAllocationIndex,      // Index into vertex allocations
+                                                       .vertexOffset = static_cast<uint32_t>(subMeshes[mesh].vertexOffset), // Byte offset in vertex buffer
+                                                       .vertexStride = subMeshes[mesh].vertexStride,                        // Size of each vertex
+                                                       .modelMatrixIndex = node->getModelMatrixIndex(),                     // Index into model matrices
+                                                       .albedoTextureIndex = material.albedoTextureIndex,                   // Index into textures
                                                        .roughnessTextureIndex = material.roughnessTextureIndex,
                                                        .metallicTextureIndex = material.metallicTextureIndex,
                                                        .normalTextureIndex = material.normalTextureIndex,
+                                                       .environmentMapIndex = material.environmentMapIndex,
                                                        .samplerIndex = defaultSamplerIndex, // Index into samplers
-                                                       .padding1 = 0,
-                                                       .padding2 = 0,
-                                                       .padding3 = 0,
+                                                       .lightCount = static_cast<uint32_t>(lights.size()),
+                                                       .shadowSamplerIndex = shadowSamplerIndex,
+                                                       .cameraPosition = activeCamera.position,
+                                                       .textureMask = material.textureMask,
                                                        .viewProjection = activeCamera.viewProjection};
 
                         commandBuffers[currentFrame].pushConstants<PushConstants>((*currentPipeline)->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
                                                                                   0, pushConstants);
-                        commandBuffers[currentFrame].draw(subMeshes[mesh].vertexCount, 1, 0, 0);
+                        commandBuffers[currentFrame].drawIndexed(subMeshes[mesh].indexCount, 1, 0, 0, 0);
                     }
                 }
             }
         }
+        // draw gizmos
+
+        auto& currentGizmoPipeline = pipelineManager->getGeoPipelines()[gizmoPipelineIndex];
+        commandBuffers[currentFrame].bindPipeline(vk::PipelineBindPoint::eGraphics, currentGizmoPipeline->pipeline);
+        commandBuffers[currentFrame].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, currentGizmoPipeline->layout, 0, {**currentGizmoPipeline->descriptorSet}, {});
+        LinePushConstants lineConstants = {.viewProjection = activeCamera.viewProjection};
+        commandBuffers[currentFrame].pushConstants<LinePushConstants>(*currentGizmoPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0,
+                                                                      lineConstants);
+        commandBuffers[currentFrame].draw(gizmos->getVertexCount(), 1, 0, 0);
 
         // draw GUI
         ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), *commandBuffers[currentFrame]);
         commandBuffers[currentFrame].endRendering();
+
+        // fullscreen quad
+        if(depthView || debugShowShadow < 4){
+            vk::RenderingAttachmentInfo swapchainAttachment{.imageView = swapchain->getSwapChainImageViews()[imageIndex],
+                                                            .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+                                                            .loadOp = vk::AttachmentLoadOp::eLoad,
+                                                            .storeOp = vk::AttachmentStoreOp::eStore};
+    
+            vk::RenderingInfo fullscreenRenderInfo{.renderArea = {{0, 0}, swapchain->getSwapChainExtent()},
+                                                   .layerCount = 1,
+                                                   .colorAttachmentCount = 1,
+                                                   .pColorAttachments = &swapchainAttachment,
+                                                   .pDepthAttachment = nullptr};
+            commandBuffers[currentFrame].beginRendering(fullscreenRenderInfo);
+            
+            auto& currentDepthPipeline = pipelineManager->getAfterGeoPipelines()[depthPipelineIndex];
+            resourceManager->transitionImageLayout(nullptr, swapchain->getDepthImage(), vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+            commandBuffers[currentFrame].bindPipeline(vk::PipelineBindPoint::eGraphics, currentDepthPipeline->pipeline);
+            commandBuffers[currentFrame].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, currentDepthPipeline->layout, 0, {**currentDepthPipeline->descriptorSet}, {});
+            DepthVisPushConstants depthConstants = {.depthIndex = swapchain->getDepthResolveIndex(),
+                                                    .depthSamplerIndex = depthSamplerIndex,
+                                                    .showShadowMap = showShadowMapIndex,
+                                                    .shadowMapSamplerIndex = shadowSamplerIndex,
+                                                    .nearPlane = activeCamera.nearPlane,
+                                                    .farPlane = activeCamera.farPlane,
+                                                    .linearize = 1,
+                                                    .doDepthBuffering = depthView};
+            commandBuffers[currentFrame].pushConstants<DepthVisPushConstants>(*currentDepthPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0,
+                                                                              depthConstants);
+            commandBuffers[currentFrame].draw(3, 1, 0, 0);
+            resourceManager->transitionImageLayout(nullptr, swapchain->getDepthImage(), vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
+    
+            commandBuffers[currentFrame].endRendering();
+        }
         resourceManager->transitionImageLayout(&commandBuffers[currentFrame], swapchain->getSwapChainImages()[imageIndex], vk::ImageLayout::eColorAttachmentOptimal,
                                                vk::ImageLayout::ePresentSrcKHR);
+
         commandBuffers[currentFrame].end();
+    }
+
+    void recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light) {
+
+        if (debugShowShadow < 4 && selectedNode != MAX_NODES) {
+            if (lights[(*nodes)[selectedNode]->getLightIndex()] == light) {
+                showShadowMapIndex = light.cascades[debugShowShadow].shadowMapIndex;
+            }
+        }
+        uint32_t cascadeCount = 1;
+        TextureResource* shadowMap = nullptr;
+        uint32_t shadowMapResolution = light.shadowResolution;
+        if (light.type == LightType::Directional) {
+            cascadeCount = light.numCascades;
+        } else {
+            shadowMap = &descriptorSet->getTextureResource(light.shadowMapIndex);
+        }
+        for (int i = 0; i < cascadeCount; i++) {
+
+            if (light.type == LightType::Directional) {
+                shadowMap = &descriptorSet->getTextureResource(light.cascades[i].shadowMapIndex);
+            }
+            // Transition shadow map to depth attachment
+            resourceManager->transitionImageLayout(&cmd, *shadowMap->image, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal);
+
+            // Begin rendering with depth-only attachment
+            vk::RenderingAttachmentInfo depthAttachment{.imageView = *shadowMap->imageView,
+                                                        .imageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
+                                                        .loadOp = vk::AttachmentLoadOp::eClear,
+                                                        .storeOp = vk::AttachmentStoreOp::eStore,
+                                                        .clearValue = {.depthStencil = {1.0f, 0}}};
+
+            vk::RenderingInfo renderInfo{
+                .renderArea = {{0, 0}, {shadowMapResolution, shadowMapResolution}}, .layerCount = 1, .colorAttachmentCount = 0, .pDepthAttachment = &depthAttachment};
+
+            cmd.beginRendering(renderInfo);
+            cmd.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(shadowMapResolution), static_cast<float>(shadowMapResolution), 0.0f, 1.0f));
+            cmd.setScissor(0, vk::Rect2D({0, 0}, {shadowMapResolution, shadowMapResolution}));
+
+            auto& currentPipeline = pipelineManager->getBeforeGeoPipelines()[shadowPipelineIndex];
+            cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, currentPipeline->pipeline);
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, currentPipeline->layout, 0, {*currentPipeline->descriptorSet}, {});
+            vk::Buffer indexBufferHandle = descriptorSet->getVariableBuffer(indexBufferIndex);
+
+            for (auto [shader, materials] : shaders) {
+                for (auto [material, node_mesh] : materials) {
+                    for (auto [node, subMeshIndices] : node_mesh) {
+                        if (meshes[node->getMeshIndex()].freed == true) {
+                            continue;
+                        }
+                        for (auto mesh : subMeshIndices) {
+                            cmd.bindIndexBuffer(indexBufferHandle, subMeshes[mesh].indexOffset, vk::IndexType::eUint32);
+
+                            ShadowPushConstants pushConstants = {.vertexAllocationIndex = subMeshes[mesh].vertexAllocationIndex,
+                                                                 .vertexOffset = static_cast<uint32_t>(subMeshes[mesh].vertexOffset),
+                                                                 .vertexStride = subMeshes[mesh].vertexStride,
+                                                                 .modelMatrixIndex = node->getModelMatrixIndex(),
+                                                                 .lightSpaceMatrix = light.lightSpaceMatrix};
+                            if (light.type == LightType::Directional) {
+                                pushConstants.lightSpaceMatrix = light.cascades[i].lightSpaceMatrix;
+                            }
+                            cmd.pushConstants<ShadowPushConstants>(*currentPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0,
+                                                                   pushConstants);
+                            cmd.drawIndexed(subMeshes[mesh].indexCount, 1, 0, 0, 0);
+                        }
+                    }
+                }
+            }
+            cmd.endRendering();
+            resourceManager->transitionImageLayout(&cmd, *shadowMap->image, vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+        }
     }
 };
