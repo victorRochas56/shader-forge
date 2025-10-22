@@ -29,10 +29,20 @@ class Node {
     std::string name = "empty";
     bool changingMaterials = false;
 
+////implemented in the .cpp
     Node(Renderer* pRenderer, uint32_t arrayIndex, Node* parent = nullptr, glm::vec3 position = glm::vec3(0.0f), glm::quat rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
          glm::vec3 scale = glm::vec3(1.0f), bool keepWorldTransform = false);
+    void update();
+    void setParent(Node* newParent) { parent = newParent; }
+    void addMaterial(uint32_t index, uint32_t materialIndex);
+    void addLight(Light light);
+    void showMeshInfo();
+    void showMaterialDialog();
+    void showLightInfo();
+    void showTransformInfo();
+/////
 
-    void showInfo() {
+    void showInfo() { // gui, shows info of this node in a window
         ImGui::Begin("selected node");
         ImGui::Text(name.c_str());
 
@@ -45,39 +55,6 @@ class Node {
         update();
         ImGui::End();
     }
-
-    glm::vec3 getWorldPosition() { return glm::vec3(worldTransform[3]); }
-    glm::vec3 getRelativePosition() { return relativePosition; }
-    glm::mat4 getTransform() { return worldTransform; }
-    glm::vec3 getWorldScale() {
-        glm::vec3 scale;
-        scale.x = glm::length(glm::vec3(worldTransform[0]));
-        scale.y = glm::length(glm::vec3(worldTransform[1]));
-        scale.z = glm::length(glm::vec3(worldTransform[2]));
-        return scale;
-    }
-    glm::vec3 getRelativeScale() { return relativeScale; }
-
-    glm::quat getWorldRotation() {
-        glm::mat3 rotationMatrix;
-        glm::vec3 scale = getWorldScale();
-        rotationMatrix[0] = glm::vec3(worldTransform[0]) / scale.x;
-        rotationMatrix[1] = glm::vec3(worldTransform[1]) / scale.y;
-        rotationMatrix[2] = glm::vec3(worldTransform[2]) / scale.z;
-        // Convert to quaternion
-        glm::quat rotation = glm::quat_cast(rotationMatrix);
-        return rotation;
-    }
-    glm::quat getRelativeRotation() { return relativeRotation; }
-    glm::vec3 getWorldRotationEuler() { return glm::eulerAngles(getWorldRotation()); }
-    glm::vec3 getRelativeRotationEuler() { return relativeRotationEuler; }
-
-    uint32_t getIndex() { return nodeIndex; }
-    uint32_t getModelMatrixIndex() { return modelMatrixIndex; }
-
-    void update();
-
-    void setParent(Node* newParent) { parent = newParent; }
 
     void addChild(Node* child, bool keepRelativeTransform = false) {
         children.push_back(child);
@@ -110,6 +87,34 @@ class Node {
             child->parent = nullptr;
         }
     }
+    glm::vec3 getWorldPosition() { return glm::vec3(worldTransform[3]); }
+    glm::vec3 getRelativePosition() { return relativePosition; }
+    glm::mat4 getTransform() { return worldTransform; }
+    glm::vec3 getWorldScale() {
+        glm::vec3 scale;
+        scale.x = glm::length(glm::vec3(worldTransform[0]));
+        scale.y = glm::length(glm::vec3(worldTransform[1]));
+        scale.z = glm::length(glm::vec3(worldTransform[2]));
+        return scale;
+    }
+    glm::vec3 getRelativeScale() { return relativeScale; }
+
+    glm::quat getWorldRotation() {
+        glm::mat3 rotationMatrix;
+        glm::vec3 scale = getWorldScale();
+        rotationMatrix[0] = glm::vec3(worldTransform[0]) / scale.x;
+        rotationMatrix[1] = glm::vec3(worldTransform[1]) / scale.y;
+        rotationMatrix[2] = glm::vec3(worldTransform[2]) / scale.z;
+        // Convert to quaternion
+        glm::quat rotation = glm::quat_cast(rotationMatrix);
+        return rotation;
+    }
+    glm::quat getRelativeRotation() { return relativeRotation; }
+    glm::vec3 getWorldRotationEuler() { return glm::eulerAngles(getWorldRotation()); }
+    glm::vec3 getRelativeRotationEuler() { return relativeRotationEuler; }
+
+    uint32_t getIndex() { return nodeIndex; }
+    uint32_t getModelMatrixIndex() { return modelMatrixIndices[0]; } 
 
     std::vector<Node*>& getChildren() { return children; }
 
@@ -117,14 +122,20 @@ class Node {
 
     uint32_t getMeshIndex() { return meshIndex; }
     uint32_t getLightIndex() { return lightIndex; }
-    void addMaterial(uint32_t index, uint32_t materialIndex);
+    std::vector<uint32_t>& getMaterialIndices() {return materialIndices; }
 
-    void addLight(Light light);
+    // Bounding box getters for frustum culling
+    glm::vec3 getBoundingBoxMin() const { return boundingBoxMin; }
+    glm::vec3 getBoundingBoxMax() const { return boundingBoxMax; }
+    bool isBoundingBoxValid() const { return boundingBoxValid; }
 
   private:
     Renderer* renderer;
     ResourceManager* resourceManager;
     uint32_t nodeIndex;
+
+    std::vector<Node*> children;
+    Node* parent = nullptr;
 
     glm::vec3 relativePosition;
     glm::vec3 relativeScale;
@@ -132,28 +143,27 @@ class Node {
     glm::vec3 relativeRotationEuler;
     glm::vec3 worldRotationEuler;
     glm::mat4 worldTransform; // aka model matrix
-    uint32_t modelMatrixIndex;
+    std::array<uint32_t, MAX_FRAMES_IN_FLIGHT> modelMatrixIndices;
     glm::mat4 localTransform; // relative to parent
-    std::vector<Node*> children;
-    Node* parent = nullptr;
-
+    
     uint32_t meshIndex = MAX_MESHES;
     std::vector<uint32_t> materialIndices;
     uint32_t lightIndex = MAX_LIGHTS;
 
+    // Bounding box for frustum culling (in world space)
+    glm::vec3 boundingBoxMin = glm::vec3(0.0f);
+    glm::vec3 boundingBoxMax = glm::vec3(0.0f);
+    bool boundingBoxValid = false;
+
+    //gui variables
     bool changingMesh = false;
     char textBuffer[256];
     std::vector<std::string> materialList;
     std::vector<uint32_t> selectedMaterials;
     bool lightShadow = false;
-
-    void showMeshInfo();
-    void showMaterialDialog();
-    void showLightInfo();
-    void showTransformInfo();
 };
 
-struct Camera {
+struct Camera { 
     glm::vec3 position;
     glm::vec3 target;
     float fov;
@@ -247,4 +257,39 @@ struct Camera {
 
 std::vector<glm::vec4> getCameraFrustumCorners(Camera& camera);
 glm::mat4 calculateLightSpaceMatrix(Light& light, Camera& camera);
-void calculateCascadedLightSpaceMatrices(Light& light, Camera& camera);
+void calculateCascadedLightSpaceMatrices(Light& light, Camera& camera, Renderer* renderer);
+
+// Frustum culling structures and functions
+struct Plane {
+    glm::vec3 normal;
+    float distance;
+};
+
+std::array<Plane, 6> extractFrustumPlanes(const glm::mat4& lightSpaceMatrix);
+bool isAABBInFrustum(const glm::vec3& aabbMin, const glm::vec3& aabbMax, const std::array<Plane, 6>& planes, float epsilon = 0.0f);
+
+// Helper function to transform a local-space AABB to world space
+inline void transformAABBToWorldSpace(const glm::vec3& localMin, const glm::vec3& localMax,
+                                      const glm::mat4& worldTransform,
+                                      glm::vec3& worldMin, glm::vec3& worldMax) {
+    // Transform all 8 corners and find new AABB in world space
+    glm::vec3 corners[8] = {
+        glm::vec3(localMin.x, localMin.y, localMin.z),
+        glm::vec3(localMax.x, localMin.y, localMin.z),
+        glm::vec3(localMin.x, localMax.y, localMin.z),
+        glm::vec3(localMax.x, localMax.y, localMin.z),
+        glm::vec3(localMin.x, localMin.y, localMax.z),
+        glm::vec3(localMax.x, localMin.y, localMax.z),
+        glm::vec3(localMin.x, localMax.y, localMax.z),
+        glm::vec3(localMax.x, localMax.y, localMax.z)
+    };
+
+    worldMin = glm::vec3(std::numeric_limits<float>::max());
+    worldMax = glm::vec3(std::numeric_limits<float>::lowest());
+
+    for (const auto& corner : corners) {
+        glm::vec3 worldCorner = glm::vec3(worldTransform * glm::vec4(corner, 1.0f));
+        worldMin = glm::min(worldMin, worldCorner);
+        worldMax = glm::max(worldMax, worldCorner);
+    }
+}

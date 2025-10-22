@@ -6,15 +6,16 @@
 #define VULKAN_HPP_NO_CONSTRUCTORS 1 // for structs constructors
 #endif
 
-#include <vector>
 #include <iostream>
+#include <vector>
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_raii.hpp>
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+// part of the vulkan initialization, class holds the found physical and graphics devices to access them for rendering
 class Device {
-public:
+  public:
     Device(vk::raii::Instance& instance, std::vector<const char*> requiredDeviceExtension, vk::raii::SurfaceKHR& surface) {
         pickPhysicalDevice(instance, requiredDeviceExtension, surface);
         createLogicalDevice(instance, requiredDeviceExtension, surface);
@@ -24,7 +25,8 @@ public:
     const vk::raii::PhysicalDevice& getPhysicalDevice() const { return physicalDevice; }
     const vk::raii::Queue& getGraphicsQueue() const { return graphicsQueue; }
     const vk::raii::Queue& getPresentQueue() const { return presentQueue; }
-private:
+
+  private:
     vk::raii::PhysicalDevice physicalDevice = nullptr;
     vk::raii::Device logicalDevice = nullptr;
     vk::raii::Queue graphicsQueue = nullptr;
@@ -34,7 +36,7 @@ private:
         std::vector<vk::raii::PhysicalDevice> devices = instance.enumeratePhysicalDevices();
         const auto devIter = std::ranges::find_if( // iterates through all devices and checks for a suitable one
             devices, [&](auto const& device) {
-                // Check if the device supports the Vulkan 1.3 API version
+                // Check if the device supports the Vulkan 1.3
                 bool supportsVulkan1_3 = device.getProperties().apiVersion >= VK_API_VERSION_1_3;
 
                 // Check if any of the queue families support graphics operations
@@ -53,6 +55,7 @@ private:
                 auto features = device.template getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
                 bool supportsRequiredFeatures = features.template get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy &&
                                                 features.template get<vk::PhysicalDeviceFeatures2>().features.sampleRateShading &&
+                                                features.template get<vk::PhysicalDeviceFeatures2>().features.multiDrawIndirect &&
                                                 features.template get<vk::PhysicalDeviceVulkan13Features>().synchronization2 &&
                                                 features.template get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering &&
                                                 features.template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState;
@@ -65,11 +68,13 @@ private:
                         break;
                     }
                 }
-                std::cout<<"hasPresentSupport: "<<hasPresentSupport<<std::endl;
-                std::cout<<"supportsVulkan1_3: "<<supportsVulkan1_3<<std::endl;
-                std::cout<<"supportsGraphics: "<<supportsGraphics<<std::endl;
-                std::cout<<"supportsAllRequiredExtensions: "<<supportsAllRequiredExtensions<<std::endl;
-                std::cout<<"supportsRequiredFeatures: "<<supportsRequiredFeatures<<std::endl;
+#if DEBUG == 1
+                std::cout << "hasPresentSupport: " << hasPresentSupport << std::endl;
+                std::cout << "supportsVulkan1_3: " << supportsVulkan1_3 << std::endl;
+                std::cout << "supportsGraphics: " << supportsGraphics << std::endl;
+                std::cout << "supportsAllRequiredExtensions: " << supportsAllRequiredExtensions << std::endl;
+                std::cout << "supportsRequiredFeatures: " << supportsRequiredFeatures << std::endl;
+#endif
                 return supportsVulkan1_3 && supportsGraphics && supportsAllRequiredExtensions && supportsRequiredFeatures && hasPresentSupport;
             });
 
@@ -105,8 +110,6 @@ private:
         // first check if the graphicsIndex is good enough
         uint32_t presentIndex = physicalDevice.getSurfaceSupportKHR(graphicsIndex, *surface) ? graphicsIndex : std::numeric_limits<uint32_t>::max();
         if (presentIndex == std::numeric_limits<uint32_t>::max()) {
-            // the graphicsIndex doesn't support present -> look for another family index that supports both
-            // graphics and present
             for (size_t i = 0; i < queueFamilyProperties.size(); i++) {
                 if ((queueFamilyProperties[i].queueFlags & vk::QueueFlagBits::eGraphics) && physicalDevice.getSurfaceSupportKHR(static_cast<uint32_t>(i), *surface)) {
                     graphicsIndex = static_cast<uint32_t>(i);
@@ -115,8 +118,6 @@ private:
                 }
             }
             if (presentIndex == std::numeric_limits<uint32_t>::max()) {
-                // there's nothing like a single family index that supports both graphics and present -> look for another
-                // family index that supports present
                 for (size_t i = 0; i < queueFamilyProperties.size(); i++) {
                     if (physicalDevice.getSurfaceSupportKHR(static_cast<uint32_t>(i), *surface)) {
                         presentIndex = static_cast<uint32_t>(i);
@@ -133,18 +134,20 @@ private:
         // query for Vulkan 1.3 features
         vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan11Features, vk::PhysicalDeviceVulkan12Features, vk::PhysicalDeviceVulkan13Features,
                            vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>
-            featureChain = {{.features = { .sampleRateShading = true, .fillModeNonSolid = true, .wideLines = true ,.samplerAnisotropy = true }}, // vk::PhysicalDeviceFeatures2
-                            {.shaderDrawParameters = true},
-                            {.shaderInt8 = true,
-                             .descriptorIndexing = true,
-                             .descriptorBindingSampledImageUpdateAfterBind = true,
-                             .descriptorBindingStorageBufferUpdateAfterBind = true,
-                             .descriptorBindingUpdateUnusedWhilePending = true,
-                             .descriptorBindingPartiallyBound = true,
-                             .descriptorBindingVariableDescriptorCount = true,
-                             .runtimeDescriptorArray = true},
-                            {.synchronization2 = true, .dynamicRendering = true}, // vk::PhysicalDeviceVulkan13Features
-                            {.extendedDynamicState = true}};                      // vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
+            featureChain = {
+                {.features =
+                     {.sampleRateShading = true, .multiDrawIndirect = true, .fillModeNonSolid = true, .wideLines = true, .samplerAnisotropy = true}}, // vk::PhysicalDeviceFeatures2
+                {.shaderDrawParameters = true},
+                {.shaderInt8 = true,
+                 .descriptorIndexing = true,
+                 .descriptorBindingSampledImageUpdateAfterBind = true,
+                 .descriptorBindingStorageBufferUpdateAfterBind = true,
+                 .descriptorBindingUpdateUnusedWhilePending = true,
+                 .descriptorBindingPartiallyBound = true,
+                 .descriptorBindingVariableDescriptorCount = true,
+                 .runtimeDescriptorArray = true},
+                {.synchronization2 = true, .dynamicRendering = true}, // vk::PhysicalDeviceVulkan13Features
+                {.extendedDynamicState = true}};                      // vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
 
         // create a Device
         float queuePriority = 0.0f;

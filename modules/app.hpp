@@ -19,6 +19,7 @@
 #include "gui.hpp"
 #include "input.hpp"
 #include "renderer.hpp"
+#include "scenes.hpp"
 
 #define GLM_FORCE_RADIANS
 #define GLM_DEPTH_ZERO_TO_ONE
@@ -38,37 +39,12 @@ class App {
         renderer.getDescriptorSet().debugDescriptorSet("after_initVulkan");
         initIMGUI(&renderer);
 
-        uint32_t vaseMesh = renderer.loadMeshFromFile("models/vase.OBJ");
-        uint32_t meshNode = renderer.addNode(0, glm::vec3(0, 0, 0), glm::quat(1.0, 0, 0, 0), glm::vec3(0.005, 0.005, 0.005));
-        renderer.getNodes()[meshNode]->name = "vase_mesh";
-        renderer.getNodes()[meshNode]->addMesh(vaseMesh);
-
-        uint32_t texMask = 0x000000000;
-        texMask |= (1U << 0);
-        texMask |= (1U << 1);
-        texMask |= (1U << 3);
+        //load a default environment map on startup
         uint32_t cubeMapIndex =
-            renderer.loadCubemapFromFile("textures/posx.jpg", "textures/posy.jpg", "textures/posz.jpg", "textures/negx.jpg", "textures/negy.jpg", "textures/negz.jpg");
-        Material material = {.shaderSource = renderer.getFallBackShader(),
-                             .textureMask = texMask,
-                             // 1st bit : hasAlbedo
-                             // 2nd bit : hasRoughness
-                             // 3rd bit : hasMetallic
-                             // 4th bit : hasNormal
-                             .color = glm::vec4(1.0, 1.0, 1.0, 1.0),
-                             .albedoTextureIndex = renderer.loadTextureFromFile("textures/vase_diffuse.jpg"),
-                             .metallic = 0.0,
-                             .roughness = 0.8,
-                             .roughnessTextureIndex = renderer.loadTextureFromFile("textures/vase_roughness.jpg"),
-                             .normalTextureIndex = renderer.loadTextureFromFile("textures/vase_normal.png", vk::Format::eR8G8B8A8Unorm),
-                             .environmentMapIndex = cubeMapIndex};
+            renderer.loadCubemapFromFile("textures/sky2/posx.jpg", "textures/sky2/posy.jpg", "textures/sky2/posz.jpg", "textures/sky2/negx.jpg", "textures/sky2/negy.jpg", "textures/sky2/negz.jpg");
+        renderer.getMaterials()[renderer.getFallBackMaterial()].environmentMapIndex = cubeMapIndex;
 
-        uint32_t matIndex = renderer.addMaterial(material);
-        renderer.getNodes()[meshNode]->addMaterial(0, matIndex);
-        renderer.setSkyBox(cubeMapIndex);
-        uint32_t lightNodeIndex = renderer.addNode(0, glm::vec3(2, 0, 0), glm::quat(1.0, 0, 0, 0), glm::vec3(1, 1, 1));
-        Light light = {.range = 50, .intensity = 15, .color = glm::vec4(1, 1, 1, 1)};
-        renderer.getNodes()[lightNodeIndex]->addLight(light);
+        //start of render loop
         mainLoop();
     }
 
@@ -76,6 +52,7 @@ class App {
     Renderer renderer;
     GLFWwindow* window = nullptr;
     bool framebufferResized = false;
+    SceneManager sceneManager;
 
     void initWindow() {
         glfwInit();
@@ -96,6 +73,7 @@ class App {
     }
 
     void mainLoop() {
+        //basic frame timing
         std::chrono::steady_clock::time_point frame_start = std::chrono::high_resolution_clock::now();
         std::chrono::steady_clock::time_point frame_end = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> frame_time = frame_end - frame_start;
@@ -106,10 +84,14 @@ class App {
             glfwPollEvents();
 
             drawGui(frame_time);
+
+            //gizmos are used in "immediate mode" so cleared every frame
             renderer.gizmos->clearLineBuffer();
+            //draw axes visualization for every node
             for (int i = 0; i < renderer.getNodeCount(); i++) {
                 renderer.gizmos->drawAxes(renderer.getNodes()[i]->getTransform(), 0.15);
             }
+            //main draw loop
             renderer.drawFrame();
 
             frame_end = std::chrono::high_resolution_clock::now();
@@ -118,13 +100,17 @@ class App {
             InputManager::tickInputState();
         }
         renderer.getDevice().getDevice().waitIdle();
+        cleanup();
+        //TODO : improve cleanup, prompt for save & exit?
     }
 
     void drawGui(std::chrono::duration<double>& frame_time) {
-        // start the imgui frame
+
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
+
+        
         ImGui::Begin("frame time");
         std::string frame_time_str = std::to_string(frame_time.count() * 1000) + " ms";
         ImGui::Text(frame_time_str.c_str());
@@ -133,13 +119,28 @@ class App {
         ImGui::Begin("node tree");
         traverseNodeTree(renderer.getRootNode(), 0, renderer.selectedNode, &renderer);
         ImGui::End();
-        if (renderer.selectedNode != 2048) {
+        if (renderer.selectedNode != MAX_NODES) {
             renderer.getNodes()[renderer.selectedNode]->showInfo();
         }
         if (InputManager::getInstance().contextMenuShown) {
             showActionMenu(0, &renderer, InputManager::getInstance().contextMenuPinX, InputManager::getInstance().contextMenuPinY);
         }
-        // render the imgui frame
+
+        //scenes.hpp
+        ImGui::Begin("Scene Manager");
+        if(ImGui::Button("Save Scene")){
+            sceneManager.saveScene("scene.txt", renderer);
+        }
+        ImGui::SameLine();
+        if(ImGui::Button("Load Scene")){
+            sceneManager.loadScene("scene.txt", renderer);
+        }
+        ImGui::SameLine();
+        if(ImGui::Button("Clear Scene")){
+            sceneManager.clearScene(renderer);
+        }
+
+        ImGui::End();
         ImGui::Render();
     }
 

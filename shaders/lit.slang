@@ -1,18 +1,27 @@
 struct PushConstants {
     uint vertexAllocationIndex;
     uint vertexOffset;
-    uint vertexStride;          
+    uint vertexStride;
     uint modelMatrixIndex;
+
     uint albedoTextureIndex;
     uint roughnessTextureIndex;
     uint metallicTextureIndex;
     uint normalTextureIndex;
+
     uint environmentMapIndex;
     uint samplerIndex;
     uint lightCount;
     uint shadowSamplerIndex;
+
     float3 cameraPos;
     uint textureMask;
+
+    uint elementOffsetModel;  // Element offset for this frame's model matrices
+    uint elementOffsetLight;  // Element offset for this frame's lights
+    uint padding;
+    uint padding1;
+
     float4x4 viewProjection;
 };
 
@@ -21,7 +30,7 @@ struct Cascade {
     uint shadowMapIndex;
     float splitDistance;
     float texelSize;
-    uint padding;
+    float worldTexelSize;
 };
 
 struct Light {
@@ -37,7 +46,7 @@ struct Light {
     float4x4 lightSpaceMatrix;
     float3 direction;
     int castsShadows;
-    uint padding2;
+    uint showCascades;
     uint padding3;
     uint padding4;
     uint numCascades;
@@ -123,9 +132,9 @@ Vertex loadVertex(uint vertexIndex, uint stride, uint offset)
 
 float3 getPosFromMM(int index){
     float3 ret;
-    ret.x = modelMatrices[0][index][0].w;
-    ret.y = modelMatrices[0][index][1].w;
-    ret.z = modelMatrices[0][index][2].w;
+    ret.x = modelMatrices[0][pc.elementOffsetModel + index][0].w;
+    ret.y = modelMatrices[0][pc.elementOffsetModel + index][1].w;
+    ret.z = modelMatrices[0][pc.elementOffsetModel + index][2].w;
     return ret;
 } 
 
@@ -135,7 +144,7 @@ VertexOutput vertMain(uint vertexID : SV_VertexID)
 {
     Vertex vertex = loadVertex(vertexID, pc.vertexStride, pc.vertexOffset);
     
-    float4x4 modelMatrix = modelMatrices[0][pc.modelMatrixIndex];
+    float4x4 modelMatrix = modelMatrices[0][pc.elementOffsetModel + pc.modelMatrixIndex];
     VertexOutput output;
     float4 worldPos = mul(modelMatrix, float4(vertex.position, 1.0));
     output.worldPos = worldPos.xyz;
@@ -223,55 +232,79 @@ float3 calculateDiffuseIBL(float3 N, float3 albedo, TextureCube envMap, SamplerS
 float calculateShadow(float3 fragWorldPos, float3 cameraPos, float3 geometricNormal, float3 L, Light light)
 {
     float viewDepth = length(cameraPos - fragWorldPos);
-    int cascadeIndex = 0;
+
+    // Select the appropriate cascade based on view distance
+    // We want the last cascade whose split distance is greater than viewDepth
+    int cascadeIndex = int(light.numCascades) - 1;
     for (int i = 0; i < int(light.numCascades); i++) {
         if (viewDepth < light.cascades[i].splitDistance) {
             cascadeIndex = i;
-            break;  
+            break;
         }
     }
-    if (cascadeIndex >= int(light.numCascades)) {
-        cascadeIndex = int(light.numCascades) - 1;
+    if( light.showCascades>0){
+        return cascadeIndex;
     }
-    
+
     Cascade cascade = light.cascades[cascadeIndex];
-    float geometricNdotL = max(dot(geometricNormal, L), 0.0);
-    float bias = cascade.texelSize * clamp(0.8 * (1.0 - geometricNdotL), 0.1, 2.0);
-    
-    
+
     float4 fragPosLightSpace = mul(cascade.lightSpaceMatrix, float4(fragWorldPos, 1.0));
     float3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
     projCoords.x = projCoords.x * 0.5 + 0.5;
     projCoords.y = projCoords.y * 0.5 + 0.5;
-    
-    if (projCoords.x < 0.0 || projCoords.x > 1.0 || 
+
+    // Check if fragment is outside cascade bounds - return no shadow (fully lit)
+    if (projCoords.x < 0.0 || projCoords.x > 1.0 ||
         projCoords.y < 0.0 || projCoords.y > 1.0 ||
-        projCoords.z > 1.0) {
-        return 0.0;
+        projCoords.z < 0.0 || projCoords.z > 1.0) {
+        return 0.0; // 0.0 = no shadow = fully lit
     }
-    
+
     float currentDepth = projCoords.z;
-    
+
+    // Add a small bias to reduce shadow acne
+    // The bias is scaled by the texel size to be resolution-independent
+    // Normal-based bias: surfaces at grazing angles need more bias to prevent self-shadowing
+    float baselineBias = max(0.001, cascade.texelSize * 0.5);
+    float normalBias = abs(dot(geometricNormal, normalize(L))) * cascade.texelSize;
+    float bias = baselineBias + normalBias * 2.0;
+    currentDepth -= bias;
+
+    // ============================================================================
+    // PCF (Percentage Closer Filtering) Implementation
+    // Samples a 3x3 kernel around the fragment position and performs depth comparison
+    // ============================================================================
+
     float shadow = 0.0;
-    //PCF
-    float2 texelSize = float2(cascade.texelSize, cascade.texelSize);
-    
-    [unroll]
-    for(int x = -1; x <= 1; ++x)
-    {
-        [unroll]
-        for(int y = -1; y <= 1; ++y)
-        {
-            float2 offset = float2(x, y) * texelSize;
-            float pcfDepth = textures[cascade.shadowMapIndex].Sample(
-                samplers[pc.shadowSamplerIndex], 
-                projCoords.xy + offset
+    float texelSize = cascade.texelSize;
+    int samplesPerSide = 3;
+    int totalSamples = samplesPerSide * samplesPerSide;
+
+    // 3x3 PCF kernel
+    for (int x = -1; x <= 1; x++) {
+        for (int y = -1; y <= 1; y++) {
+            float2 sampleCoords = projCoords.xy + float2(x, y) * texelSize;
+
+            // Sample the depth from the shadow map
+            float shadowMapDepth = textures[cascade.shadowMapIndex].Sample(
+                samplers[pc.shadowSamplerIndex],
+                sampleCoords
             ).r;
-            shadow += (currentDepth - bias) > pcfDepth ? 1.0 : 0.0;
+
+            // Compare: if current depth > shadow map depth, this sample is in shadow
+            // Count samples that are IN shadow
+            if (currentDepth < shadowMapDepth) {
+                shadow += 1.0;
+            }
         }
     }
-    shadow /= 9.0;
-    return shadow;
+
+    // Average the results to get shadow factor (0.0 = fully lit, 1.0 = fully shadowed)
+    shadow /= float(totalSamples);
+
+    // Return inverted shadow value: 1.0 = fully lit, 0.0 = fully shadowed
+    // This matches the expected behavior in the lighting calculation
+    return 1.0 - shadow;
 }
 
 struct FragmentOutput
@@ -328,7 +361,7 @@ FragmentOutput fragMain(VertexOutput input)
     float3 Lo = float3(0.0);
 
     for(int i = 0; i < pc.lightCount; i++){
-        Light currentLight = lights[0][i];
+        Light currentLight = lights[0][pc.elementOffsetLight + i];
         
         if(currentLight.type != 1) {
             float distance = length(getPosFromMM(currentLight.modelMatrixIndex) - input.worldPos);
@@ -343,9 +376,9 @@ FragmentOutput fragMain(VertexOutput input)
 
         if(currentLight.type == 1) {
             float3 lightDir = float3(
-                modelMatrices[0][currentLight.modelMatrixIndex][0].x,
-                modelMatrices[0][currentLight.modelMatrixIndex][1].x,
-                modelMatrices[0][currentLight.modelMatrixIndex][2].x
+                modelMatrices[0][pc.elementOffsetModel + currentLight.modelMatrixIndex][0].x,
+                modelMatrices[0][pc.elementOffsetModel + currentLight.modelMatrixIndex][1].x,
+                modelMatrices[0][pc.elementOffsetModel + currentLight.modelMatrixIndex][2].x
             );
             lightDir = normalize(lightDir);
             L = -lightDir;
@@ -391,6 +424,21 @@ FragmentOutput fragMain(VertexOutput input)
         if(currentLight.castsShadows == 1) {
             float3 geometricNormal = normalize(input.normal);
             shadow = calculateShadow(input.worldPos, pc.cameraPos, geometricNormal, L, currentLight);
+            if( currentLight.showCascades>0){
+                if(shadow == 0){
+                    output.color = float4(1,0,0,1);
+                }
+                if(shadow == 1){
+                    output.color = float4(0,1,0,1);
+                }
+                if(shadow == 2){
+                    output.color = float4(0,0,1,1);
+                }
+                if(shadow == 3){
+                    output.color = float4(1,1,0,1);
+                }
+                return output;
+            }
         }
                 
         Lo += (1.0 - shadow) * (kD * albedo.rgb / 3.14159265 + specular) * radiance * NdotL;

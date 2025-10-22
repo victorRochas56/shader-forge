@@ -1,5 +1,0 @@
-decouple scene / node logic from renderer architecture
-no part of renderer should really point to nodes...?
-
-check for file update win.
-

@@ -11,21 +11,34 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/hash.hpp>
 
+/*
+data only structs for push constants and various scene elements
+*/
+
 struct PushConstants {
     uint32_t vertexAllocationIndex; // Index into vertex allocations
     uint32_t vertexOffset;          // Byte offset in vertex buffer
     uint32_t vertexStride;          // Size of each vertex (e.g., sizeof(Vertex))
     uint32_t modelMatrixIndex;      // Index into model matrices
+
     uint32_t albedoTextureIndex;    // Index into textures
     uint32_t roughnessTextureIndex;
     uint32_t metallicTextureIndex;
     uint32_t normalTextureIndex;
+    
     uint32_t environmentMapIndex;
     uint32_t samplerIndex; // Index into samplers
     uint32_t lightCount;
     uint32_t shadowSamplerIndex;
+    
     glm::vec3 cameraPosition;
     uint32_t textureMask;
+
+    uint32_t elementOffsetModel;  // Element offset for this frame's model matrices
+    uint32_t elementOffsetLight;  // Element offset for this frame's lights
+    uint32_t padding;
+    uint32_t padding1;
+
     glm::mat4 viewProjection;
 };
 
@@ -53,11 +66,35 @@ struct DepthVisPushConstants {
 };
 
 struct ShadowPushConstants {
+    glm::mat4 lightSpaceMatrix;
+    uint32_t elementOffsetModel;  // Element offset for this frame's model matrices
+    uint32_t elementOffsetShadow; // Element offset for this frame's shadow draw data
+};
+
+struct ShadowDrawData {
     uint32_t vertexAllocationIndex;
     uint32_t vertexOffset;
     uint32_t vertexStride;
     uint32_t modelMatrixIndex;
-    glm::mat4 lightSpaceMatrix;
+};
+
+struct BlurPushConstants {
+    uint32_t inputTextureIndex;
+    uint32_t samplerIndex;
+    int32_t isHorizontal;
+    float blurRadius;
+    glm::uvec2 resolution;
+    uint32_t padding1;
+    uint32_t padding2;
+};
+
+// matches VkDrawIndexedIndirectCommand)
+struct DrawIndexedIndirectCommand {
+    uint32_t indexCount;
+    uint32_t instanceCount;
+    uint32_t firstIndex;
+    int32_t vertexOffset;
+    uint32_t firstInstance;
 };
 
 struct Line {
@@ -85,6 +122,7 @@ struct Shader {
     }
 };
 struct Material {
+    std::string name; // Material name from .mtl file or assigned name
     Shader shaderSource;
     uint32_t textureMask;
     // 1st bit : hasAlbedo
@@ -92,7 +130,7 @@ struct Material {
     // 3rd bit : hasMetallic
     // 4th bit : hasNormal
     uint32_t usageCount;
-    uint32_t padding;
+    uint32_t materialID;//TODO faire
     glm::vec4 color;
     uint32_t albedoTextureIndex;
     float metallic;
@@ -104,6 +142,8 @@ struct Material {
     uint32_t padding3;
 
     bool operator<(const Material& other) const {
+        if (name != other.name)
+            return name < other.name;
         if (shaderSource < other.shaderSource)
             return true;
         if (other.shaderSource < shaderSource)
@@ -126,15 +166,21 @@ struct Material {
         return false;
     }
     bool operator==(const Material& other) const {
-        return shaderSource.sourceFile == other.shaderSource.sourceFile && textureMask == other.textureMask && metallic == other.metallic && roughness == other.roughness &&
-               color == other.color && albedoTextureIndex == other.albedoTextureIndex && metallicTextureIndex == other.metallicTextureIndex &&
+        return name == other.name && shaderSource.sourceFile == other.shaderSource.sourceFile && textureMask == other.textureMask && metallic == other.metallic &&
+               roughness == other.roughness && color == other.color && albedoTextureIndex == other.albedoTextureIndex && metallicTextureIndex == other.metallicTextureIndex &&
                roughnessTextureIndex == other.roughnessTextureIndex && normalTextureIndex == other.normalTextureIndex;
     }
+
+
 };
 
 struct Mesh {
     std::string sourceFile;
     std::vector<uint32_t> subMeshes;
+    std::vector<int> originalMaterialIds; // Original material ID from OBJ file for each submesh
+    std::vector<std::string> originalMaterialNames; // Original material name from OBJ file for each submesh
+    glm::vec3 boundingBoxMin = glm::vec3(0.0f); // AABB in local/model space
+    glm::vec3 boundingBoxMax = glm::vec3(0.0f);
     bool freed; // set when the vertex allocation is freed, should be checked before trying to render a mesh
     uint32_t refCount = 0;
 };
@@ -148,6 +194,10 @@ struct SubMesh {
     uint32_t indexAllocationIndex;
     uint32_t indexOffset;
     uint32_t indexCount;
+
+    // Local-space AABB for per-submesh culling
+    glm::vec3 boundingBoxMin = glm::vec3(0.0f);
+    glm::vec3 boundingBoxMax = glm::vec3(0.0f);
 };
 
 enum class LightType { Point, Directional, Spot, Area, COUNT };
@@ -157,13 +207,13 @@ struct Cascade {
     uint32_t shadowMapIndex;
     float splitDistance;
     float texelSize;
-    uint32_t padding;
+    float worldTexelSize;
 };
 
 struct Light {
     LightType type = LightType::Point;
     uint32_t modelMatrixIndex = 0;
-    uint32_t padding;
+    uint32_t nodeIndex = MAX_NODES;
     uint32_t padding1;
     float range = 10.0;
     float intensity = 1.0;
@@ -173,7 +223,7 @@ struct Light {
     glm::mat4 lightSpaceMatrix;
     glm::vec3 direction = glm::vec3(1, 0, 0);
     int castsShadows = 0;
-    uint32_t padding2;
+    int showCascades = 0;
     uint32_t padding3;
     uint32_t padding4;
     uint32_t numCascades = 4;
@@ -204,4 +254,25 @@ template <> struct hash<Vertex> {
         return ((hash<glm::vec3>()(vertex.position) ^ (hash<glm::vec3>()(vertex.normal) << 1)) >> 1) ^ (hash<glm::vec2>()(vertex.texCoord) << 1);
     }
 };
-} // namespace std
+
+template <> struct hash<Material> {
+    size_t operator()(Material const& material) const {
+        size_t h0 = hash<string>()(material.name);
+        size_t h1 = hash<string>()(material.shaderSource.sourceFile);
+        size_t h2 = hash<uint32_t>()(material.textureMask);
+        size_t h3 = hash<glm::vec4>()(material.color);
+        size_t h4 = hash<uint32_t>()(material.albedoTextureIndex);
+        size_t h5 = hash<float>()(material.metallic);
+        size_t h6 = hash<uint32_t>()(material.metallicTextureIndex);
+        size_t h7 = hash<float>()(material.roughness);
+        size_t h8 = hash<uint32_t>()(material.roughnessTextureIndex);
+        size_t h9 = hash<uint32_t>()(material.normalTextureIndex);
+        size_t h10 = hash<uint32_t>()(material.environmentMapIndex);
+
+        // Combine all hashes using XOR and bit shifting
+        return h0 ^ (h1 << 1) ^ (h2 << 2) ^ (h3 << 3) ^ (h4 << 4) ^ (h5 << 5) ^
+               (h6 << 6) ^ (h7 << 7) ^ (h8 << 8) ^ (h9 << 9) ^ (h10 << 10);
+    }
+};
+
+}

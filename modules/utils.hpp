@@ -20,6 +20,11 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/hash.hpp>
 
+/*
+the dreaded pile of random functions
+these will eventually be put into appropriate .cpp or .hpp files (TODO)
+but for now here they remain
+*/
 
 static vk::Format findSupportedFormat(const std::vector<vk::Format>& candidates, vk::ImageTiling tiling, vk::FormatFeatureFlags features, Device& device) {
     for (const auto format : candidates) {

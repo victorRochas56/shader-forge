@@ -39,25 +39,17 @@
 #include "scene_elements.hpp"
 #include "swapchain.hpp"
 #include "utils.hpp"
+
+/*
+main rendering engine holds the state of the scene, nodes, meshes, lights, materials etc...
+handles vulkan initialization and the main render loop
+*/
+
 // TODO gpu side material data ("uber shader" approach)
 const std::vector validationLayers = {"VK_LAYER_KHRONOS_validation"};
 
 class Renderer {
   public:
-    void showShadowMap() {
-        debugShowShadow++;
-        if (debugShowShadow == 4) {
-            showShadowMapIndex = 0xFFFFFFFF;
-            return;
-        }
-        if (debugShowShadow >= 5) {
-            debugShowShadow = 0;
-            return;
-        }
-        
-    }
-    uint32_t debugShowShadow = 4;
-    uint32_t showShadowMapIndex = 0xFFFFFFFF;
     Camera activeCamera;
     Gizmos* gizmos = nullptr;
     uint32_t selectedNode = MAX_NODES;
@@ -78,7 +70,7 @@ class Renderer {
         swapchain = std::make_unique<Swapchain>(*device, *resourceManager, *descriptorSet, surface, msaaSamples);
         pipelineManager = std::make_unique<PipelineManager>(*device, *swapchain, msaaSamples);
 
-        // initializing camera
+        // initializing default camera
         activeCamera = Camera{.position = glm::vec3(1, 1, 1),
                               .target = glm::vec3(0, 0, 0),
                               .fov = 45.0,
@@ -87,32 +79,52 @@ class Renderer {
                               .farPlane = 100.0};
         activeCamera.calculateViewProjectionMatrix();
 
+        /////=====================================DESCRIPTOR SET BUFFERS=================================================/////
         vertexBufferIndex = descriptorSet->createVariableBuffer(256 * 1024 * 1024);                                       // 256 mb vertex buffer
         indexBufferIndex = descriptorSet->createVariableBuffer(128 * 1024 * 1024, vk::BufferUsageFlagBits::eIndexBuffer); // index buffer (128 MB)
-        modelMatrixBufferIndex = descriptorSet->createFixedBuffer<glm::mat4>();                                           // max 2048 model matrices by default
-        lightBufferIndex = descriptorSet->createFixedBuffer<Light>();                                                     // max 2048 lights by default
+
+        // these buffers store the data once per frame in flight since they are usually accessed every frame by the CPU
+        modelMatrixBufferIndex = descriptorSet->createFixedBuffer<glm::mat4>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
+        lightBufferIndex = descriptorSet->createFixedBuffer<Light>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
+        shadowDrawDataBufferIndex = descriptorSet->createFixedBuffer<ShadowDrawData>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
+
+        // sets the frame offsets for each buffer
+        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            descriptorSet->setBufferFrameOffset(modelMatrixBufferIndex, i, MAX_FIXED_BUFFER * i);
+            descriptorSet->setBufferFrameOffset(lightBufferIndex, i, MAX_FIXED_BUFFER * i);
+            descriptorSet->setBufferFrameOffset(shadowDrawDataBufferIndex, i, MAX_FIXED_BUFFER * i);
+        }
+
         gizmos = new Gizmos(MAX_GIZMO_LINES, &*descriptorSet);
+
+        // indirect draw buffer for shadows
+        std::tie(indirectDrawBuffer, indirectDrawBufferMemory) = resourceManager->createIndirectDrawBuffer();
+
+        // after having created all our desire buffers we can initialize the descriptor set
         descriptorSet->createDescriptorSet();
+
         swapchain->create(*window, vSync);
+        createShadowDepthBuffer(DEFAULT_SHADOW_RESOLUTION);
         createSyncObjects();
 
 #if DEBUG == 1
         descriptorSet->debugDescriptorSet("after_createDescriptorSet");
 #endif
 
-        // DEFAULTS
+        /////S=================================================DEFAULTS=================================================/////
+
         defaultSamplerIndex = descriptorSet->allocateSampler(vk::Filter::eLinear, vk::SamplerMipmapMode::eLinear, vk::SamplerAddressMode::eRepeat, VK_TRUE, 16.0, VK_FALSE,
                                                              vk::CompareOp::eLessOrEqual, vk::BorderColor::eFloatOpaqueBlack);
         depthSamplerIndex = descriptorSet->allocateSampler(vk::Filter::eNearest, vk::SamplerMipmapMode::eNearest, vk::SamplerAddressMode::eClampToEdge, VK_FALSE, 16.0, VK_FALSE,
                                                            vk::CompareOp::eLessOrEqual, vk::BorderColor::eFloatOpaqueBlack);
-        shadowSamplerIndex = descriptorSet->allocateSampler(vk::Filter::eLinear,                    // Bilinear filtering for PCF
+        shadowSamplerIndex = descriptorSet->allocateSampler(vk::Filter::eNearest,                   // Nearest filtering for PCF (shader does the filtering)
                                                             vk::SamplerMipmapMode::eNearest,        // No mipmaps
                                                             vk::SamplerAddressMode::eClampToBorder, // Clamp to avoid wrapping
                                                             VK_FALSE,                               // No anisotropy needed
                                                             1.0f,
-                                                            VK_FALSE, // No comparison (or VK_TRUE for hardware PCF)
+                                                            VK_FALSE, // No comparison sampler for manual PCF
                                                             vk::CompareOp::eLessOrEqual,
-                                                            vk::BorderColor::eFloatOpaqueWhite // 1.0 = max depth = not in shadow
+                                                            vk::BorderColor::eFloatOpaqueWhite // 1.0 = far depth = not in shadow
         );
         // Default albedo (white)
         std::array<uint8_t, 4> whiteColor = {255, 255, 255, 255};
@@ -120,21 +132,21 @@ class Renderer {
         uint32_t defaultAlbedoIndex = descriptorSet->allocateTexture(std::move(albedoImage), std::move(albedoMemory), std::move(albedoImageView));
 
         // Default normal (flat normal = 0.5, 0.5, 1.0 in RGB)
-        std::array<uint8_t, 4> normalColor = {128, 128, 255, 255}; // This is (0.5, 0.5, 1.0, 1.0) in normalized values
+        std::array<uint8_t, 4> normalColor = {128, 128, 255, 255};
         auto [normalImage, normalMemory, normalImageView] = resourceManager->createTexture(normalColor.data(), 1, 1, vk::Format::eR8G8B8A8Unorm);
         defaultNormalIndex = descriptorSet->allocateTexture(std::move(normalImage), std::move(normalMemory), std::move(normalImageView));
 
-        // Default roughness (mid-gray = 0.5 roughness)
+        // Default roughness = 0.5
         std::array<uint8_t, 4> roughnessColor = {128, 128, 128, 255};
         auto [roughnessImage, roughnessMemory, roughnessImageView] = resourceManager->createTexture(roughnessColor.data(), 1, 1, vk::Format::eR8G8B8A8Unorm);
         uint32_t defaultRoughnessIndex = descriptorSet->allocateTexture(std::move(roughnessImage), std::move(roughnessMemory), std::move(roughnessImageView));
 
-        // Default metallic (black = 0.0 metallic)
+        // Default metallic = 0.0
         std::array<uint8_t, 4> metallicColor = {0, 0, 0, 255};
         auto [metallicImage, metallicMemory, metallicImageView] = resourceManager->createTexture(metallicColor.data(), 1, 1, vk::Format::eR8G8B8A8Unorm);
         uint32_t defaultMetallicIndex = descriptorSet->allocateTexture(std::move(metallicImage), std::move(metallicMemory), std::move(metallicImageView));
 
-        // pipeline(s)
+        /////S=================================================PIPELINES=================================================/////
         skyboxPipelineIndex =
             pipelineManager->createPipeline<SkyBoxPushConstants>(PipelineCategory::GEOMETRY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
                                                                  vk::False, "shaders/skybox.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
@@ -142,6 +154,9 @@ class Renderer {
         shadowPipelineIndex = pipelineManager->createPipeline<ShadowPushConstants>(PipelineCategory::BEFORE_GEOMETRY, vk::PrimitiveTopology::eTriangleList,
                                                                                    vk::CullModeFlagBits::eNone, vk::True, vk::True, "shaders/shadow_geometry.spv",
                                                                                    descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
+        blurPipelineIndex =
+            pipelineManager->createPipeline<BlurPushConstants>(PipelineCategory::BEFORE_GEOMETRY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
+                                                               vk::False, "shaders/blur.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
 
         litPipelineIndex = pipelineManager->createPipeline<PushConstants>(PipelineCategory::GEOMETRY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eBack, vk::True,
                                                                           vk::True, "shaders/lit.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
@@ -149,14 +164,15 @@ class Renderer {
             pipelineManager->createPipeline<LinePushConstants>(PipelineCategory::GEOMETRY, vk::PrimitiveTopology::eLineList, vk::CullModeFlagBits::eNone, vk::False, vk::False,
                                                                "shaders/line.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
         depthPipelineIndex =
-            pipelineManager->createPipeline<DepthVisPushConstants>(PipelineCategory::AFTER_GEOMETRY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
+            pipelineManager->createPipeline<DepthVisPushConstants>(PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
                                                                    vk::False, "shaders/depth_view.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
 
+        // default litshader / material
         fallbackLitShader = Shader{.sourceFile = "shaders/lit.spv", .pipelineIndex = litPipelineIndex};
-        uint32_t defaultTexMask = 0x000000000;
-        //texMask |= (1U << 0);
-        //texMask |= (1U << 1);
-        //texMask |= (1U << 3);
+        uint32_t defaultTexMask = 0x000000000; // see the material struct definition
+        // texMask |= (1U << 0);
+        // texMask |= (1U << 1);
+        // texMask |= (1U << 3);
         Material defaultMaterial = Material{.shaderSource = fallbackLitShader,
                                             .textureMask = defaultTexMask,
                                             .color = glm::vec4(0.5, 0.5, 0.5, 1),
@@ -172,23 +188,16 @@ class Renderer {
         descriptorSet->debugDescriptorSet("after_pipeline_creation");
 #endif
 
+        // create the root node - end of initialization
         (*nodes)[0] = Node(this, 0, nullptr, glm::vec3(0.0), glm::quat(1.0, 0, 0, 0), glm::vec3(1, 1, 1));
         (*nodes)[0]->name = "root";
         rootNode = &*(*nodes)[0];
-        std::cout << sizeof(Vertex) << std::endl;
     }
 
+    // main render loop
     void drawFrame() {
-        for (auto& [id, light] : lights) {
-            if (light.castsShadows == 1) {
-                if (light.type == LightType::Directional) {
-                    calculateCascadedLightSpaceMatrices(light, activeCamera);
-                }
-                descriptorSet->updateFixedBuffer<Light>(lightBufferIndex, id, light);
-            }
-        }
-
         device->getDevice().waitForFences(*inFlightFences[currentFrame], vk::True, UINT64_MAX);
+
         auto [result, imageIndex] = swapchain->getSwapChain().acquireNextImage(UINT64_MAX, *presentCompleteSemaphores[currentFrame], nullptr);
 
         if (result == vk::Result::eErrorOutOfDateKHR) {
@@ -211,6 +220,15 @@ class Renderer {
 
         imagesInFlight[imageIndex] = *inFlightFences[currentFrame];
         device->getDevice().resetFences(*inFlightFences[currentFrame]);
+
+        for (auto& [id, light] : lights) {
+            if (light.castsShadows == 1) {
+                if (light.type == LightType::Directional) {
+                    calculateCascadedLightSpaceMatrices(light, activeCamera, this);
+                    descriptorSet->updateFixedBufferWithOffset<Light>(lightBufferIndex, id, light, currentFrame);
+                }
+            }
+        }
 
         commandBuffers[currentFrame].reset();
         recordCommandBuffer(imageIndex);
@@ -252,30 +270,33 @@ class Renderer {
         }
 
         currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
-        pipelineManager->checkForShaderUpdates(); //TODO enable this
+        pipelineManager->checkForShaderUpdates(); // TODO enable this
     }
 
     GLFWwindow* getWindow() { return window; }
     void setWindow(GLFWwindow* pWindow) { window = pWindow; }
 
+    const vk::Instance& getInstance() const { return *instance; }
+
     Device& getDevice() { return *device; }
     ResourceManager& getResourceManager() { return *resourceManager; }
-
-    const vk::Instance& getInstance() const { return *instance; }
+    DescriptorSet& getDescriptorSet() { return *descriptorSet; }
 
     Swapchain& getSwapchain() { return *swapchain; }
     void cleanupSwapchain() { swapchain->cleanupSwapChain(); }
-
     const vk::SampleCountFlagBits& getMsaaSamples() const { return msaaSamples; }
+    
+    const uint32_t getGraphicsIndex() const { return graphicsIndex; } // only used for IMGUI init
 
-    const uint32_t getGraphicsIndex() const { return graphicsIndex; }
-
-    DescriptorSet& getDescriptorSet() { return *descriptorSet; }
     uint32_t getModelMatrixBufferIndex() { return modelMatrixBufferIndex; }
     uint32_t getLightBufferIndex() { return lightBufferIndex; }
+    uint32_t getShadowDrawDataBufferIndex() { return shadowDrawDataBufferIndex; }
+
     std::vector<Material>& getMaterials() { return materials; }
     uint32_t addMaterial(Material material) {
-        // iterate through materials check if already exists
+        material.materialID = static_cast<uint32_t>(std::hash<Material>{}(material));
+
+        // check if it already exists
         for (uint32_t i = 0; i < materials.size(); i++) {
             if (materials[i] == material) {
                 return i;
@@ -284,15 +305,18 @@ class Renderer {
         materials.push_back(material);
         return materials.size() - 1;
     }
+
     // don't call this directly, should only be called from a node with a valid mesh index
     void addMeshToShader(Node* node, uint32_t submeshIndex, Shader shader, Material material) { shaders[shader][material][node].insert(submeshIndex); }
     void removeMeshFromShader(Node* node, uint32_t subMeshIndex, Shader shader, Material material) { shaders[shader][material][node].erase(subMeshIndex); }
+
     Shader getFallBackShader() { return fallbackLitShader; }
     uint32_t getFallBackMaterial() { return fallbackDefaultMaterialIndex; }
-    std::vector<Mesh>& getMeshes() { return meshes; }
-    uint32_t loadMeshFromFile(std::string filePath) {
+    void clearRenderList() { shaders.clear(); }
 
-        // if the mesh already exists in memory
+/////=================================================RESOURCE LOADING=================================================/////
+    uint32_t loadMeshFromFile(std::string filePath) {
+        // checks if the mesh already exists in memory
         for (int i = 0; i < meshes.size(); i++) {
             if (meshes[i].sourceFile == filePath) {
                 return i;
@@ -302,11 +326,32 @@ class Renderer {
         std::cout << "Loading mesh from " << filePath << std::endl;
 #endif
         auto meshData = resourceManager->loadMeshFromFile(filePath);
-        Mesh mainMesh{.sourceFile = filePath};
+        Mesh mainMesh{.sourceFile = filePath, .originalMaterialIds = meshData.materialIds, .originalMaterialNames = meshData.materialNames};
+
+        // Calculate bounding box for the entire mesh
+        glm::vec3 bbMin(std::numeric_limits<float>::max());
+        glm::vec3 bbMax(std::numeric_limits<float>::lowest());
+
+        for (const auto& submesh : meshData.subMeshes) {
+            for (const auto& vertex : submesh) {
+                bbMin = glm::min(bbMin, vertex.position);
+                bbMax = glm::max(bbMax, vertex.position);
+            }
+        }
+        mainMesh.boundingBoxMin = bbMin;
+        mainMesh.boundingBoxMax = bbMax;
 
         for (size_t i = 0; i < meshData.subMeshes.size(); i++) {
             auto& vertices = meshData.subMeshes[i];
             auto& indices = meshData.subMeshIndices[i];
+
+            // Calculate bounding box for this submesh
+            glm::vec3 subBBMin(std::numeric_limits<float>::max());
+            glm::vec3 subBBMax(std::numeric_limits<float>::lowest());
+            for (const auto& vertex : vertices) {
+                subBBMin = glm::min(subBBMin, vertex.position);
+                subBBMax = glm::max(subBBMax, vertex.position);
+            }
 
             // Allocate vertex buffer
             uint32_t vertexAllocIndex = descriptorSet->allocateVariableBuffer<Vertex>(vertices, vertexBufferIndex);
@@ -322,7 +367,9 @@ class Renderer {
                                .vertexStride = vertexAlloc.stride,
                                .indexAllocationIndex = indexAllocIndex,
                                .indexOffset = indexAlloc.offset,
-                               .indexCount = indexAlloc.count};
+                               .indexCount = indexAlloc.count,
+                               .boundingBoxMin = subBBMin,
+                               .boundingBoxMax = subBBMax};
 
             subMeshes.push_back(subMesh);
             mainMesh.subMeshes.push_back(subMeshes.size() - 1);
@@ -333,16 +380,60 @@ class Renderer {
     }
 
     uint32_t loadTextureFromFile(std::string filePath, vk::Format format = vk::Format::eR8G8B8A8Srgb) {
+
+        if (loadedTextures.contains(filePath)) {
+            return loadedTextures[filePath];
+        }
+
         auto [image, memory, view] = resourceManager->loadTextureFromFile(filePath, format);
-        return descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(view));
+        uint32_t allocIndex = descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(view), filePath);
+        loadedTextures[filePath] = allocIndex;
+        return allocIndex;
     }
 
-    uint32_t loadCubemapFromFile(std::string posX, std::string posY, std::string posZ, std::string negX, std::string negY, std::string negZ, uint32_t width = 2048, uint32_t height = 2048) {
+    uint32_t loadCubemapFromFile(std::string posX, std::string posY, std::string posZ, std::string negX, std::string negY, std::string negZ, uint32_t width = 2048,
+                                 uint32_t height = 2048) {
+        // Create a unique key for this cubemap based on all 6 face paths
+        std::string cubemapKey = posX + "|" + negX + "|" + posY + "|" + negY + "|" + posZ + "|" + negZ;
+
+        if (loadedCubemaps.contains(cubemapKey)) {
+            return loadedCubemaps[cubemapKey];
+        }
+
         auto [image, memory, view] = resourceManager->loadCubeMapFromFile(posX, negX, posY, negY, posZ, negZ, width, height);
-        return descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(view), true);
+        uint32_t allocIndex = descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(view), cubemapKey, true);
+        loadedCubemaps[cubemapKey] = allocIndex;
+        return allocIndex;
     }
 
-    std::map<uint32_t, Light>& getLights() { return lights; }
+    std::string getTexturePathFromIndex(uint32_t textureIndex) {
+        for (const auto& [path, index] : loadedTextures) {
+            if (index == textureIndex) {
+                return path;
+            }
+        }
+        return ""; // Return empty string for default/procedural textures
+    }
+
+    std::string getCubemapPathFromIndex(uint32_t cubemapIndex) {
+        for (const auto& [path, index] : loadedCubemaps) {
+            if (index == cubemapIndex) {
+                return path; // Returns format: "posX|negX|posY|negY|posZ|negZ"
+            }
+        }
+        return ""; // Return empty string for default/procedural cubemaps
+    }
+
+    std::vector<Mesh>& getMeshes() { return meshes; }
+    const std::map<uint32_t, Light>& getLights() { return lights; }
+    void addLight(uint32_t index, Light light) { lights[index] = light; }
+    Light& getLight(uint32_t index) { return lights[index]; }
+    void clearLights() {
+        descriptorSet->clearFixedBuffer(lightBufferIndex);
+        lights.clear();
+    }
+
+/////=================================================NODE STUFF=================================================/////
 
     Node* getRootNode() { return rootNode; }
     std::array<std::optional<Node>, MAX_NODES>& getNodes() { return *nodes; }
@@ -383,13 +474,102 @@ class Renderer {
     }
     void deSelectNode() { selectedNode = MAX_NODES; }
     uint32_t getNodeCount() { return lastNode + 1; }
+    void resetLastNode() {
+        lastNode = 0;
+        selectedNode = MAX_NODES;
+    }
 
+    //toggled by keyboard inputs
     void toggleVsync() {
         vSync = !vSync;
         swapchain->recreate(window, vSync);
     }
     void toggleDepthView() { depthView = !depthView; }
     void setSkyBox(uint32_t skyboxIndex) { this->skyboxIndex = skyboxIndex; }
+
+    // Generic blur pass that can blur any attachment
+    // Performs two-pass separable Gaussian blur (horizontal + vertical)
+    // Requires a temporary texture of the same size and format as the source
+    void blurAttachment(vk::raii::CommandBuffer& cmd, uint32_t sourceTextureIndex, uint32_t tempTextureIndex, uint32_t width, uint32_t height, float blurRadius = 1.0f,
+                        uint32_t samplerIndex = 0) {
+
+        auto& blurPipeline = pipelineManager->getBeforeGeoPipelines()[blurPipelineIndex];
+        auto& sourceTexture = descriptorSet->getTextureResource(sourceTextureIndex);
+        auto& tempTexture = descriptorSet->getTextureResource(tempTextureIndex);
+
+        // === Horizontal blur (source -> temp) ===
+        {
+            resourceManager->transitionImageLayout(&cmd, *tempTexture.image, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
+
+            vk::ClearValue clearColor{.color = vk::ClearColorValue(std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.0f})};
+            vk::RenderingAttachmentInfo colorAttachment{.imageView = *tempTexture.imageView,
+                                                        .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+                                                        .loadOp = vk::AttachmentLoadOp::eClear,
+                                                        .storeOp = vk::AttachmentStoreOp::eStore,
+                                                        .clearValue = clearColor};
+
+            vk::RenderingInfo renderInfo{.renderArea = {{0, 0}, {width, height}}, .layerCount = 1, .colorAttachmentCount = 1, .pColorAttachments = &colorAttachment};
+
+            cmd.beginRendering(renderInfo);
+            cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, blurPipeline->pipeline);
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, blurPipeline->layout, 0, {*blurPipeline->descriptorSet}, {});
+            cmd.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height), 0.0f, 1.0f));
+            cmd.setScissor(0, vk::Rect2D({0, 0}, {width, height}));
+
+            BlurPushConstants pushConstants{
+                .inputTextureIndex = sourceTextureIndex, .samplerIndex = samplerIndex, .isHorizontal = 1, .blurRadius = blurRadius, .resolution = glm::uvec2(width, height)};
+
+            cmd.pushConstants<BlurPushConstants>(*blurPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pushConstants);
+            cmd.draw(3, 1, 0, 0);
+            cmd.endRendering();
+
+            resourceManager->transitionImageLayout(&cmd, *tempTexture.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+        }
+
+        // === Vertical blur (temp -> source) ===
+        {
+            resourceManager->transitionImageLayout(&cmd, *sourceTexture.image, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
+
+            vk::ClearValue clearColor{.color = vk::ClearColorValue(std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.0f})};
+            vk::RenderingAttachmentInfo colorAttachment{.imageView = *sourceTexture.imageView,
+                                                        .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+                                                        .loadOp = vk::AttachmentLoadOp::eClear,
+                                                        .storeOp = vk::AttachmentStoreOp::eStore,
+                                                        .clearValue = clearColor};
+
+            vk::RenderingInfo renderInfo{.renderArea = {{0, 0}, {width, height}}, .layerCount = 1, .colorAttachmentCount = 1, .pColorAttachments = &colorAttachment};
+
+            cmd.beginRendering(renderInfo);
+            cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, blurPipeline->pipeline);
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, blurPipeline->layout, 0, {*blurPipeline->descriptorSet}, {});
+            cmd.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height), 0.0f, 1.0f));
+            cmd.setScissor(0, vk::Rect2D({0, 0}, {width, height}));
+
+            BlurPushConstants pushConstants{
+                .inputTextureIndex = tempTextureIndex, .samplerIndex = samplerIndex, .isHorizontal = 0, .blurRadius = blurRadius, .resolution = glm::uvec2(width, height)};
+
+            cmd.pushConstants<BlurPushConstants>(*blurPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pushConstants);
+            cmd.draw(3, 1, 0, 0);
+            cmd.endRendering();
+
+            resourceManager->transitionImageLayout(&cmd, *sourceTexture.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+        }
+    }
+
+    // debugging shadows TODO : make access cleaner
+    uint32_t debugShowShadow = 3;
+    uint32_t showShadowMapIndex = 0xFFFFFFFF;
+    void showShadowMap() {
+        debugShowShadow++;
+        if (debugShowShadow == 3) {
+            showShadowMapIndex = 0xFFFFFFFF;
+            return;
+        }
+        if (debugShowShadow >= 4) {
+            debugShowShadow = 0;
+            return;
+        }
+    }
 
   private:
     GLFWwindow* window = nullptr;
@@ -398,6 +578,7 @@ class Renderer {
     vk::raii::Context context;
     vk::raii::DebugUtilsMessengerEXT debugMessenger = nullptr;
     vk::raii::SurfaceKHR surface = nullptr;
+    vk::SampleCountFlagBits msaaSamples;
 
     std::vector<const char*> requiredDeviceExtension = {VK_KHR_SWAPCHAIN_EXTENSION_NAME,           VK_KHR_SPIRV_1_4_EXTENSION_NAME,
                                                         VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,   VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME,
@@ -407,52 +588,72 @@ class Renderer {
     std::vector<vk::raii::CommandBuffer> commandBuffers;
     uint32_t graphicsIndex = 0;
 
+    //synchronization objects
     std::vector<vk::raii::Semaphore> presentCompleteSemaphores;
     std::vector<vk::raii::Semaphore> renderFinishedSemaphores;
     std::vector<vk::raii::Fence> inFlightFences;
     std::vector<vk::Fence> imagesInFlight;
     uint32_t currentFrame = 0;
 
+    //my classes
     std::unique_ptr<Device> device;
     std::unique_ptr<Swapchain> swapchain;
     std::unique_ptr<PipelineManager> pipelineManager;
     std::unique_ptr<ResourceManager> resourceManager;
     std::unique_ptr<DescriptorSet> descriptorSet;
 
-    std::vector<Material> materials;
-    std::map<Shader, std::map<Material, std::map<Node*, std::unordered_set<uint32_t>>>> shaders; // map between Shaders and Nodes + their submeshes to render
-    Shader fallbackLitShader;
-    uint32_t fallbackDefaultMaterialIndex;
-    std::vector<Mesh> meshes;
-    std::queue<uint32_t> freeMeshes;
-    std::vector<SubMesh> subMeshes;
-    std::queue<uint32_t> freeSubMeshes;
-    std::map<uint32_t, Light> lights;
-    uint32_t vertexBufferIndex;
-    uint32_t indexBufferIndex;
-    uint32_t modelMatrixBufferIndex;
-    uint32_t lightBufferIndex;
-
+    //pipelines
     uint32_t skyboxPipelineIndex;
     uint32_t shadowPipelineIndex;
     uint32_t litPipelineIndex;
     uint32_t gizmoPipelineIndex;
     uint32_t depthPipelineIndex;
+    uint32_t blurPipelineIndex;
 
+    //defaults
     uint32_t defaultSamplerIndex;
     uint32_t depthSamplerIndex;
     uint32_t shadowSamplerIndex;
     uint32_t defaultNormalIndex;
     uint32_t skyboxIndex;
 
-    Node* rootNode = nullptr;
+    //rendering data
+    Node* rootNode = nullptr; 
     std::array<std::optional<Node>, MAX_NODES>* nodes;
     uint32_t lastNode = 0;
+    std::vector<Material> materials;                                                             
+    std::map<Shader, std::map<Material, std::map<Node*, std::unordered_set<uint32_t>>>> shaders; // map between Shaders and Nodes + their submeshes to render
+    Shader fallbackLitShader;
+    uint32_t fallbackDefaultMaterialIndex;
+    std::map<std::string, uint32_t> loadedTextures;
+    std::map<std::string, uint32_t> loadedCubemaps;
+    std::vector<Mesh> meshes; 
+    std::queue<uint32_t> freeMeshes;
+    std::vector<SubMesh> subMeshes;
+    std::queue<uint32_t> freeSubMeshes;
+    std::map<uint32_t, Light> lights; 
+    uint32_t vertexBufferIndex;
+    uint32_t indexBufferIndex;
+    uint32_t modelMatrixBufferIndex;
+    uint32_t lightBufferIndex;
+    uint32_t shadowDrawDataBufferIndex;
 
-    vk::SampleCountFlagBits msaaSamples;
+    // Persistent buffers for indirect drawing in shadow map
+    vk::raii::Buffer indirectDrawBuffer = nullptr;
+    vk::raii::DeviceMemory indirectDrawBufferMemory = nullptr;
+
+    vk::raii::Image shadowDepthImage = nullptr;
+    vk::raii::DeviceMemory shadowDepthMemory = nullptr;
+    vk::raii::ImageView shadowDepthView = nullptr;
+    uint32_t currentShadowDepthResolution = 0;
+
+    // Temporary texture for gaussian blur
+    uint32_t tempBlurTextureIndex = 0xFFFFFFFF;
+
     bool vSync = true;
     bool depthView = false;
 
+/////=================================================INITIALIZATION HELPER FUNCTIONS=================================================/////
     void createInstance() {
         constexpr vk::ApplicationInfo appInfo{.pApplicationName = "Shader Forge",
                                               .applicationVersion = VK_MAKE_VERSION(1, 0, 0),
@@ -531,6 +732,22 @@ class Renderer {
         commandBuffers = vk::raii::CommandBuffers(device->getDevice(), allocInfo);
     }
 
+    void createShadowDepthBuffer(uint32_t resolution) {
+        // only recreates if resolution changed
+        if (currentShadowDepthResolution == resolution && shadowDepthView != nullptr) {
+            return;
+        }
+        // Free old resources if they exist
+        shadowDepthView = nullptr;
+        shadowDepthImage = nullptr;
+        shadowDepthMemory = nullptr;
+        resourceManager->createImage(resolution, resolution, 1, vk::SampleCountFlagBits::e1, vk::Format::eD32Sfloat, vk::ImageTiling::eOptimal,
+                                     vk::ImageUsageFlagBits::eDepthStencilAttachment, vk::MemoryPropertyFlagBits::eDeviceLocal, shadowDepthImage, shadowDepthMemory, 1);
+        shadowDepthView = resourceManager->createImageView(shadowDepthImage, vk::Format::eD32Sfloat, vk::ImageAspectFlagBits::eDepth);
+        resourceManager->transitionImageLayout(nullptr, shadowDepthImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal);
+        currentShadowDepthResolution = resolution;
+    }
+
     void createSyncObjects() {
         presentCompleteSemaphores.clear();
         renderFinishedSemaphores.clear();
@@ -551,16 +768,19 @@ class Renderer {
         imagesInFlight.resize(swapchain->getSwapImageSize(), VK_NULL_HANDLE);
     }
 
+/////=================================================MAIN RENDERING LOGIC=================================================/////
     void recordCommandBuffer(uint32_t imageIndex) {
 
         commandBuffers[currentFrame].begin({});
 
+        //shadows first
         for (auto& [lightId, light] : lights) {
             if (light.castsShadows == 1) {
                 recordShadowPass(commandBuffers[currentFrame], light);
             }
         }
 
+        //then everything that renders to the screen
         resourceManager->transitionImageLayout(&commandBuffers[currentFrame], swapchain->getSwapChainImages()[imageIndex], vk::ImageLayout::eUndefined,
                                                vk::ImageLayout::eColorAttachmentOptimal);
         resourceManager->transitionImageLayout(&commandBuffers[currentFrame], swapchain->getColorImage(), vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
@@ -570,7 +790,6 @@ class Renderer {
         vk::ClearValue clearColor{.color = vk::ClearColorValue(std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f})};
         vk::ClearValue clearDepth{.depthStencil = vk::ClearDepthStencilValue{1.0f, 0}};
 
-        // Color attachment (multisampled) with resolve attachment
         vk::RenderingAttachmentInfo colorAttachment = {.imageView = swapchain->getColorImageView(),
                                                        .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
                                                        .resolveMode = vk::ResolveModeFlagBits::eAverage,
@@ -580,7 +799,6 @@ class Renderer {
                                                        .storeOp = vk::AttachmentStoreOp::eStore,
                                                        .clearValue = clearColor};
 
-        // depth attachment
         vk::RenderingAttachmentInfo depthAttachmentInfo = {.imageView = swapchain->getDepthImageView(),
                                                            .imageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
                                                            .resolveMode = vk::ResolveModeFlagBits::eMin,
@@ -601,7 +819,7 @@ class Renderer {
             0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapchain->getSwapChainExtent().width), static_cast<float>(swapchain->getSwapChainExtent().height), 0.0f, 1.0f));
         commandBuffers[currentFrame].setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapchain->getSwapChainExtent()));
 
-        // draw skybox
+        // drawing background skybox
         auto& currentSkyBoxPipeline = pipelineManager->getGeoPipelines()[skyboxPipelineIndex];
         commandBuffers[currentFrame].bindPipeline(vk::PipelineBindPoint::eGraphics, currentSkyBoxPipeline->pipeline);
         commandBuffers[currentFrame].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, currentSkyBoxPipeline->layout, 0, {**currentSkyBoxPipeline->descriptorSet}, {});
@@ -610,7 +828,7 @@ class Renderer {
                                                                         skyboxConstants);
         commandBuffers[currentFrame].draw(3, 1, 0, 0);
 
-        // draw geometry
+        // drawing lit geometry
         vk::Buffer indexBufferHandle = descriptorSet->getVariableBuffer(indexBufferIndex);
         auto& geoPipelines = pipelineManager->getGeoPipelines();
         for (auto [shader, materials] : shaders) {
@@ -637,8 +855,8 @@ class Renderer {
                         PushConstants pushConstants = {.vertexAllocationIndex = subMeshes[mesh].vertexAllocationIndex,      // Index into vertex allocations
                                                        .vertexOffset = static_cast<uint32_t>(subMeshes[mesh].vertexOffset), // Byte offset in vertex buffer
                                                        .vertexStride = subMeshes[mesh].vertexStride,                        // Size of each vertex
-                                                       .modelMatrixIndex = node->getModelMatrixIndex(),                     // Index into model matrices
-                                                       .albedoTextureIndex = material.albedoTextureIndex,                   // Index into textures
+                                                       .modelMatrixIndex = node->getModelMatrixIndex(),   // Index (same for all frames, offset handles separation)
+                                                       .albedoTextureIndex = material.albedoTextureIndex, // Index into textures
                                                        .roughnessTextureIndex = material.roughnessTextureIndex,
                                                        .metallicTextureIndex = material.metallicTextureIndex,
                                                        .normalTextureIndex = material.normalTextureIndex,
@@ -648,6 +866,8 @@ class Renderer {
                                                        .shadowSamplerIndex = shadowSamplerIndex,
                                                        .cameraPosition = activeCamera.position,
                                                        .textureMask = material.textureMask,
+                                                       .elementOffsetModel = currentFrame * MAX_FIXED_BUFFER, // Offset to this frame's model matrices
+                                                       .elementOffsetLight = currentFrame * MAX_FIXED_BUFFER, // Offset to this frame's lights
                                                        .viewProjection = activeCamera.viewProjection};
 
                         commandBuffers[currentFrame].pushConstants<PushConstants>((*currentPipeline)->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
@@ -657,8 +877,8 @@ class Renderer {
                 }
             }
         }
-        // draw gizmos
 
+        // drawing gizmos
         auto& currentGizmoPipeline = pipelineManager->getGeoPipelines()[gizmoPipelineIndex];
         commandBuffers[currentFrame].bindPipeline(vk::PipelineBindPoint::eGraphics, currentGizmoPipeline->pipeline);
         commandBuffers[currentFrame].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, currentGizmoPipeline->layout, 0, {**currentGizmoPipeline->descriptorSet}, {});
@@ -667,25 +887,26 @@ class Renderer {
                                                                       lineConstants);
         commandBuffers[currentFrame].draw(gizmos->getVertexCount(), 1, 0, 0);
 
-        // draw GUI
+        // drawing GUI
         ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), *commandBuffers[currentFrame]);
         commandBuffers[currentFrame].endRendering();
 
-        // fullscreen quad
-        if(depthView || debugShowShadow < 4){
+        // fullscreen quad for visualization purposed
+        // and any post process passes
+        if (depthView || debugShowShadow < 4) {
             vk::RenderingAttachmentInfo swapchainAttachment{.imageView = swapchain->getSwapChainImageViews()[imageIndex],
                                                             .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
                                                             .loadOp = vk::AttachmentLoadOp::eLoad,
                                                             .storeOp = vk::AttachmentStoreOp::eStore};
-    
+
             vk::RenderingInfo fullscreenRenderInfo{.renderArea = {{0, 0}, swapchain->getSwapChainExtent()},
                                                    .layerCount = 1,
                                                    .colorAttachmentCount = 1,
                                                    .pColorAttachments = &swapchainAttachment,
                                                    .pDepthAttachment = nullptr};
             commandBuffers[currentFrame].beginRendering(fullscreenRenderInfo);
-            
-            auto& currentDepthPipeline = pipelineManager->getAfterGeoPipelines()[depthPipelineIndex];
+
+            auto& currentDepthPipeline = pipelineManager->getPostProcessPipelines()[depthPipelineIndex];
             resourceManager->transitionImageLayout(nullptr, swapchain->getDepthImage(), vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
             commandBuffers[currentFrame].bindPipeline(vk::PipelineBindPoint::eGraphics, currentDepthPipeline->pipeline);
             commandBuffers[currentFrame].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, currentDepthPipeline->layout, 0, {**currentDepthPipeline->descriptorSet}, {});
@@ -697,11 +918,11 @@ class Renderer {
                                                     .farPlane = activeCamera.farPlane,
                                                     .linearize = 1,
                                                     .doDepthBuffering = depthView};
-            commandBuffers[currentFrame].pushConstants<DepthVisPushConstants>(*currentDepthPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0,
-                                                                              depthConstants);
+            commandBuffers[currentFrame].pushConstants<DepthVisPushConstants>(*currentDepthPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
+                                                                              0, depthConstants);
             commandBuffers[currentFrame].draw(3, 1, 0, 0);
             resourceManager->transitionImageLayout(nullptr, swapchain->getDepthImage(), vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
-    
+
             commandBuffers[currentFrame].endRendering();
         }
         resourceManager->transitionImageLayout(&commandBuffers[currentFrame], swapchain->getSwapChainImages()[imageIndex], vk::ImageLayout::eColorAttachmentOptimal,
@@ -712,7 +933,7 @@ class Renderer {
 
     void recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light) {
 
-        if (debugShowShadow < 4 && selectedNode != MAX_NODES) {
+        if (debugShowShadow < 3 && selectedNode != MAX_NODES) {
             if (lights[(*nodes)[selectedNode]->getLightIndex()] == light) {
                 showShadowMapIndex = light.cascades[debugShowShadow].shadowMapIndex;
             }
@@ -720,64 +941,127 @@ class Renderer {
         uint32_t cascadeCount = 1;
         TextureResource* shadowMap = nullptr;
         uint32_t shadowMapResolution = light.shadowResolution;
+
+        // Ensure depth buffer matches the shadow map resolution
+        createShadowDepthBuffer(shadowMapResolution);
         if (light.type == LightType::Directional) {
             cascadeCount = light.numCascades;
         } else {
             shadowMap = &descriptorSet->getTextureResource(light.shadowMapIndex);
         }
-        for (int i = 0; i < cascadeCount; i++) {
 
+        auto& currentPipeline = pipelineManager->getBeforeGeoPipelines()[shadowPipelineIndex];
+        vk::Buffer indexBufferHandle = descriptorSet->getVariableBuffer(indexBufferIndex);
+        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, currentPipeline->pipeline);
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, currentPipeline->layout, 0, {*currentPipeline->descriptorSet}, {});
+
+        //CSM shadows
+        for (int i = 0; i < cascadeCount; i++) {
             if (light.type == LightType::Directional) {
                 shadowMap = &descriptorSet->getTextureResource(light.cascades[i].shadowMapIndex);
             }
-            // Transition shadow map to depth attachment
-            resourceManager->transitionImageLayout(&cmd, *shadowMap->image, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal);
+            resourceManager->transitionImageLayout(&cmd, *shadowMap->image, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
 
-            // Begin rendering with depth-only attachment
-            vk::RenderingAttachmentInfo depthAttachment{.imageView = *shadowMap->imageView,
-                                                        .imageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
+            vk::ClearValue clearDepthValue{.color = vk::ClearColorValue(std::array<float, 4>{1.0f, 0.0f, 0.0f, 0.0f})};
+            vk::RenderingAttachmentInfo colorAttachment{.imageView = *shadowMap->imageView,
+                                                        .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
                                                         .loadOp = vk::AttachmentLoadOp::eClear,
                                                         .storeOp = vk::AttachmentStoreOp::eStore,
-                                                        .clearValue = {.depthStencil = {1.0f, 0}}};
+                                                        .clearValue = clearDepthValue};
 
-            vk::RenderingInfo renderInfo{
-                .renderArea = {{0, 0}, {shadowMapResolution, shadowMapResolution}}, .layerCount = 1, .colorAttachmentCount = 0, .pDepthAttachment = &depthAttachment};
+            vk::ClearValue clearDepth{.depthStencil = vk::ClearDepthStencilValue{1.0f, 0}};
+            vk::RenderingAttachmentInfo depthAttachment{.imageView = *shadowDepthView,
+                                                        .imageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
+                                                        .loadOp = vk::AttachmentLoadOp::eClear,
+                                                        .storeOp = vk::AttachmentStoreOp::eDontCare,
+                                                        .clearValue = clearDepth};
+
+            vk::RenderingInfo renderInfo{.renderArea = {{0, 0}, {shadowMapResolution, shadowMapResolution}},
+                                         .layerCount = 1,
+                                         .colorAttachmentCount = 1,
+                                         .pColorAttachments = &colorAttachment,
+                                         .pDepthAttachment = &depthAttachment};
 
             cmd.beginRendering(renderInfo);
             cmd.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(shadowMapResolution), static_cast<float>(shadowMapResolution), 0.0f, 1.0f));
             cmd.setScissor(0, vk::Rect2D({0, 0}, {shadowMapResolution, shadowMapResolution}));
 
-            auto& currentPipeline = pipelineManager->getBeforeGeoPipelines()[shadowPipelineIndex];
-            cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, currentPipeline->pipeline);
-            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, currentPipeline->layout, 0, {*currentPipeline->descriptorSet}, {});
-            vk::Buffer indexBufferHandle = descriptorSet->getVariableBuffer(indexBufferIndex);
+            // Extract frustum planes for this cascade
+            glm::mat4 lightSpaceMatrix = light.lightSpaceMatrix;
+            if (light.type == LightType::Directional) {
+                lightSpaceMatrix = light.cascades[i].lightSpaceMatrix;
+            }
+            std::array<Plane, 6> frustumPlanes = extractFrustumPlanes(lightSpaceMatrix);
 
+            // Build indirect draw commands and shadow draw data with CPU frustum culling
+            std::vector<DrawIndexedIndirectCommand> indirectCommands;
+            std::vector<ShadowDrawData> drawDataList;
+            indirectCommands.reserve(1000); // Reserve ahead of loop
+            drawDataList.reserve(1000);
+
+            //basic culling for performance
             for (auto [shader, materials] : shaders) {
                 for (auto [material, node_mesh] : materials) {
                     for (auto [node, subMeshIndices] : node_mesh) {
                         if (meshes[node->getMeshIndex()].freed == true) {
                             continue;
                         }
-                        for (auto mesh : subMeshIndices) {
-                            cmd.bindIndexBuffer(indexBufferHandle, subMeshes[mesh].indexOffset, vk::IndexType::eUint32);
 
-                            ShadowPushConstants pushConstants = {.vertexAllocationIndex = subMeshes[mesh].vertexAllocationIndex,
-                                                                 .vertexOffset = static_cast<uint32_t>(subMeshes[mesh].vertexOffset),
-                                                                 .vertexStride = subMeshes[mesh].vertexStride,
-                                                                 .modelMatrixIndex = node->getModelMatrixIndex(),
-                                                                 .lightSpaceMatrix = light.lightSpaceMatrix};
-                            if (light.type == LightType::Directional) {
-                                pushConstants.lightSpaceMatrix = light.cascades[i].lightSpaceMatrix;
+                        // CPU frustum culling: skips node if outside frustum
+                        if (node->isBoundingBoxValid()) {
+                            if (!isAABBInFrustum(node->getBoundingBoxMin(), node->getBoundingBoxMax(), frustumPlanes)) {
+                                continue;
                             }
-                            cmd.pushConstants<ShadowPushConstants>(*currentPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0,
-                                                                   pushConstants);
-                            cmd.drawIndexed(subMeshes[mesh].indexCount, 1, 0, 0, 0);
+                        }
+
+                        // Per-submesh frustum culling
+                        for (auto mesh : subMeshIndices) {
+                            const auto& subMesh = subMeshes[mesh];
+
+                            // Add indirect draw command
+                            indirectCommands.push_back({.indexCount = subMesh.indexCount,
+                                                        .instanceCount = 1,
+                                                        .firstIndex = static_cast<uint32_t>(subMesh.indexOffset / sizeof(uint32_t)),
+                                                        .vertexOffset = 0,
+                                                        .firstInstance = 0});
+
+                            // Add per-draw data
+                            drawDataList.push_back({.vertexAllocationIndex = subMesh.vertexAllocationIndex,
+                                                    .vertexOffset = static_cast<uint32_t>(subMesh.vertexOffset),
+                                                    .vertexStride = subMesh.vertexStride,
+                                                    .modelMatrixIndex = node->getModelMatrixIndex()});
                         }
                     }
                 }
             }
+
+            // build the indirect draw command and submit it
+            if (!indirectCommands.empty()) {
+                void* data = indirectDrawBufferMemory.mapMemory(0, indirectCommands.size() * sizeof(DrawIndexedIndirectCommand));
+                memcpy(data, indirectCommands.data(), indirectCommands.size() * sizeof(DrawIndexedIndirectCommand));
+                indirectDrawBufferMemory.unmapMemory();
+
+                // Get the fixed buffer's mapped memory pointer and write with frame offset
+                auto* shadowDataBuffer = descriptorSet->getFixedBufferMappedData<ShadowDrawData>(shadowDrawDataBufferIndex);
+                if (shadowDataBuffer) {
+                    uint32_t frameOffset = currentFrame * MAX_FIXED_BUFFER;
+                    memcpy(&shadowDataBuffer[frameOffset], drawDataList.data(), drawDataList.size() * sizeof(ShadowDrawData));
+                } else {
+                    std::cerr << "Error: shadow data buffer mapped memory is null!" << std::endl;
+                }
+
+                // Set push constants (same for all draws in this cascade)
+                ShadowPushConstants pushConstants = {
+                    .lightSpaceMatrix = lightSpaceMatrix, .elementOffsetModel = currentFrame * MAX_FIXED_BUFFER, .elementOffsetShadow = currentFrame * MAX_FIXED_BUFFER};
+                cmd.pushConstants<ShadowPushConstants>(*currentPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pushConstants);
+
+                cmd.bindIndexBuffer(indexBufferHandle, 0, vk::IndexType::eUint32);
+                cmd.drawIndexedIndirect(*indirectDrawBuffer, 0, static_cast<uint32_t>(indirectCommands.size()), sizeof(DrawIndexedIndirectCommand));
+            }
             cmd.endRendering();
-            resourceManager->transitionImageLayout(&cmd, *shadowMap->image, vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+
+            // Transition shadow map back to shader read-only for fragment shader sampling
+            resourceManager->transitionImageLayout(&cmd, *shadowMap->image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
         }
     }
 };

@@ -6,25 +6,38 @@
 #define VULKAN_HPP_NO_CONSTRUCTORS 1
 #endif
 
+#include <deque>
 #include <optional>
 #include <queue>
 #include <vector>
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_raii.hpp>
 
+#include "constants.hpp"
 #include "devices.hpp"
 #include "resources.hpp"
 #include "utils.hpp"
-#include "constants.hpp"
+
+/*
+there are 4 kinds of resources:
+Texture and samplers - self explanatory
+Variable Buffers - buffer where each allocation can be a different size (meshes for example)
+Fixed Buffers - allocations have a fixed size, 
+some fixed buffers also have the perFrame flag meaning when they allocate they do so for every frame in flight 
+
+finally the DescriptorSet class handles creation, allocation, updating and cleanup of these buffers
+*/
 
 struct TextureResource {
     std::optional<vk::raii::ImageView> imageView;
     std::optional<vk::raii::Image> image;
     std::optional<vk::raii::DeviceMemory> memory;
+    std::string source;
     void reset() {
         imageView.reset();
         image.reset();
         memory.reset();
+        source.clear();
     }
     bool isEmpty() const { return !imageView.has_value(); }
 };
@@ -67,8 +80,11 @@ struct FixedBufferResourceBase {
     void* mappedData = nullptr;
     vk::DeviceSize bufferSize;
     std::vector<FixedBufferAllocation> allocations;
-    std::queue<uint32_t> freeSlots;
+    std::deque<uint32_t> freeSlots;
     uint32_t maxSize = MAX_FIXED_BUFFER;
+    bool perFrame;
+    uint32_t elementSize = 0;  // Size of a single element
+    uint32_t frameOffsets[MAX_FRAMES_IN_FLIGHT] = {};  // Offset for each frame in the buffer
 
     virtual ~FixedBufferResourceBase() = default;
     virtual uint32_t allocateImpl(const void* data) = 0;
@@ -82,7 +98,10 @@ struct FixedBufferResourceBase {
 template <typename T> struct FixedBufferResource : FixedBufferResourceBase {
     std::vector<T> data;
 
-    FixedBufferResource(vk::raii::Buffer&& buf, vk::raii::DeviceMemory&& mem) : FixedBufferResourceBase(std::move(buf), std::move(mem)) { data.reserve(maxSize); }
+    FixedBufferResource(vk::raii::Buffer&& buf, vk::raii::DeviceMemory&& mem) : FixedBufferResourceBase(std::move(buf), std::move(mem)) {
+        data.reserve(maxSize);
+        elementSize = sizeof(T);
+    }
 
     uint32_t allocateImpl(const void* dataPtr) override {
         const T* typedData = static_cast<const T*>(dataPtr);
@@ -91,6 +110,7 @@ template <typename T> struct FixedBufferResource : FixedBufferResourceBase {
 
     void updateImpl(uint32_t index, const void* dataPtr) override {
         const T* typedData = static_cast<const T*>(dataPtr);
+
         updateTyped(index, *typedData);
     }
 
@@ -101,7 +121,7 @@ template <typename T> struct FixedBufferResource : FixedBufferResourceBase {
 
         if (!freeSlots.empty()) {
             index = freeSlots.front();
-            freeSlots.pop();
+            freeSlots.pop_front();
             allocations[index] = FixedBufferAllocation{.index = index, .inUse = true};
             data[index] = newData;
         } else {
@@ -127,6 +147,20 @@ template <typename T> struct FixedBufferResource : FixedBufferResourceBase {
         data[index] = newData;
         T* dataBuffer = static_cast<T*>(mappedData);
         dataBuffer[index] = newData;
+    }
+
+    // Updates with frame offset
+    void updateTypedWithOffset(uint32_t index, const T& newData, uint32_t frameIndex) {
+        if (frameIndex >= MAX_FRAMES_IN_FLIGHT) {
+            throw std::runtime_error("Invalid frame index");
+        }
+        if (index >= allocations.size() || !allocations[index].inUse) {
+            throw std::runtime_error("Invalid buffer index or allocation not in use");
+        }
+        // Calculate offset
+        uint32_t byteOffset = frameOffsets[frameIndex] + (index * static_cast<uint32_t>(sizeof(T)));
+        T* targetPtr = reinterpret_cast<T*>(reinterpret_cast<uint8_t*>(mappedData) + byteOffset);
+        *targetPtr = newData;
     }
 
     void free(uint32_t index) {
@@ -183,7 +217,7 @@ class DescriptorSet {
         samplerBindingIndex = bindingIndex;
         bindingIndex++;
 
-        // Bind all variable buffers
+        // variable buffers
         for (size_t i = 0; i < variableBuffers.size(); i++) {
             if (variableBuffers[i] && i != 1) { // 1 is the index buffer
                 layoutBindings.push_back(vk::DescriptorSetLayoutBinding{.binding = bindingIndex,
@@ -197,7 +231,7 @@ class DescriptorSet {
                 bindingIndex++;
             }
         }
-
+        // fixed buffers
         for (auto& fixedBuffer : fixedBuffers) {
             layoutBindings.push_back(vk::DescriptorSetLayoutBinding{.binding = bindingIndex,
                                                                     .descriptorType = vk::DescriptorType::eStorageBuffer,
@@ -261,7 +295,7 @@ class DescriptorSet {
         }
     }
 
-    uint32_t allocateTexture(vk::raii::Image image, vk::raii::DeviceMemory memory, vk::raii::ImageView imageView, bool isCubeMap = false) {
+    uint32_t allocateTexture(vk::raii::Image image, vk::raii::DeviceMemory memory, vk::raii::ImageView imageView, std::string source = "", bool isCubeMap = false) {
 #if DEBUG == 1
         debugDescriptorSetState("before_texture_allocation");
 #endif
@@ -276,12 +310,14 @@ class DescriptorSet {
             textureResources[index].imageView = std::move(imageView);
             textureResources[index].image = std::move(image);
             textureResources[index].memory = std::move(memory);
+            textureResources[index].source = source;
         } else {
             index = textureResources.size();
             TextureResource resource;
             resource.imageView = std::move(imageView);
             resource.image = std::move(image);
             resource.memory = std::move(memory);
+            resource.source = source;
             textureResources.emplace_back(std::move(resource));
         }
         vk::DescriptorImageInfo imageInfo{.imageView = *textureResources[index].imageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal};
@@ -297,10 +333,11 @@ class DescriptorSet {
         return index;
     }
 
-    void updateTexture(uint32_t index, vk::raii::Image image, vk::raii::DeviceMemory memory, vk::raii::ImageView imageView, bool isCubeMap = false) {
+    void updateTexture(uint32_t index, vk::raii::Image image, vk::raii::DeviceMemory memory, vk::raii::ImageView imageView, std::string source = "", bool isCubeMap = false) {
         textureResources[index].imageView = std::move(imageView);
         textureResources[index].image = std::move(image);
         textureResources[index].memory = std::move(memory);
+        textureResources[index].source = source;
 
         vk::DescriptorImageInfo imageInfo{.imageView = *textureResources[index].imageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal};
         vk::WriteDescriptorSet write{.dstSet = *descriptorSet,
@@ -311,7 +348,8 @@ class DescriptorSet {
                                      .pImageInfo = &imageInfo};
         device.getDevice().updateDescriptorSets(write, {});
     }
-    
+
+    //ensure no in-flight command buffers are using this texture when calling this
     void freeTexture(uint32_t index) {
         device.getDevice().waitIdle();
         textureResources[index].reset();
@@ -364,9 +402,10 @@ class DescriptorSet {
         return index;
     }
 
-    void freeSampler(uint32_t index) {}
+    //TODO
+    void freeSampler(uint32_t index) {  }
 
-    template <typename T> uint32_t createFixedBuffer(uint32_t maxElements = MAX_FIXED_BUFFER) {
+    template <typename T> uint32_t createFixedBuffer(uint32_t maxElements = MAX_FIXED_BUFFER, bool usesDynamicOffset = false) {
         vk::DeviceSize bufferSize = maxElements * sizeof(T);
 
         vk::BufferCreateInfo bufferInfo{.size = bufferSize, .usage = vk::BufferUsageFlagBits::eStorageBuffer, .sharingMode = vk::SharingMode::eExclusive};
@@ -386,6 +425,7 @@ class DescriptorSet {
         fixedBuffer->mappedData = mappedData;
         fixedBuffer->bufferSize = bufferSize;
         fixedBuffer->maxSize = maxElements;
+        fixedBuffer->perFrame = usesDynamicOffset;
 
         uint32_t bufferIndex = static_cast<uint32_t>(fixedBuffers.size());
         fixedBuffers.push_back(std::move(fixedBuffer));
@@ -397,19 +437,28 @@ class DescriptorSet {
         if (bufferIndex >= fixedBuffers.size()) {
             throw std::runtime_error("Invalid buffer index");
         }
-        return fixedBuffers[bufferIndex]->allocateImpl(&data);
+        uint32_t index = fixedBuffers[bufferIndex]->allocateImpl(&data);
+
+        // If this buffer uses dynamic offsets (perFrame), write to all frame sections
+        auto* basePtr = fixedBuffers[bufferIndex].get();
+        if (basePtr->perFrame) {
+            auto* typedPtr = static_cast<FixedBufferResource<T>*>(basePtr);
+            for (uint32_t frame = 1; frame < MAX_FRAMES_IN_FLIGHT; frame++) {
+                typedPtr->updateTypedWithOffset(index, data, frame);
+            }
+        }
+
+        return index;
     }
 
     void freeFixedBuffer(uint32_t bufferIndex, uint32_t index) {
         if (bufferIndex >= fixedBuffers.size()) {
             return;
         }
-
         auto* basePtr = fixedBuffers[bufferIndex].get();
-
         if (index < basePtr->allocations.size() && basePtr->allocations[index].inUse) {
             basePtr->allocations[index].inUse = false;
-            basePtr->freeSlots.push(index);
+            basePtr->freeSlots.push_back(index);
         }
     }
 
@@ -417,18 +466,14 @@ class DescriptorSet {
         if (bufferIndex >= fixedBuffers.size()) {
             return;
         }
-
         auto* basePtr = fixedBuffers[bufferIndex].get();
-
         for (auto& allocation : basePtr->allocations) {
             allocation.inUse = false;
         }
-
-        std::queue<uint32_t> empty;
+        std::deque<uint32_t> empty;
         basePtr->freeSlots.swap(empty);
-
         for (uint32_t i = 0; i < basePtr->allocations.size(); i++) {
-            basePtr->freeSlots.push(i);
+            basePtr->freeSlots.push_back(i);
         }
     }
 
@@ -436,11 +481,31 @@ class DescriptorSet {
         if (bufferIndex >= fixedBuffers.size()) {
             throw std::runtime_error("Invalid buffer index");
         }
-        device.getDevice().waitIdle();
         fixedBuffers[bufferIndex]->updateImpl(index, &data);
     }
 
-    uint32_t createVariableBuffer(uint32_t maxSizeBytes = 1024 * 1024, vk::BufferUsageFlags usage = vk::BufferUsageFlagBits::eStorageBuffer) {
+    template <typename T> void updateFixedBufferWithOffset(uint32_t bufferIndex, uint32_t index, const T& data, uint32_t frameIndex) {
+        if (bufferIndex >= fixedBuffers.size()) {
+            throw std::runtime_error("Invalid buffer index");
+        }
+        auto* basePtr = fixedBuffers[bufferIndex].get();
+        auto* typedPtr = static_cast<FixedBufferResource<T>*>(basePtr);
+        typedPtr->updateTypedWithOffset(index, data, frameIndex);
+    }
+
+    void setBufferFrameOffset(uint32_t bufferIndex, uint32_t frameIndex, uint32_t offsetInElements) {
+        if (bufferIndex >= fixedBuffers.size()) {
+            throw std::runtime_error("Invalid buffer index");
+        }
+        auto* basePtr = fixedBuffers[bufferIndex].get();
+        if (frameIndex >= MAX_FRAMES_IN_FLIGHT) {
+            throw std::runtime_error("Invalid frame index");
+        }
+        // converts element offset to byte offset
+        basePtr->frameOffsets[frameIndex] = offsetInElements * basePtr->elementSize;
+    }
+
+    uint32_t createVariableBuffer(uint32_t maxSizeBytes = 1024 * 1024, vk::BufferUsageFlags usage = vk::BufferUsageFlagBits::eStorageBuffer, bool perFrame = false) {
         vk::BufferCreateInfo bufferInfo{.size = maxSizeBytes, .usage = usage, .sharingMode = vk::SharingMode::eExclusive};
 
         vk::raii::Buffer buffer(device.getDevice(), bufferInfo);
@@ -518,9 +583,23 @@ class DescriptorSet {
         return *variableBuffers[bufferIndex]->buffer;
     }
 
+    std::vector<FixedBufferAllocation>& getFixedBufferAllocations(uint32_t bufferIndex) const {
+        if (bufferIndex >= fixedBuffers.size() || !fixedBuffers[bufferIndex]) {
+            throw std::runtime_error("Invalid fixed buffer index");
+        }
+        return fixedBuffers[bufferIndex]->allocations;
+    }
+
+    template <typename T> T* getFixedBufferMappedData(uint32_t bufferIndex) {
+        if (bufferIndex >= fixedBuffers.size() || !fixedBuffers[bufferIndex]) {
+            return nullptr;
+        }
+        return static_cast<T*>(fixedBuffers[bufferIndex]->mappedData);
+    }
+
     vk::raii::DescriptorSet& getDescriptorSet() { return *descriptorSet; }
     vk::raii::DescriptorSetLayout& getDescriptorSetLayout() { return *descriptorSetLayout; }
-    TextureResource& getTextureResource(uint32_t index) { return textureResources[index]; } // TODO bounds check
+    TextureResource& getTextureResource(uint32_t index) { return textureResources[index]; } // TODO bounds check this
     void debugDescriptorSet(const std::string& context) { debugDescriptorSetState(context); }
 
   private:

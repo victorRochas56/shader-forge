@@ -1,9 +1,16 @@
-struct ShadowPushConstants {
+// Per-draw data stored in a storage buffer
+struct ShadowDrawData {
     uint vertexAllocationIndex;
     uint vertexOffset;
     uint vertexStride;
     uint modelMatrixIndex;
+};
+
+// Push constants now only contain light space matrix (same for all draws in a cascade)
+struct ShadowPushConstants {
     float4x4 lightSpaceMatrix;
+    uint elementOffsetModel;  // Element offset for this frame's model matrices
+    uint elementOffsetShadow; // Element offset for this frame's shadow draw data
 };
 
 [[vk::push_constant]]
@@ -14,6 +21,9 @@ ByteAddressBuffer vertexBuffer[];
 
 [[vk::binding(4, 0)]]
 StructuredBuffer<float4x4> modelMatrices[];
+
+[[vk::binding(6, 0)]]
+StructuredBuffer<ShadowDrawData> shadowDrawData[];
 
 struct Vertex
 {
@@ -26,6 +36,7 @@ struct Vertex
 struct VertexOutput
 {
     float4 position : SV_Position;
+    float depth : DEPTH;
 };
 
 Vertex loadVertex(uint vertexIndex, uint stride, uint offset)
@@ -44,20 +55,38 @@ Vertex loadVertex(uint vertexIndex, uint stride, uint offset)
 }
 
 [shader("vertex")]
-VertexOutput vertMain(uint vertexID : SV_VertexID)
+VertexOutput vertMain(uint vertexID : SV_VertexID, uint drawID : SV_DrawIndex)
 {
-    Vertex vertex = loadVertex(vertexID, pc.vertexStride, pc.vertexOffset);
-   
-    float4x4 modelMatrix = modelMatrices[0][pc.modelMatrixIndex];
+    // Fetch per-draw data using gl_DrawID (SV_DrawIndex in SLANG)
+    ShadowDrawData drawData = shadowDrawData[0][pc.elementOffsetShadow + drawID];
+
+    Vertex vertex = loadVertex(vertexID, drawData.vertexStride, drawData.vertexOffset);
+
+    float4x4 modelMatrix = modelMatrices[0][pc.elementOffsetModel + drawData.modelMatrixIndex];
     float4 worldPos = mul(modelMatrix, float4(vertex.position, 1.0));
-    
+
     VertexOutput output;
-    output.position = mul(pc.lightSpaceMatrix, worldPos);  
+    output.position = mul(pc.lightSpaceMatrix, worldPos);
+    // Use the depth value directly from the projection (already in [0,1] for Vulkan with GLM_DEPTH_ZERO_TO_ONE)
+    output.depth = output.position.z;
     return output;
 }
 
-[shader("fragment")]
-void fragMain()
+struct FragmentOutput
 {
- //alpha testing would go here (TODO?)
+    float depth : SV_Target0;
+};
+
+[shader("fragment")]
+FragmentOutput fragMain(VertexOutput input)
+{
+    FragmentOutput output;
+
+    // PCF: Percentage Closer Filtering
+    // Simply output the normalized depth value [0,1]
+    // No complex moment calculations needed
+
+    output.depth = input.depth;
+
+    return output;
 }

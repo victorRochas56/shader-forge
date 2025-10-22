@@ -26,7 +26,7 @@ ByteAddressBuffer vertexBuffer[];
 [[vk::binding(4, 0)]]
 StructuredBuffer<float4x4> modelMatrices[];
 
-[[vk::binding(6,0)]]
+[[vk::binding(7,0)]]
 StructuredBuffer<LineVertex> lineVerts;
 
 struct VertexOutput {

@@ -25,11 +25,38 @@
 struct MeshData {
     std::vector<std::vector<Vertex>> subMeshes;
     std::vector<std::vector<uint32_t>> subMeshIndices;
+    std::vector<int> materialIds;           // Material ID for each submesh (-1 if no material)
+    std::vector<std::string> materialNames; // Material name for each submesh
 };
+
+/*
+handles loading in textures, meshes etc
+also creating textures at runtime (ie. shadow maps and other procedural textures)
+handles image transitions
+*/
 
 class ResourceManager {
   public:
     ResourceManager(Device& device, vk::raii::CommandPool& commandPool) : commandPool(commandPool), device(device) {};
+
+    std::tuple<vk::raii::Buffer, vk::raii::DeviceMemory> createIndirectDrawBuffer() {
+
+        vk::raii::Buffer indirectDrawBuffer = nullptr;
+        vk::raii::DeviceMemory indirectDrawBufferMemory = nullptr;
+        // Create persistent indirect draw buffer (max 10000 draws)
+        vk::DeviceSize indirectBufferSize = sizeof(DrawIndexedIndirectCommand) * 10000;
+        vk::BufferCreateInfo indirectBufferInfo{.size = indirectBufferSize, .usage = vk::BufferUsageFlagBits::eIndirectBuffer, .sharingMode = vk::SharingMode::eExclusive};
+
+        indirectDrawBuffer = vk::raii::Buffer(device.getDevice(), indirectBufferInfo);
+        vk::MemoryRequirements indirectMemReqs = indirectDrawBuffer.getMemoryRequirements();
+        uint32_t indirectMemType = findMemoryType(indirectMemReqs.memoryTypeBits, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, device);
+
+        vk::MemoryAllocateInfo indirectAllocInfo{.allocationSize = indirectMemReqs.size, .memoryTypeIndex = indirectMemType};
+
+        indirectDrawBufferMemory = vk::raii::DeviceMemory(device.getDevice(), indirectAllocInfo);
+        indirectDrawBuffer.bindMemory(*indirectDrawBufferMemory, 0);
+        return std::make_tuple(std::move(indirectDrawBuffer), std::move(indirectDrawBufferMemory));
+    }
 
     void createImage(uint32_t width, uint32_t height, uint32_t mipLevels, vk::SampleCountFlagBits numSamples, vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage,
                      vk::MemoryPropertyFlags properties, vk::raii::Image& image, vk::raii::DeviceMemory& imageMemory, uint32_t arrayLayers = 1,
@@ -66,7 +93,7 @@ class ResourceManager {
     std::tuple<vk::raii::Image, vk::raii::DeviceMemory, vk::raii::ImageView> createTexture(const void* data, uint32_t width, uint32_t height, vk::Format format,
                                                                                            vk::ImageType imageType = vk::ImageType::e2D,
                                                                                            vk::ImageViewType viewType = vk::ImageViewType::e2D,
-                                                                                           vk::SampleCountFlagBits samples = vk::SampleCountFlagBits::e1) {
+                                                                                           vk::SampleCountFlagBits samples = vk::SampleCountFlagBits::e1, bool genMips = true) {
         bool isCubemap = (viewType == vk::ImageViewType::eCube);
 
         uint32_t mipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(width, height)))) + 1;
@@ -94,8 +121,9 @@ class ResourceManager {
         vk::raii::DeviceMemory imageMemory(device.getDevice(), allocInfo);
         image.bindMemory(*imageMemory, 0);
         uploadTextureData(image, data, width, height, format, isCubemap);
-        generateMipmaps(image, format, width, height, mipLevels, isCubemap ? 6 : 1);
-        // debugMipLevels(image, mipLevels, isCubemap ? 6 : 1);
+        if (genMips) {
+            generateMipmaps(image, format, width, height, mipLevels, isCubemap ? 6 : 1);
+        }
         vk::ImageViewCreateInfo viewInfo{.image = *image,
                                          .viewType = viewType,
                                          .format = format,
@@ -141,7 +169,6 @@ class ResourceManager {
         } else {
             copyBufferToImage(stagingBuffer, image, width, height);
         }
-        // image is transitioned back for shader access in generate mip maps
     }
 
     void transitionImageLayout(vk::raii::CommandBuffer* commandBuffer, const vk::Image& image, const vk::ImageLayout oldLayout, const vk::ImageLayout newLayout,
@@ -155,6 +182,54 @@ class ResourceManager {
         }
     }
 
+    // load from file (OBJ, GLTF, etc.)
+    MeshData loadMeshFromFile(const std::string& meshPath) { return loadMeshFromFileImpl(meshPath); }
+
+    void freeMesh(Mesh& mesh) {
+        mesh.freed = true;
+        // don't free texture/sampler as they might be shared
+    }
+
+    std::tuple<vk::raii::Image, vk::raii::DeviceMemory, vk::raii::ImageView> loadTextureFromFile(const std::string& path, vk::Format format = vk::Format::eR8G8B8A8Srgb,
+                                                                                                 vk::ImageType imageType = vk::ImageType::e2D,
+                                                                                                 vk::ImageViewType viewType = vk::ImageViewType::e2D) {
+        auto textureData = loadTextureFromFileImpl(path);
+        auto [image, memory, imageView] = createTexture(textureData.data, textureData.width, textureData.height, format, imageType, viewType);
+        return std::make_tuple(std::move(image), std::move(memory), std::move(imageView));
+    }
+
+    std::tuple<vk::raii::Image, vk::raii::DeviceMemory, vk::raii::ImageView> loadCubeMapFromFile(std::string posX, std::string negX, std::string posY, std::string negY,
+                                                                                                 std::string posZ, std::string negZ, uint32_t width, uint32_t height) {
+        // TODO need to get imdgwidth and height from stbi load first so it doesnt have to be entered manually
+        std::vector<std::string> faceFiles = {posX, negX, posY, negY, posZ, negZ};
+        // Load all 6 face data into a single buffer
+        size_t faceSize = width * height * 4;
+        size_t totalSize = faceSize * 6;
+        std::vector<unsigned char> allFaceData(totalSize);
+
+        for (int face = 0; face < 6; face++) {
+            int imgWidth, imgHeight, channels;
+            unsigned char* imageData = stbi_load(faceFiles[face].c_str(), &imgWidth, &imgHeight, &channels, STBI_rgb_alpha);
+            if (!imageData) {
+                throw std::runtime_error("Failed to load face: " + faceFiles[face]);
+            }
+
+            // Copy face data to the combined buffer
+            memcpy(allFaceData.data() + face * faceSize, imageData, faceSize);
+            stbi_image_free(imageData);
+        }
+        auto [image, memory, imageView] = createTexture(allFaceData.data(), width, height, vk::Format::eR8G8B8A8Srgb, vk::ImageType::e2D, vk::ImageViewType::eCube);
+#if DEBUG == 1
+        uint32_t expectedMipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(width, height)))) + 1;
+        std::cout << "Cubemap should have " << expectedMipLevels << " mip levels" << std::endl;
+#endif
+        return std::make_tuple(std::move(image), std::move(memory), std::move(imageView));
+    }
+
+  private:
+    Device& device;
+    const vk::raii::CommandPool& commandPool;
+    
     void copyBufferToImage(const vk::raii::Buffer& srcBuffer, const vk::raii::Image& dstImage, uint32_t width, uint32_t height, vk::BufferImageCopy* customRegion = nullptr) {
         vk::raii::CommandBuffer commandBuffer = beginSingleTimeCommands();
         if (customRegion == nullptr) {
@@ -192,56 +267,6 @@ class ResourceManager {
 
         endSingleTimeCommands(commandBuffer);
     }
-
-    // load from file (OBJ, GLTF, etc.)
-    MeshData loadMeshFromFile(const std::string& meshPath) { return loadMeshFromFileImpl(meshPath); }
-
-    void freeMesh(Mesh& mesh) {
-        mesh.freed = true;
-        // don't free texture/sampler as they might be shared
-    }
-
-    std::tuple<vk::raii::Image, vk::raii::DeviceMemory, vk::raii::ImageView> loadTextureFromFile(const std::string& path, vk::Format format = vk::Format::eR8G8B8A8Srgb,
-                                                                                                 vk::ImageType imageType = vk::ImageType::e2D,
-                                                                                                 vk::ImageViewType viewType = vk::ImageViewType::e2D) {
-        auto textureData = loadTextureFromFileImpl(path);
-        auto [image, memory, imageView] = createTexture(textureData.data, textureData.width, textureData.height, format, imageType, viewType);
-        return std::make_tuple(std::move(image), std::move(memory), std::move(imageView));
-    }
-
-    std::tuple<vk::raii::Image, vk::raii::DeviceMemory, vk::raii::ImageView> loadCubeMapFromFile(std::string posX, std::string negX, std::string posY, std::string negY,
-                                                                                                 std::string posZ, std::string negZ, uint32_t width, uint32_t height) {
-        //TODO need to get imdgwidth and height from stbi load first so it doesnt have to be entered manually
-        std::vector<std::string> faceFiles = {posX, negX, posY, negY, posZ, negZ};
-        // Load all 6 face data into a single buffer
-        size_t faceSize = width * height * 4;
-        size_t totalSize = faceSize * 6;
-        std::vector<unsigned char> allFaceData(totalSize);
-
-        for (int face = 0; face < 6; face++) {
-            int imgWidth, imgHeight, channels;
-            unsigned char* imageData = stbi_load(faceFiles[face].c_str(), &imgWidth, &imgHeight, &channels, STBI_rgb_alpha);
-            if (!imageData) {
-                throw std::runtime_error("Failed to load face: " + faceFiles[face]);
-            }
-
-            // Copy face data to the combined buffer
-            memcpy(allFaceData.data() + face * faceSize, imageData, faceSize);
-            stbi_image_free(imageData);
-        }
-        auto [image, memory, imageView] = createTexture(allFaceData.data(), width, height, vk::Format::eR8G8B8A8Srgb, vk::ImageType::e2D, vk::ImageViewType::eCube);
-#if DEBUG == 1
-        uint32_t expectedMipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(width, height)))) + 1;
-        std::cout << "Cubemap should have " << expectedMipLevels << " mip levels" << std::endl;
-#endif
-        return std::make_tuple(std::move(image), std::move(memory), std::move(imageView));
-    }
-
-  private:
-    Device& device;
-    const vk::raii::CommandPool& commandPool;
-    std::vector<Material> materials;
-    std::vector<Shader> shaders;
 
     void executeImageTransition(vk::raii::CommandBuffer& cmd, const vk::Image& image, const vk::ImageLayout oldLayout, const vk::ImageLayout newLayout, uint32_t baseMipLevel,
                                 uint32_t mipLevelCount, uint32_t baseArrayLayer, uint32_t layerCount) {
@@ -323,6 +348,32 @@ class ResourceManager {
             barrier.dstAccessMask = vk::AccessFlagBits2::eShaderRead;
             barrier.srcStageMask = vk::PipelineStageFlagBits2::eTransfer;
             barrier.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+        }
+
+        // Shadow map transitions (PCF: shader read -> color attachment for writing depth)
+        else if (oldLayout == vk::ImageLayout::eShaderReadOnlyOptimal && newLayout == vk::ImageLayout::eColorAttachmentOptimal) {
+            barrier.srcAccessMask = vk::AccessFlagBits2::eShaderRead;
+            barrier.dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
+            barrier.srcStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+            barrier.dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
+            barrier.subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1};
+        }
+
+        else if (oldLayout == vk::ImageLayout::eColorAttachmentOptimal && newLayout == vk::ImageLayout::eShaderReadOnlyOptimal) {
+            barrier.srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
+            barrier.dstAccessMask = vk::AccessFlagBits2::eShaderRead;
+            barrier.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
+            barrier.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+            barrier.subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1};
+        }
+
+        else if (oldLayout == vk::ImageLayout::eUndefined && newLayout == vk::ImageLayout::eShaderReadOnlyOptimal) {
+            barrier.srcAccessMask = {};
+            barrier.dstAccessMask = vk::AccessFlagBits2::eShaderRead;
+            barrier.srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe;
+            barrier.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+            barrier.subresourceRange = {
+                .aspectMask = vk::ImageAspectFlagBits::eColor, .baseMipLevel = 0, .levelCount = mipLevelCount, .baseArrayLayer = 0, .layerCount = layerCount};
         }
 
         else {
@@ -412,96 +463,100 @@ class ResourceManager {
         std::cout << "=== MIPMAPS COMPLETE ===" << std::endl;
 #endif
     }
-    void debugMipLevels(vk::raii::Image& image, uint32_t mipLevels, uint32_t layerCount) {
-        auto commandBuffer = beginSingleTimeCommands();
-
-        // Transition all mip levels to TRANSFER_DST_OPTIMAL
-        transitionImageLayout(&commandBuffer, *image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, 0, mipLevels, 0, layerCount);
-
-        // Clear ALL mip levels to magenta at once
-        vk::ClearColorValue clearColor{};
-        clearColor.float32[0] = 1.0f; // R
-        clearColor.float32[1] = 0.0f; // G
-        clearColor.float32[2] = 1.0f; // B
-        clearColor.float32[3] = 1.0f; // A
-
-        vk::ImageSubresourceRange range{.aspectMask = vk::ImageAspectFlagBits::eColor,
-                                        .baseMipLevel = 0,
-                                        .levelCount = mipLevels, // ALL mip levels at once
-                                        .baseArrayLayer = 0,
-                                        .layerCount = layerCount};
-
-        commandBuffer.clearColorImage(*image, vk::ImageLayout::eTransferDstOptimal, clearColor, range);
-        std::cout << "Cleared ALL mip levels to magenta" << std::endl;
-
-        // Transition all mip levels to SHADER_READ_ONLY_OPTIMAL
-        transitionImageLayout(&commandBuffer, *image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, 0, mipLevels, 0, layerCount);
-
-        endSingleTimeCommands(commandBuffer);
-    }
-
+    //only handles obj for now (TODO expand this)
     MeshData loadMeshFromFileImpl(const std::string& meshPath) {
         tinyobj::attrib_t attrib;
         std::vector<tinyobj::shape_t> shapes;
         std::vector<tinyobj::material_t> materials;
         std::string warn, err;
 
-        if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, meshPath.c_str())) {
+        // Extract directory path for loading .mtl file
+        std::string mtlBaseDir = meshPath.substr(0, meshPath.find_last_of("/\\") + 1);
+
+        if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, meshPath.c_str(), mtlBaseDir.c_str())) {
             throw std::runtime_error(warn + err);
         }
 
         MeshData meshData = {};
-        meshData.subMeshes.resize(shapes.size());
-        meshData.subMeshIndices.resize(shapes.size());
 
-        uint32_t subMeshIndex = 0;
+        // Process each shape and split by material
         for (const auto& shape : shapes) {
-            std::unordered_map<Vertex, uint32_t> uniqueVertices{};
+            // Group faces by material ID
+            std::map<int, std::vector<size_t>> facesPerMaterial;
 
-            for (const auto& index : shape.mesh.indices) {
-                Vertex vertex{};
-
-                // Load position
-                if (index.vertex_index >= 0 && index.vertex_index < attrib.vertices.size() / 3) {
-                    vertex.position = {attrib.vertices[3 * index.vertex_index + 0], attrib.vertices[3 * index.vertex_index + 1], attrib.vertices[3 * index.vertex_index + 2]};
-                }
-
-                // Load normal
-                if (index.normal_index >= 0 && index.normal_index < attrib.normals.size() / 3) {
-                    vertex.normal = {attrib.normals[3 * index.normal_index + 0], attrib.normals[3 * index.normal_index + 1], attrib.normals[3 * index.normal_index + 2]};
-                } else {
-                    vertex.normal = {0.0f, 1.0f, 0.0f};
-                }
-
-                // Load texture coordinates
-                if (index.texcoord_index >= 0 && index.texcoord_index < attrib.texcoords.size() / 2) {
-                    vertex.texCoord = {attrib.texcoords[2 * index.texcoord_index + 0], 1.0f - attrib.texcoords[2 * index.texcoord_index + 1]};
-                } else {
-                    vertex.texCoord = {0.0f, 0.0f};
-                }
-
-                // Check if vertex already exists
-                if (uniqueVertices.count(vertex) == 0) {
-                    uniqueVertices[vertex] = static_cast<uint32_t>(meshData.subMeshes[subMeshIndex].size());
-                    meshData.subMeshes[subMeshIndex].push_back(vertex);
-                }
-
-                meshData.subMeshIndices[subMeshIndex].push_back(uniqueVertices[vertex]);
+            // Group face indices by material
+            size_t numFaces = shape.mesh.material_ids.size();
+            for (size_t faceIdx = 0; faceIdx < numFaces; faceIdx++) {
+                int matId = shape.mesh.material_ids.empty() ? -1 : shape.mesh.material_ids[faceIdx];
+                facesPerMaterial[matId].push_back(faceIdx);
             }
-            subMeshIndex++;
+
+            // Create a submesh for each material group
+            for (const auto& [matId, faceIndices] : facesPerMaterial) {
+                std::unordered_map<Vertex, uint32_t> uniqueVertices{};
+                std::vector<Vertex> vertices;
+                std::vector<uint32_t> indices;
+
+                // Process each face in this material group
+                for (size_t faceIdx : faceIndices) {
+                    // Each face has 3 indices (assuming triangulated mesh)
+                    for (size_t v = 0; v < 3; v++) {
+                        size_t indexIdx = faceIdx * 3 + v;
+                        if (indexIdx >= shape.mesh.indices.size())
+                            continue;
+
+                        const auto& index = shape.mesh.indices[indexIdx];
+                        Vertex vertex{};
+
+                        if (index.vertex_index >= 0 && index.vertex_index < attrib.vertices.size() / 3) {
+                            vertex.position = {attrib.vertices[3 * index.vertex_index + 0], attrib.vertices[3 * index.vertex_index + 1],
+                                               attrib.vertices[3 * index.vertex_index + 2]};
+                        }
+
+                        if (index.normal_index >= 0 && index.normal_index < attrib.normals.size() / 3) {
+                            vertex.normal = {attrib.normals[3 * index.normal_index + 0], attrib.normals[3 * index.normal_index + 1], attrib.normals[3 * index.normal_index + 2]};
+                        } else {
+                            vertex.normal = {0.0f, 1.0f, 0.0f};
+                        }
+
+                        if (index.texcoord_index >= 0 && index.texcoord_index < attrib.texcoords.size() / 2) {
+                            vertex.texCoord = {attrib.texcoords[2 * index.texcoord_index + 0], 1.0f - attrib.texcoords[2 * index.texcoord_index + 1]};
+                        } else {
+                            vertex.texCoord = {0.0f, 0.0f};
+                        }
+
+                        if (uniqueVertices.count(vertex) == 0) {
+                            uniqueVertices[vertex] = static_cast<uint32_t>(vertices.size());
+                            vertices.push_back(vertex);
+                        }
+
+                        indices.push_back(uniqueVertices[vertex]);
+                    }
+                }
+
+                // Add this submesh to mesh data
+                meshData.subMeshes.push_back(vertices);
+                meshData.subMeshIndices.push_back(indices);
+                meshData.materialIds.push_back(matId);
+
+                // Store material name
+                if (matId >= 0 && matId < materials.size()) {
+                    meshData.materialNames.push_back(materials[matId].name);
+                } else {
+                    meshData.materialNames.push_back("default_material");
+                }
+            }
         }
 
-        // Calculate tangents using indices
+        // Calculate tangents
         for (size_t meshIdx = 0; meshIdx < meshData.subMeshes.size(); meshIdx++) {
             auto& vertices = meshData.subMeshes[meshIdx];
             auto& indices = meshData.subMeshIndices[meshIdx];
 
-            // Initialize tangents to zero
             for (auto& vertex : vertices) {
                 vertex.tangent = glm::vec3(0.0f);
             }
 
-            // Calculate tangents per triangle
             for (size_t i = 0; i < indices.size(); i += 3) {
                 uint32_t idx0 = indices[i];
                 uint32_t idx1 = indices[i + 1];

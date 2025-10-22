@@ -4,6 +4,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_VERBOSE_MAKEFILE ON)
 
+#builds with MSCV and uses VCPCKG to fetch some dependencies
+#also copies all resources (textures, model ... etc.) to the build directory
+
+#TODO fix some recursive folder copying issues :/
+
 # Auto-detect vcpkg toolchain
 if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
     # Try environment variable first

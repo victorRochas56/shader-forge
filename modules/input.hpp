@@ -5,6 +5,10 @@
 #include "renderer.hpp"
 #include "scene_elements.hpp"
 
+/*
+reads inputs through GLFW, stores this frame's and last frame's inputs in 2 InputState structs (current & previous)
+*/
+
 struct InputState {
     glm::vec2 mousePos = glm::vec2(0);
     glm::vec2 mouseDelta = glm::vec2(0);
@@ -27,28 +31,31 @@ class InputManager {
         return instance;
     }
 
-    static void tickInputState() {
+    
+    static void tickInputState() { //should be only called once in the main app loop
         InputManager& inst = getInstance();
-        if (inst.current.mouse_button == 2 && inst.current.mouse_action == 1) {
+
+        //rotating viewport when holding right click
+        if (inst.current.mouse_button == 1 && inst.current.mouse_action == 1) {
             inst.renderer->activeCamera.rotatePitch(inst.current.mouseDelta.y * -0.1f);
             inst.renderer->activeCamera.rotateYaw(inst.current.mouseDelta.x * 0.1f);
         }
 
         glm::vec3 moveVector(0.0f);
 
-        // Check the state of all relevant keys
+        // Check the state of movement keys
         if(inst.canMove){
             if (inst.current.keyStates[GLFW_KEY_W] == GLFW_PRESS || inst.current.keyStates[GLFW_KEY_W] == GLFW_REPEAT) {
-                moveVector.z += 0.01f;
+                moveVector.z += 0.05f;
             }
             if (inst.current.keyStates[GLFW_KEY_S] == GLFW_PRESS || inst.current.keyStates[GLFW_KEY_S] == GLFW_REPEAT) {
-                moveVector.z -= 0.01f;
+                moveVector.z -= 0.05f;
             }
             if (inst.current.keyStates[GLFW_KEY_A] == GLFW_PRESS || inst.current.keyStates[GLFW_KEY_A] == GLFW_REPEAT) {
-                moveVector.x -= 0.01f;
+                moveVector.x -= 0.05f;
             }
             if (inst.current.keyStates[GLFW_KEY_D] == GLFW_PRESS || inst.current.keyStates[GLFW_KEY_D] == GLFW_REPEAT) {
-                moveVector.x += 0.01f;
+                moveVector.x += 0.05f;
             }
         }
 
@@ -57,7 +64,7 @@ class InputManager {
             inst.renderer->activeCamera.moveCamera(moveVector);
         }
 
-        // raycast on left click
+        // raycast on left click for selection
         if (inst.current.mouse_button == 0 && inst.current.mouse_action == 1 && inst.previous.mouse_action != 1) {
             int width = 0, height = 0;
             glfwGetWindowSize(inst.renderer->getWindow(), &width, &height);
@@ -70,13 +77,13 @@ class InputManager {
             if (!hitNodes.empty()) {
                 inst.renderer->selectNode(hitNodes.front());
             }
-        }
+        }/*
         // contextual menu on right click
         if(inst.current.mouse_button == 1 && inst.current.mouse_action == 0 && inst.previous.mouse_action == 1){
             inst.contextMenuShown = !inst.contextMenuShown;
             inst.contextMenuPinX = inst.current.mousePos.x;
             inst.contextMenuPinY = inst.current.mousePos.y;
-        } 
+        } */
 
         if (inst.current.keyStates[GLFW_KEY_ESCAPE] == GLFW_PRESS && inst.previous.keyStates[GLFW_KEY_ESCAPE] != GLFW_PRESS) {
             inst.renderer->deSelectNode();

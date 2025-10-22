@@ -13,6 +13,8 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+//helper functions for IMGUI
+
 static void check_vk_result(VkResult err) {
     if (err == 0)
         return;
@@ -22,7 +24,6 @@ static void check_vk_result(VkResult err) {
 }
 
 void initIMGUI(Renderer* renderer) {
-    // Create descriptor pool for IMGUI
     VkDescriptorPoolSize pool_sizes[] = {{VK_DESCRIPTOR_TYPE_SAMPLER, 1000},
                                          {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000},
                                          {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000},
@@ -92,47 +93,6 @@ void initIMGUI(Renderer* renderer) {
     if (!initResult) {
         throw std::runtime_error("Failed to initialize ImGui Vulkan backend");
     }
-    /*
-    // Upload fonts to GPU
-    VkCommandBuffer command_buffer;
-    VkCommandPool command_pool = renderer->getCommandPool();
-
-    VkCommandBufferAllocateInfo alloc_info = {};
-    alloc_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    alloc_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    alloc_info.commandPool = command_pool;
-    alloc_info.commandBufferCount = 1;
-
-    result = vkAllocateCommandBuffers(*renderer->getDevices()->getLogicalDevice(), &alloc_info, &command_buffer);
-    check_vk_result(result);
-
-    VkCommandBufferBeginInfo begin_info = {};
-    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    begin_info.flags |= VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-
-    result = vkBeginCommandBuffer(command_buffer, &begin_info);
-    check_vk_result(result);
-
-    ImGui_ImplVulkan_CreateFontsTexture();
-
-
-    result = vkEndCommandBuffer(command_buffer);
-    check_vk_result(result);
-
-    VkSubmitInfo submit_info = {};
-    submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submit_info.commandBufferCount = 1;
-    submit_info.pCommandBuffers = &command_buffer;
-
-    result = vkQueueSubmit(*renderer->getDevices()->getGraphicsQueue(), 1, &submit_info, VK_NULL_HANDLE);
-    check_vk_result(result);
-
-    result = vkQueueWaitIdle(*renderer->getDevices()->getGraphicsQueue());
-    check_vk_result(result);
-
-    ImGui_ImplVulkan_DestroyFontsTexture();
-
-    vkFreeCommandBuffers(*renderer->getDevices()->getLogicalDevice(), command_pool, 1, &command_buffer);*/
 }
 
 void traverseNodeTree(Node* node, uint32_t level, uint32_t selectedNode, Renderer* renderer) {

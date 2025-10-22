@@ -17,8 +17,13 @@
 #include "devices.hpp"
 #include "swapchain.hpp"
 #include "utils.hpp"
-
-enum class PipelineCategory { BEFORE_GEOMETRY, GEOMETRY, AFTER_GEOMETRY };
+/*
+handles pipeline creation, there are only 3 types for now
+BEFORE_GEOMETRY is only used by shadow renedering
+GEOMETRY is the main pass
+POSTPROCESS are passes that process color attachments
+*/
+enum class PipelineCategory { BEFORE_GEOMETRY, GEOMETRY, POSTPROCESS };
 
 class PipelineManager;
 
@@ -29,7 +34,7 @@ struct PipelineBase {
     vk::raii::DescriptorSet* descriptorSet = nullptr;
     std::string shaderPath;
 
-    // Creation parameters needed for recreation
+    // store parameters for recreation
     PipelineCategory pipelineCategory;
     vk::PrimitiveTopology topology;
     vk::CullModeFlagBits cullMode;
@@ -45,6 +50,7 @@ struct PipelineBase {
     virtual ~PipelineBase() = default;
 };
 
+// pipelines are templated with different push constants
 template <typename T> struct Pipeline : public PipelineBase {
     T pushConstantData;
 
@@ -68,6 +74,7 @@ class PipelineManager {
         return createPipelineInternal<T>(pipelineCategory, topology, cullMode, depthTestEnable, depthWriteEnable, shaderPath, setLayout, descriptorSet, false, 0);
     }
 
+    // for hot reloading - TODO implementation of file change detection missing still
     void checkForShaderUpdates() {
         for (const auto& [shaderPath, indices] : shaderPathToIndices) {
             if (hasFileChanged(shaderPath)) {
@@ -78,10 +85,6 @@ class PipelineManager {
         }
     }
 
-    std::vector<std::unique_ptr<PipelineBase>>& getBeforeGeoPipelines() { return beforeGeometryPipelines; }
-    std::vector<std::unique_ptr<PipelineBase>>& getGeoPipelines() { return geometryPipelines; }
-    std::vector<std::unique_ptr<PipelineBase>>& getAfterGeoPipelines() { return afterGeometryPipelines; }
-
     template <typename T>
     void recreatePipelineAtIndexInternal(PipelineCategory pipelineCategory, uint32_t index, const std::string& shaderPath, vk::PrimitiveTopology topology,
                                          vk::CullModeFlagBits cullMode, vk::Bool32 depthTestEnable, vk::Bool32 depthWriteEnable, vk::raii::DescriptorSetLayout& setLayout,
@@ -89,35 +92,21 @@ class PipelineManager {
         createPipelineInternal<T>(pipelineCategory, topology, cullMode, depthTestEnable, depthWriteEnable, shaderPath, setLayout, descriptorSet, true, index);
     }
 
+    std::vector<std::unique_ptr<PipelineBase>>& getBeforeGeoPipelines() { return beforeGeometryPipelines; }
+    std::vector<std::unique_ptr<PipelineBase>>& getGeoPipelines() { return geometryPipelines; }
+    std::vector<std::unique_ptr<PipelineBase>>& getPostProcessPipelines() { return postProcessPipelines; }
+
   private:
     Device& device;
     Swapchain& swapchain;
     vk::SampleCountFlagBits msaaSamples;
 
+    // used for hot reloading shaders / recreating pipelines
     std::unordered_map<std::string, std::vector<std::pair<PipelineCategory, uint32_t>>> shaderPathToIndices;
 
     std::vector<std::unique_ptr<PipelineBase>> beforeGeometryPipelines;
     std::vector<std::unique_ptr<PipelineBase>> geometryPipelines;
-    std::vector<std::unique_ptr<PipelineBase>> afterGeometryPipelines;
-
-    [[nodiscard]] vk::raii::ShaderModule createShaderModule(const std::vector<char>& code) const {
-        vk::ShaderModuleCreateInfo createInfo{.codeSize = code.size(), .pCode = reinterpret_cast<const uint32_t*>(code.data())};
-        vk::raii::ShaderModule shaderModule{device.getDevice(), createInfo};
-        return shaderModule;
-    }
-
-    std::vector<std::unique_ptr<PipelineBase>>* getTargetVector(PipelineCategory pipelineCategory) {
-        switch (pipelineCategory) {
-        case PipelineCategory::BEFORE_GEOMETRY:
-            return &beforeGeometryPipelines;
-        case PipelineCategory::GEOMETRY:
-            return &geometryPipelines;
-        case PipelineCategory::AFTER_GEOMETRY:
-            return &afterGeometryPipelines;
-        default:
-            return nullptr;
-        }
-    }
+    std::vector<std::unique_ptr<PipelineBase>> postProcessPipelines;
 
     void recreatePipelineAtIndex(PipelineCategory pipelineCategory, uint32_t index) {
         std::vector<std::unique_ptr<PipelineBase>>* targetVector = getTargetVector(pipelineCategory);
@@ -166,9 +155,19 @@ class PipelineManager {
         vk::PipelineColorBlendStateCreateInfo colorBlending;
         vk::PushConstantRange pushConstantRange;
 
+        // Format variables must persist beyond the switch scope since pointers to them are used
+        vk::Format pcfFormat = vk::Format::eR32Sfloat; // PCF uses R32F for raw depth values
+
         switch (pipelineCategory) {
         case PipelineCategory::BEFORE_GEOMETRY: {
-            pipelineRenderingCreateInfo = {.colorAttachmentCount = 0, .pColorAttachmentFormats = nullptr, .depthAttachmentFormat = vk::Format::eD32Sfloat};
+            // Only sets depth format if depth testing is enabled for this specific pipeline
+            if (depthTestEnable == vk::True) {
+                depthFormat = vk::Format::eD32Sfloat;
+            } else {
+                std::cout << "UNDEFINED PIPELINE DEPTH LAYOUT" << std::endl;
+                depthFormat = vk::Format::eUndefined;
+            }
+            pipelineRenderingCreateInfo = {.colorAttachmentCount = 1, .pColorAttachmentFormats = &pcfFormat, .depthAttachmentFormat = depthFormat};
             inputAssembly = {.topology = topology};
             rasterizer = {.depthClampEnable = vk::False,
                           .rasterizerDiscardEnable = vk::False,
@@ -186,7 +185,7 @@ class PipelineManager {
             colorBlendAttachment = {.blendEnable = vk::False,
                                     .colorWriteMask =
                                         vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA};
-            colorBlending = {.logicOpEnable = vk::False, .logicOp = vk::LogicOp::eCopy, .attachmentCount = 0, .pAttachments = nullptr};
+            colorBlending = {.logicOpEnable = vk::False, .logicOp = vk::LogicOp::eCopy, .attachmentCount = 1, .pAttachments = &colorBlendAttachment};
             pushConstantRange = {.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, .offset = 0, .size = sizeof(T)};
             vk::PipelineLayoutCreateInfo pipelineLayoutInfo{
                 .setLayoutCount = 1, .pSetLayouts = &*setLayout, .pushConstantRangeCount = 1, .pPushConstantRanges = &pushConstantRange};
@@ -219,7 +218,7 @@ class PipelineManager {
             pipeline->layout = vk::raii::PipelineLayout(device.getDevice(), pipelineLayoutInfo);
             break;
         }
-        case PipelineCategory::AFTER_GEOMETRY: {
+        case PipelineCategory::POSTPROCESS: {
             inputAssembly = {.topology = topology};
             rasterizer = {.depthClampEnable = vk::False,
                           .rasterizerDiscardEnable = vk::False,
@@ -232,7 +231,7 @@ class PipelineManager {
                              .sampleShadingEnable = vk::False};
             depthStencil = {.depthTestEnable = depthTestEnable,
                             .depthWriteEnable = depthWriteEnable,
-                            .depthCompareOp = vk::CompareOp::eLess,
+                            .depthCompareOp = vk::CompareOp::eNever,
                             .depthBoundsTestEnable = vk::False,
                             .stencilTestEnable = vk::False};
             colorBlendAttachment = {.blendEnable = vk::False,
@@ -277,6 +276,25 @@ class PipelineManager {
             uint32_t newIndex = targetVector->size() - 1;
             shaderPathToIndices[shaderPath].push_back({pipelineCategory, newIndex});
             return newIndex;
+        }
+    }
+
+    [[nodiscard]] vk::raii::ShaderModule createShaderModule(const std::vector<char>& code) const {
+        vk::ShaderModuleCreateInfo createInfo{.codeSize = code.size(), .pCode = reinterpret_cast<const uint32_t*>(code.data())};
+        vk::raii::ShaderModule shaderModule{device.getDevice(), createInfo};
+        return shaderModule;
+    }
+
+    std::vector<std::unique_ptr<PipelineBase>>* getTargetVector(PipelineCategory pipelineCategory) {
+        switch (pipelineCategory) {
+        case PipelineCategory::BEFORE_GEOMETRY:
+            return &beforeGeometryPipelines;
+        case PipelineCategory::GEOMETRY:
+            return &geometryPipelines;
+        case PipelineCategory::POSTPROCESS:
+            return &postProcessPipelines;
+        default:
+            return nullptr;
         }
     }
 };

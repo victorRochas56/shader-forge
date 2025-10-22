@@ -10,6 +10,14 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/hash.hpp>
 
+/*
+gizmo class allows drawing of colored axes, lines etc
+it handles this in "indirect mode", meaning it can be called 
+to draw gizmos anywhere in the code and it will defer that
+to draw all of them in one call during rendering, before clearing itself again
+
+this means no gizmos have persistent state
+*/
 class Gizmos {
   public:
     Gizmos(uint32_t maxLinesCount, DescriptorSet* pDescriptorSet) : descriptorSet(pDescriptorSet) { lineBufferIndex = descriptorSet->createFixedBuffer<LineVertex>(maxLinesCount); }
