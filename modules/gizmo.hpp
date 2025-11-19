@@ -12,7 +12,7 @@
 
 /*
 gizmo class allows drawing of colored axes, lines etc
-it handles this in "indirect mode", meaning it can be called 
+it handles this in "immediate mode", meaning it can be called 
 to draw gizmos anywhere in the code and it will defer that
 to draw all of them in one call during rendering, before clearing itself again
 
