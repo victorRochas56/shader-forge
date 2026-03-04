@@ -38,12 +38,12 @@ class App {
         renderer.initVulkan(start_width, start_height);
         renderer.getDescriptorSet().debugDescriptorSet("after_initVulkan");
         initIMGUI(&renderer);
-
+        
         //load a default environment map on startup
         uint32_t cubeMapIndex =
             renderer.loadCubemapFromFile("textures/sky2/posx.jpg", "textures/sky2/posy.jpg", "textures/sky2/posz.jpg", "textures/sky2/negx.jpg", "textures/sky2/negy.jpg", "textures/sky2/negz.jpg");
         renderer.getMaterials()[renderer.getFallBackMaterial()].environmentMapIndex = cubeMapIndex;
-
+        
         //start of render loop
         mainLoop();
     }

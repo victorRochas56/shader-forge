@@ -77,13 +77,13 @@ class InputManager {
             if (!hitNodes.empty()) {
                 inst.renderer->selectNode(hitNodes.front());
             }
-        }/*
+        }
         // contextual menu on right click
         if(inst.current.mouse_button == 1 && inst.current.mouse_action == 0 && inst.previous.mouse_action == 1){
             inst.contextMenuShown = !inst.contextMenuShown;
             inst.contextMenuPinX = inst.current.mousePos.x;
             inst.contextMenuPinY = inst.current.mousePos.y;
-        } */
+        }
 
         if (inst.current.keyStates[GLFW_KEY_ESCAPE] == GLFW_PRESS && inst.previous.keyStates[GLFW_KEY_ESCAPE] != GLFW_PRESS) {
             inst.renderer->deSelectNode();

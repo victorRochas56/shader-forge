@@ -265,7 +265,7 @@ class SceneManager {
         } else {
             material.normalTextureIndex = renderer.getMaterials()[renderer.getFallBackMaterial()].normalTextureIndex;
         }
-
+        
         if (!environmentMapPath.empty()) {
             try {
                 auto parts = split(environmentMapPath, '|');

@@ -5,9 +5,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_VERBOSE_MAKEFILE ON)
 
 #builds with MSCV and uses VCPCKG to fetch some dependencies
-#also copies all resources (textures, model ... etc.) to the build directory
-
-#TODO fix some recursive folder copying issues :/
+#also copies all resources (textures, models ... etc.) to the build directory
 
 # Auto-detect vcpkg toolchain
 if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
@@ -110,10 +108,17 @@ function(add_slang_shader_target TARGET EXECUTABLE_TARGET)
     )
     foreach(TEXTURE_FILE ${TEXTURE_FILES})
         get_filename_component(FILENAME ${TEXTURE_FILE} NAME)
-        add_custom_command(TARGET ${EXECUTABLE_TARGET} POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${TEXTURE_FILE} $<TARGET_FILE_DIR:${EXECUTABLE_TARGET}>/textures/${FILENAME}
-            VERBATIM
-        )
+        if(IS_DIRECTORY ${TEXTURE_FILE})
+            add_custom_command(TARGET ${EXECUTABLE_TARGET} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different ${TEXTURE_FILE} $<TARGET_FILE_DIR:${EXECUTABLE_TARGET}>/textures/${FILENAME}
+                VERBATIM
+            )
+        else()
+            add_custom_command(TARGET ${EXECUTABLE_TARGET} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different ${TEXTURE_FILE} $<TARGET_FILE_DIR:${EXECUTABLE_TARGET}>/textures/${FILENAME}
+                VERBATIM
+            )
+        endif()
     endforeach()
     
     # Copy models (only if different)

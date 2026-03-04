@@ -50,9 +50,93 @@ const std::vector validationLayers = {"VK_LAYER_KHRONOS_validation"};
 
 class Renderer {
   public:
-    Camera activeCamera;
-    Gizmos* gizmos = nullptr;
-    uint32_t selectedNode = MAX_NODES;
+    Camera                              activeCamera;
+    Gizmos*                             gizmos = nullptr;
+    uint32_t                            selectedNode = MAX_NODES;
+
+  private:
+    GLFWwindow*                         window = nullptr;
+    bool                                framebufferResized = false;
+    vk::raii::Instance                  instance = nullptr;
+    vk::raii::Context                   context;
+    vk::raii::DebugUtilsMessengerEXT    debugMessenger = nullptr;
+    vk::raii::SurfaceKHR                surface = nullptr;
+    vk::SampleCountFlagBits             msaaSamples;
+
+    std::vector<const char*>            requiredDeviceExtension = {VK_KHR_SWAPCHAIN_EXTENSION_NAME,           VK_KHR_SPIRV_1_4_EXTENSION_NAME,
+                                                                   VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,   VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME,
+                                                                   VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME, VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME};
+
+    vk::raii::CommandPool               commandPool = nullptr;
+    std::vector<vk::raii::CommandBuffer>commandBuffers;
+    uint32_t                            graphicsIndex = 0;
+
+    //synchronization objects
+    std::vector<vk::raii::Semaphore>    presentCompleteSemaphores;
+    std::vector<vk::raii::Semaphore>    renderFinishedSemaphores;
+    std::vector<vk::raii::Fence>        inFlightFences;
+    std::vector<vk::Fence>              imagesInFlight;
+    uint32_t                            currentFrame = 0;
+
+    //my classes
+    std::unique_ptr<Device>             device;
+    std::unique_ptr<Swapchain>          swapchain;
+    std::unique_ptr<PipelineManager>    pipelineManager;
+    std::unique_ptr<ResourceManager>    resourceManager;
+    std::unique_ptr<DescriptorSet>      descriptorSet;
+
+    //pipelines
+    uint32_t                            skyboxPipelineIndex;
+    uint32_t                            shadowPipelineIndex;
+    uint32_t                            litPipelineIndex;
+    uint32_t                            gizmoPipelineIndex;
+    uint32_t                            depthPipelineIndex;
+    uint32_t                            blurPipelineIndex;
+
+    //defaults
+    uint32_t                            defaultSamplerIndex;
+    uint32_t                            depthSamplerIndex;
+    uint32_t                            shadowSamplerIndex;
+    uint32_t                            defaultNormalIndex;
+    uint32_t                            skyboxIndex;
+
+    //rendering data
+    Node* rootNode = nullptr; 
+    std::array<std::optional<Node>, MAX_NODES>* nodes;
+    uint32_t                            lastNode = 0;
+    std::vector<Material>               materials;                                                             
+    std::map<Shader, std::map<Material, std::map<Node*, std::unordered_set<uint32_t>>>> shaders; // map between Shaders and Nodes + their submeshes to render
+    Shader                              fallbackLitShader;
+    uint32_t                            fallbackDefaultMaterialIndex;
+    std::map<std::string, uint32_t>     loadedTextures;
+    std::map<std::string, uint32_t>     loadedCubemaps;
+    std::vector<Mesh>                   meshes; 
+    std::queue<uint32_t>                freeMeshes;
+    std::vector<SubMesh>                subMeshes;
+    std::queue<uint32_t>                freeSubMeshes;
+    std::map<uint32_t, Light>           lights; 
+    uint32_t                            vertexBufferIndex;
+    uint32_t                            indexBufferIndex;
+    uint32_t                            modelMatrixBufferIndex;
+    uint32_t                            lightBufferIndex;
+    uint32_t                            shadowDrawDataBufferIndex;
+
+    // Persistent buffers for indirect drawing in shadow map
+    vk::raii::Buffer                    indirectDrawBuffer = nullptr;
+    vk::raii::DeviceMemory              indirectDrawBufferMemory = nullptr;
+
+    vk::raii::Image                     shadowDepthImage = nullptr;
+    vk::raii::DeviceMemory              shadowDepthMemory = nullptr;
+    vk::raii::ImageView                 shadowDepthView = nullptr;
+    uint32_t                            currentShadowDepthResolution = 0;
+
+    // Temporary texture for gaussian blur
+    uint32_t                            tempBlurTextureIndex = 0xFFFFFFFF;
+
+    bool                                vSync = true;
+    bool                                depthView = false;
+
+  public:
 
     Renderer() : nodes(new std::array<std::optional<Node>, MAX_NODES>()) {}
     ~Renderer() { delete nodes; }
@@ -255,7 +339,7 @@ class Renderer {
         } catch (const vk::OutOfDateKHRError&) {
             result = vk::Result::eErrorOutOfDateKHR;
         }
-
+        
         if (result == vk::Result::eErrorOutOfDateKHR || result == vk::Result::eSuboptimalKHR || framebufferResized) {
             framebufferResized = false;
             swapchain->recreate(window, vSync);
@@ -571,88 +655,8 @@ class Renderer {
         }
     }
 
+
   private:
-    GLFWwindow* window = nullptr;
-    bool framebufferResized = true;
-    vk::raii::Instance instance = nullptr;
-    vk::raii::Context context;
-    vk::raii::DebugUtilsMessengerEXT debugMessenger = nullptr;
-    vk::raii::SurfaceKHR surface = nullptr;
-    vk::SampleCountFlagBits msaaSamples;
-
-    std::vector<const char*> requiredDeviceExtension = {VK_KHR_SWAPCHAIN_EXTENSION_NAME,           VK_KHR_SPIRV_1_4_EXTENSION_NAME,
-                                                        VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,   VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME,
-                                                        VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME, VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME};
-
-    vk::raii::CommandPool commandPool = nullptr;
-    std::vector<vk::raii::CommandBuffer> commandBuffers;
-    uint32_t graphicsIndex = 0;
-
-    //synchronization objects
-    std::vector<vk::raii::Semaphore> presentCompleteSemaphores;
-    std::vector<vk::raii::Semaphore> renderFinishedSemaphores;
-    std::vector<vk::raii::Fence> inFlightFences;
-    std::vector<vk::Fence> imagesInFlight;
-    uint32_t currentFrame = 0;
-
-    //my classes
-    std::unique_ptr<Device> device;
-    std::unique_ptr<Swapchain> swapchain;
-    std::unique_ptr<PipelineManager> pipelineManager;
-    std::unique_ptr<ResourceManager> resourceManager;
-    std::unique_ptr<DescriptorSet> descriptorSet;
-
-    //pipelines
-    uint32_t skyboxPipelineIndex;
-    uint32_t shadowPipelineIndex;
-    uint32_t litPipelineIndex;
-    uint32_t gizmoPipelineIndex;
-    uint32_t depthPipelineIndex;
-    uint32_t blurPipelineIndex;
-
-    //defaults
-    uint32_t defaultSamplerIndex;
-    uint32_t depthSamplerIndex;
-    uint32_t shadowSamplerIndex;
-    uint32_t defaultNormalIndex;
-    uint32_t skyboxIndex;
-
-    //rendering data
-    Node* rootNode = nullptr; 
-    std::array<std::optional<Node>, MAX_NODES>* nodes;
-    uint32_t lastNode = 0;
-    std::vector<Material> materials;                                                             
-    std::map<Shader, std::map<Material, std::map<Node*, std::unordered_set<uint32_t>>>> shaders; // map between Shaders and Nodes + their submeshes to render
-    Shader fallbackLitShader;
-    uint32_t fallbackDefaultMaterialIndex;
-    std::map<std::string, uint32_t> loadedTextures;
-    std::map<std::string, uint32_t> loadedCubemaps;
-    std::vector<Mesh> meshes; 
-    std::queue<uint32_t> freeMeshes;
-    std::vector<SubMesh> subMeshes;
-    std::queue<uint32_t> freeSubMeshes;
-    std::map<uint32_t, Light> lights; 
-    uint32_t vertexBufferIndex;
-    uint32_t indexBufferIndex;
-    uint32_t modelMatrixBufferIndex;
-    uint32_t lightBufferIndex;
-    uint32_t shadowDrawDataBufferIndex;
-
-    // Persistent buffers for indirect drawing in shadow map
-    vk::raii::Buffer indirectDrawBuffer = nullptr;
-    vk::raii::DeviceMemory indirectDrawBufferMemory = nullptr;
-
-    vk::raii::Image shadowDepthImage = nullptr;
-    vk::raii::DeviceMemory shadowDepthMemory = nullptr;
-    vk::raii::ImageView shadowDepthView = nullptr;
-    uint32_t currentShadowDepthResolution = 0;
-
-    // Temporary texture for gaussian blur
-    uint32_t tempBlurTextureIndex = 0xFFFFFFFF;
-
-    bool vSync = true;
-    bool depthView = false;
-
 /////=================================================INITIALIZATION HELPER FUNCTIONS=================================================/////
     void createInstance() {
         constexpr vk::ApplicationInfo appInfo{.pApplicationName = "Shader Forge",
@@ -726,6 +730,7 @@ class Renderer {
         vk::CommandPoolCreateInfo poolInfo{.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer, .queueFamilyIndex = graphicsIndex};
         commandPool = vk::raii::CommandPool(device->getDevice(), poolInfo);
     }
+
     void createCommandBuffers() {
         commandBuffers.clear();
         vk::CommandBufferAllocateInfo allocInfo{.commandPool = commandPool, .level = vk::CommandBufferLevel::ePrimary, .commandBufferCount = MAX_FRAMES_IN_FLIGHT};
@@ -907,7 +912,7 @@ class Renderer {
             commandBuffers[currentFrame].beginRendering(fullscreenRenderInfo);
 
             auto& currentDepthPipeline = pipelineManager->getPostProcessPipelines()[depthPipelineIndex];
-            resourceManager->transitionImageLayout(nullptr, swapchain->getDepthImage(), vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+            resourceManager->transitionImageLayout(&commandBuffers[currentFrame], swapchain->getDepthImage(), vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
             commandBuffers[currentFrame].bindPipeline(vk::PipelineBindPoint::eGraphics, currentDepthPipeline->pipeline);
             commandBuffers[currentFrame].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, currentDepthPipeline->layout, 0, {**currentDepthPipeline->descriptorSet}, {});
             DepthVisPushConstants depthConstants = {.depthIndex = swapchain->getDepthResolveIndex(),

@@ -9,11 +9,11 @@
         "-DVCPKG_APPLOCAL_DEPS=ON",
         "-DCMAKE_CXX_STANDARD=20",
         "-DX_VCPKG_APPLOCAL_DEPS_INSTALL=ON",
-        "-DSLANGC_EXECUTABLE=C:/VulkanSDK/1.4.321.0/Bin/slangc.exe",
+        "-DSLANGC_EXECUTABLE=C:/VulkanSDK/1.4.341.1/Bin/slangc.exe",
         "-DVCPKG_TARGET_TRIPLET=x64-windows"
     ],
     "cmake.configureSettings": {
-        "CMAKE_TOOLCHAIN_FILE": "C:\\Users\\vicro\\Desktop\\vulkan-renderer\\vcpkg/scripts/buildsystems/vcpkg.cmake"
+        "CMAKE_TOOLCHAIN_FILE": "C:\\Users\\victo\\Desktop\\dev\\my\\vcpkg/scripts/buildsystems/vcpkg.cmake"
     },
     "C_Cpp.default.cppStandard": "c++20",
     "C_Cpp.default.cStandard": "c17",
