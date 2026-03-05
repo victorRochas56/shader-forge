@@ -23,7 +23,7 @@ BEFORE_GEOMETRY is only used by shadow renedering
 GEOMETRY is the main pass
 POSTPROCESS are passes that process color attachments
 */
-enum class PipelineCategory { BEFORE_GEOMETRY, GEOMETRY, POSTPROCESS };
+enum class PipelineCategory { BEFORE_GEOMETRY, GEOMETRY, POSTPROCESS, POSTPROCESS_MULTIPLY };
 
 class PipelineManager;
 
@@ -218,7 +218,9 @@ class PipelineManager {
             pipeline->layout = vk::raii::PipelineLayout(device.getDevice(), pipelineLayoutInfo);
             break;
         }
+        case PipelineCategory::POSTPROCESS_MULTIPLY:
         case PipelineCategory::POSTPROCESS: {
+            bool multiply = (pipelineCategory == PipelineCategory::POSTPROCESS_MULTIPLY);
             inputAssembly = {.topology = topology};
             rasterizer = {.depthClampEnable = vk::False,
                           .rasterizerDiscardEnable = vk::False,
@@ -227,14 +229,20 @@ class PipelineManager {
                           .frontFace = vk::FrontFace::eCounterClockwise,
                           .depthBiasEnable = vk::False,
                           .lineWidth = 1.0f};
-            multisampling = {.rasterizationSamples = vk::SampleCountFlagBits::e1, // No MSAA for post-process
+            multisampling = {.rasterizationSamples = vk::SampleCountFlagBits::e1,
                              .sampleShadingEnable = vk::False};
-            depthStencil = {.depthTestEnable = depthTestEnable,
-                            .depthWriteEnable = depthWriteEnable,
+            depthStencil = {.depthTestEnable = multiply ? vk::False : depthTestEnable,
+                            .depthWriteEnable = multiply ? vk::False : depthWriteEnable,
                             .depthCompareOp = vk::CompareOp::eNever,
                             .depthBoundsTestEnable = vk::False,
                             .stencilTestEnable = vk::False};
-            colorBlendAttachment = {.blendEnable = vk::False,
+            colorBlendAttachment = {.blendEnable = multiply ? vk::True : vk::False,
+                                    .srcColorBlendFactor = vk::BlendFactor::eDstColor,
+                                    .dstColorBlendFactor = vk::BlendFactor::eZero,
+                                    .colorBlendOp = vk::BlendOp::eAdd,
+                                    .srcAlphaBlendFactor = vk::BlendFactor::eOne,
+                                    .dstAlphaBlendFactor = vk::BlendFactor::eZero,
+                                    .alphaBlendOp = vk::BlendOp::eAdd,
                                     .colorWriteMask =
                                         vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA};
             colorBlending = {.logicOpEnable = vk::False, .attachmentCount = 1, .pAttachments = &colorBlendAttachment};
@@ -292,6 +300,7 @@ class PipelineManager {
         case PipelineCategory::GEOMETRY:
             return &geometryPipelines;
         case PipelineCategory::POSTPROCESS:
+        case PipelineCategory::POSTPROCESS_MULTIPLY:
             return &postProcessPipelines;
         default:
             return nullptr;

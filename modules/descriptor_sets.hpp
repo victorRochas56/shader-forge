@@ -295,6 +295,7 @@ class DescriptorSet {
         }
     }
 
+    //allocates a texture on the gpu in the bindless set, returns its index
     uint32_t allocateTexture(vk::raii::Image image, vk::raii::DeviceMemory memory, vk::raii::ImageView imageView, std::string source = "", bool isCubeMap = false) {
 #if DEBUG == 1
         debugDescriptorSetState("before_texture_allocation");

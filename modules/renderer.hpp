@@ -8,6 +8,7 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <random>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -130,6 +131,15 @@ class Renderer {
     vk::raii::ImageView                 shadowDepthView = nullptr;
     uint32_t                            currentShadowDepthResolution = 0;
 
+    //SSAO
+    uint32_t                            ssaoTextureIndex = 0xFFFFFFFF;
+    uint32_t                            ssaoBlurTextureIndex = 0xFFFFFFFF;
+    uint32_t                            ssaoNoiseTextureIndex = 0xFFFFFFFF;
+    uint32_t                            ssaoNoiseSamplerIndex = 0xFFFFFFFF;
+    uint32_t                            ssaoPipelineIndex = 0xFFFFFFFF;
+    uint32_t                            ssaoApplyPipelineIndex = 0xFFFFFFFF;
+    bool                                enableSSAO = true;
+
     // Temporary texture for gaussian blur
     uint32_t                            tempBlurTextureIndex = 0xFFFFFFFF;
 
@@ -189,6 +199,7 @@ class Renderer {
 
         swapchain->create(*window, vSync);
         createShadowDepthBuffer(DEFAULT_SHADOW_RESOLUTION);
+        createSSAOResources(startWidth, startHeight);
         createSyncObjects();
 
 #if DEBUG == 1
@@ -288,6 +299,7 @@ class Renderer {
             swapchain->recreate(window, vSync);
             int width = 0, height = 0;
             glfwGetFramebufferSize(window, &width, &height);
+            if (width > 0 && height > 0) createSSAOResources(width, height);
             activeCamera.aspectRatio = static_cast<float>(width) / static_cast<float>(height);
             activeCamera.calculateViewProjectionMatrix();
             return;
@@ -346,6 +358,7 @@ class Renderer {
 
             int width = 0, height = 0;
             glfwGetFramebufferSize(window, &width, &height);
+            if (width > 0 && height > 0) createSSAOResources(width, height);
             activeCamera.aspectRatio = static_cast<float>(width) / static_cast<float>(height);
             activeCamera.calculateViewProjectionMatrix();
 
@@ -567,6 +580,9 @@ class Renderer {
     void toggleVsync() {
         vSync = !vSync;
         swapchain->recreate(window, vSync);
+        int width = 0, height = 0;
+        glfwGetFramebufferSize(window, &width, &height);
+        if (width > 0 && height > 0) createSSAOResources(width, height);
     }
     void toggleDepthView() { depthView = !depthView; }
     void setSkyBox(uint32_t skyboxIndex) { this->skyboxIndex = skyboxIndex; }
@@ -753,6 +769,78 @@ class Renderer {
         currentShadowDepthResolution = resolution;
     }
 
+    void createSSAOResources(uint32_t width, uint32_t height) {
+        // Free previous SSAO textures if they exist (resize case)
+        if (ssaoTextureIndex != 0xFFFFFFFF) {
+            descriptorSet->freeTexture(ssaoTextureIndex);
+            ssaoTextureIndex = 0xFFFFFFFF;
+        }
+        if (ssaoBlurTextureIndex != 0xFFFFFFFF) {
+            descriptorSet->freeTexture(ssaoBlurTextureIndex);
+            ssaoBlurTextureIndex = 0xFFFFFFFF;
+        }
+
+        // SSAO render target (R8 single-channel)
+        vk::raii::Image ssaoImage = nullptr;
+        vk::raii::DeviceMemory ssaoMemory = nullptr;
+        resourceManager->createImage(width, height, 1, vk::SampleCountFlagBits::e1, vk::Format::eR8Unorm, vk::ImageTiling::eOptimal,
+                                     vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, ssaoImage,
+                                     ssaoMemory, 1);
+        auto ssaoView = resourceManager->createImageView(ssaoImage, vk::Format::eR8Unorm, vk::ImageAspectFlagBits::eColor);
+        resourceManager->transitionImageLayout(nullptr, ssaoImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal);
+        ssaoTextureIndex = descriptorSet->allocateTexture(std::move(ssaoImage), std::move(ssaoMemory), std::move(ssaoView), "internal/ssao");
+
+        // SSAO blur temporary target (same format/size)
+        vk::raii::Image blurImage = nullptr;
+        vk::raii::DeviceMemory blurMemory = nullptr;
+        resourceManager->createImage(width, height, 1, vk::SampleCountFlagBits::e1, vk::Format::eR8Unorm, vk::ImageTiling::eOptimal,
+                                     vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, blurImage,
+                                     blurMemory, 1);
+        auto blurView = resourceManager->createImageView(blurImage, vk::Format::eR8Unorm, vk::ImageAspectFlagBits::eColor);
+        resourceManager->transitionImageLayout(nullptr, blurImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal);
+        ssaoBlurTextureIndex = descriptorSet->allocateTexture(std::move(blurImage), std::move(blurMemory), std::move(blurView), "internal/ssao_blur");
+
+        // 4x4 noise texture (RGBA8, random tangent-space rotation vectors)
+        // Only create once — noise doesn't depend on screen size
+        if (ssaoNoiseTextureIndex == 0xFFFFFFFF) {
+            std::mt19937 rng(42); // fixed seed for reproducibility
+            std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
+            std::array<uint8_t, 4 * 4 * 4> noiseData; // 4x4 RGBA8
+            for (int i = 0; i < 16; i++) {
+                float x = dist(rng);
+                float y = dist(rng);
+                // Rotate around Z in tangent space, so z=0
+                float len = std::sqrt(x * x + y * y);
+                if (len > 0.0f) { x /= len; y /= len; }
+                noiseData[i * 4 + 0] = static_cast<uint8_t>((x * 0.5f + 0.5f) * 255.0f);
+                noiseData[i * 4 + 1] = static_cast<uint8_t>((y * 0.5f + 0.5f) * 255.0f);
+                noiseData[i * 4 + 2] = 0;
+                noiseData[i * 4 + 3] = 255;
+            }
+            auto [noiseImage, noiseMemory, noiseImageView] =
+                resourceManager->createTexture(noiseData.data(), 4, 4, vk::Format::eR8G8B8A8Unorm, vk::ImageType::e2D, vk::ImageViewType::e2D, vk::SampleCountFlagBits::e1, false);
+            ssaoNoiseTextureIndex = descriptorSet->allocateTexture(std::move(noiseImage), std::move(noiseMemory), std::move(noiseImageView), "internal/ssao_noise");
+
+            // Noise sampler: repeat + nearest (tiled across screen)
+            ssaoNoiseSamplerIndex = descriptorSet->allocateSampler(vk::Filter::eNearest, vk::SamplerMipmapMode::eNearest, vk::SamplerAddressMode::eRepeat,
+                                                                    VK_FALSE, 1.0f, VK_FALSE, vk::CompareOp::eNever, vk::BorderColor::eFloatOpaqueBlack);
+        }
+
+        // SSAO pipeline (only create once)
+        if (ssaoPipelineIndex == 0xFFFFFFFF) {
+            ssaoPipelineIndex = pipelineManager->createPipeline<SSAOPushConstants>(
+                PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone,
+                vk::False, vk::False, "shaders/ssao.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
+        }
+
+        // SSAO apply pipeline with multiplicative blending (only create once)
+        if (ssaoApplyPipelineIndex == 0xFFFFFFFF) {
+            ssaoApplyPipelineIndex = pipelineManager->createPipeline<SSAOApplyPushConstants>(
+                PipelineCategory::POSTPROCESS_MULTIPLY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone,
+                vk::False, vk::False, "shaders/ssao_apply.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
+        }
+    }
+
     void createSyncObjects() {
         presentCompleteSemaphores.clear();
         renderFinishedSemaphores.clear();
@@ -774,23 +862,33 @@ class Renderer {
     }
 
 /////=================================================MAIN RENDERING LOGIC=================================================/////
+
+
     void recordCommandBuffer(uint32_t imageIndex) {
+        auto& cmd = commandBuffers[currentFrame];
+        cmd.begin({});
 
-        commandBuffers[currentFrame].begin({});
-
-        //shadows first
         for (auto& [lightId, light] : lights) {
-            if (light.castsShadows == 1) {
-                recordShadowPass(commandBuffers[currentFrame], light);
-            }
+            if (light.castsShadows == 1)
+                recordShadowPass(cmd, light);
         }
 
-        //then everything that renders to the screen
-        resourceManager->transitionImageLayout(&commandBuffers[currentFrame], swapchain->getSwapChainImages()[imageIndex], vk::ImageLayout::eUndefined,
-                                               vk::ImageLayout::eColorAttachmentOptimal);
-        resourceManager->transitionImageLayout(&commandBuffers[currentFrame], swapchain->getColorImage(), vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
-        resourceManager->transitionImageLayout(&commandBuffers[currentFrame], swapchain->getDepthImage(), vk::ImageLayout::eUndefined,
-                                               vk::ImageLayout::eDepthStencilAttachmentOptimal);
+        recordGeometryPass(cmd, imageIndex);
+
+        if (enableSSAO && ssaoPipelineIndex != 0xFFFFFFFF)
+            recordSSAOPass(cmd, imageIndex);
+
+        if (depthView || debugShowShadow < 4)
+            recordDepthVisPass(cmd, imageIndex);
+
+        resourceManager->transitionImageLayout(&cmd, swapchain->getSwapChainImages()[imageIndex], vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::ePresentSrcKHR);
+        cmd.end();
+    }
+
+    void recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
+        resourceManager->transitionImageLayout(&cmd, swapchain->getSwapChainImages()[imageIndex], vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
+        resourceManager->transitionImageLayout(&cmd, swapchain->getColorImage(), vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
+        resourceManager->transitionImageLayout(&cmd, swapchain->getDepthImage(), vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal);
 
         vk::ClearValue clearColor{.color = vk::ClearColorValue(std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f})};
         vk::ClearValue clearDepth{.depthStencil = vk::ClearDepthStencilValue{1.0f, 0}};
@@ -819,33 +917,27 @@ class Renderer {
                                            .pColorAttachments = &colorAttachment,
                                            .pDepthAttachment = &depthAttachmentInfo};
 
-        commandBuffers[currentFrame].beginRendering(renderingInfo);
-        commandBuffers[currentFrame].setViewport(
-            0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapchain->getSwapChainExtent().width), static_cast<float>(swapchain->getSwapChainExtent().height), 0.0f, 1.0f));
-        commandBuffers[currentFrame].setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapchain->getSwapChainExtent()));
+        cmd.beginRendering(renderingInfo);
+        setFullscreenViewport(cmd, swapchain->getSwapChainExtent());
 
-        // drawing background skybox
-        auto& currentSkyBoxPipeline = pipelineManager->getGeoPipelines()[skyboxPipelineIndex];
-        commandBuffers[currentFrame].bindPipeline(vk::PipelineBindPoint::eGraphics, currentSkyBoxPipeline->pipeline);
-        commandBuffers[currentFrame].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, currentSkyBoxPipeline->layout, 0, {**currentSkyBoxPipeline->descriptorSet}, {});
+        // skybox
+        auto& skyboxPipeline = pipelineManager->getGeoPipelines()[skyboxPipelineIndex];
+        bindPipeline(cmd, *skyboxPipeline);
         SkyBoxPushConstants skyboxConstants = {.skyboxIndex = skyboxIndex, .blur = 0.5, .invViewProjMatrix = glm::inverse(activeCamera.viewProjection)};
-        commandBuffers[currentFrame].pushConstants<SkyBoxPushConstants>(*currentSkyBoxPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0,
-                                                                        skyboxConstants);
-        commandBuffers[currentFrame].draw(3, 1, 0, 0);
+        cmd.pushConstants<SkyBoxPushConstants>(*skyboxPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, skyboxConstants);
+        cmd.draw(3, 1, 0, 0);
 
-        // drawing lit geometry
+        // lit geometry
         vk::Buffer indexBufferHandle = descriptorSet->getVariableBuffer(indexBufferIndex);
         auto& geoPipelines = pipelineManager->getGeoPipelines();
         for (auto [shader, materials] : shaders) {
             auto currentPipeline = &(geoPipelines[shader.pipelineIndex]);
-            commandBuffers[currentFrame].bindPipeline(vk::PipelineBindPoint::eGraphics, (*currentPipeline)->pipeline);
-
-            commandBuffers[currentFrame].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, (*currentPipeline)->layout, 0, {*(*currentPipeline)->descriptorSet}, {});
+            bindPipeline(cmd, **currentPipeline);
 
             for (auto [material, node_mesh] : materials) {
                 for (auto [node, subMeshIndices] : node_mesh) {
 
-                    if (meshes[node->getMeshIndex()].freed == true) { // skip if the mesh was marked to be freed and free the mesh memory
+                    if (meshes[node->getMeshIndex()].freed == true) {
                         for (uint32_t subMesh : meshes[node->getMeshIndex()].subMeshes) {
                             descriptorSet->freeVariableBuffer(vertexBufferIndex, subMeshes[subMesh].vertexAllocationIndex);
                             descriptorSet->freeVariableBuffer(indexBufferIndex, subMeshes[subMesh].indexAllocationIndex);
@@ -855,85 +947,132 @@ class Renderer {
                         continue;
                     }
                     for (auto mesh : subMeshIndices) {
-
-                        commandBuffers[currentFrame].bindIndexBuffer(indexBufferHandle, subMeshes[mesh].indexOffset, vk::IndexType::eUint32);
-                        PushConstants pushConstants = {.vertexAllocationIndex = subMeshes[mesh].vertexAllocationIndex,      // Index into vertex allocations
-                                                       .vertexOffset = static_cast<uint32_t>(subMeshes[mesh].vertexOffset), // Byte offset in vertex buffer
-                                                       .vertexStride = subMeshes[mesh].vertexStride,                        // Size of each vertex
-                                                       .modelMatrixIndex = node->getModelMatrixIndex(),   // Index (same for all frames, offset handles separation)
-                                                       .albedoTextureIndex = material.albedoTextureIndex, // Index into textures
+                        cmd.bindIndexBuffer(indexBufferHandle, subMeshes[mesh].indexOffset, vk::IndexType::eUint32);
+                        PushConstants pushConstants = {.vertexAllocationIndex = subMeshes[mesh].vertexAllocationIndex,
+                                                       .vertexOffset = static_cast<uint32_t>(subMeshes[mesh].vertexOffset),
+                                                       .vertexStride = subMeshes[mesh].vertexStride,
+                                                       .modelMatrixIndex = node->getModelMatrixIndex(),
+                                                       .albedoTextureIndex = material.albedoTextureIndex,
                                                        .roughnessTextureIndex = material.roughnessTextureIndex,
                                                        .metallicTextureIndex = material.metallicTextureIndex,
                                                        .normalTextureIndex = material.normalTextureIndex,
                                                        .environmentMapIndex = material.environmentMapIndex,
-                                                       .samplerIndex = defaultSamplerIndex, // Index into samplers
+                                                       .samplerIndex = defaultSamplerIndex,
                                                        .lightCount = static_cast<uint32_t>(lights.size()),
                                                        .shadowSamplerIndex = shadowSamplerIndex,
                                                        .cameraPosition = activeCamera.position,
                                                        .textureMask = material.textureMask,
-                                                       .elementOffsetModel = currentFrame * MAX_FIXED_BUFFER, // Offset to this frame's model matrices
-                                                       .elementOffsetLight = currentFrame * MAX_FIXED_BUFFER, // Offset to this frame's lights
+                                                       .elementOffsetModel = currentFrame * MAX_FIXED_BUFFER,
+                                                       .elementOffsetLight = currentFrame * MAX_FIXED_BUFFER,
                                                        .viewProjection = activeCamera.viewProjection};
 
-                        commandBuffers[currentFrame].pushConstants<PushConstants>((*currentPipeline)->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
-                                                                                  0, pushConstants);
-                        commandBuffers[currentFrame].drawIndexed(subMeshes[mesh].indexCount, 1, 0, 0, 0);
+                        cmd.pushConstants<PushConstants>((*currentPipeline)->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pushConstants);
+                        cmd.drawIndexed(subMeshes[mesh].indexCount, 1, 0, 0, 0);
                     }
                 }
             }
         }
 
-        // drawing gizmos
-        auto& currentGizmoPipeline = pipelineManager->getGeoPipelines()[gizmoPipelineIndex];
-        commandBuffers[currentFrame].bindPipeline(vk::PipelineBindPoint::eGraphics, currentGizmoPipeline->pipeline);
-        commandBuffers[currentFrame].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, currentGizmoPipeline->layout, 0, {**currentGizmoPipeline->descriptorSet}, {});
+        // gizmos
+        auto& gizmoPipeline = pipelineManager->getGeoPipelines()[gizmoPipelineIndex];
+        bindPipeline(cmd, *gizmoPipeline);
         LinePushConstants lineConstants = {.viewProjection = activeCamera.viewProjection};
-        commandBuffers[currentFrame].pushConstants<LinePushConstants>(*currentGizmoPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0,
-                                                                      lineConstants);
-        commandBuffers[currentFrame].draw(gizmos->getVertexCount(), 1, 0, 0);
+        cmd.pushConstants<LinePushConstants>(*gizmoPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, lineConstants);
+        cmd.draw(gizmos->getVertexCount(), 1, 0, 0);
 
-        // drawing GUI
-        ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), *commandBuffers[currentFrame]);
-        commandBuffers[currentFrame].endRendering();
+        // GUI
+        ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), *cmd);
+        cmd.endRendering();
+    }
 
-        // fullscreen quad for visualization purposed
-        // and any post process passes
-        if (depthView || debugShowShadow < 4) {
-            vk::RenderingAttachmentInfo swapchainAttachment{.imageView = swapchain->getSwapChainImageViews()[imageIndex],
-                                                            .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-                                                            .loadOp = vk::AttachmentLoadOp::eLoad,
-                                                            .storeOp = vk::AttachmentStoreOp::eStore};
+    void recordSSAOPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
+        auto extent = swapchain->getSwapChainExtent();
+        auto& ssaoTexture = descriptorSet->getTextureResource(ssaoTextureIndex);
 
-            vk::RenderingInfo fullscreenRenderInfo{.renderArea = {{0, 0}, swapchain->getSwapChainExtent()},
-                                                   .layerCount = 1,
-                                                   .colorAttachmentCount = 1,
-                                                   .pColorAttachments = &swapchainAttachment,
-                                                   .pDepthAttachment = nullptr};
-            commandBuffers[currentFrame].beginRendering(fullscreenRenderInfo);
+        // Transition depth to readable, SSAO target to color attachment
+        resourceManager->transitionImageLayout(&cmd, swapchain->getDepthImage(),
+            vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+        resourceManager->transitionImageLayout(&cmd, *ssaoTexture.image,
+            vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
 
-            auto& currentDepthPipeline = pipelineManager->getPostProcessPipelines()[depthPipelineIndex];
-            resourceManager->transitionImageLayout(&commandBuffers[currentFrame], swapchain->getDepthImage(), vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
-            commandBuffers[currentFrame].bindPipeline(vk::PipelineBindPoint::eGraphics, currentDepthPipeline->pipeline);
-            commandBuffers[currentFrame].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, currentDepthPipeline->layout, 0, {**currentDepthPipeline->descriptorSet}, {});
-            DepthVisPushConstants depthConstants = {.depthIndex = swapchain->getDepthResolveIndex(),
-                                                    .depthSamplerIndex = depthSamplerIndex,
-                                                    .showShadowMap = showShadowMapIndex,
-                                                    .shadowMapSamplerIndex = shadowSamplerIndex,
-                                                    .nearPlane = activeCamera.nearPlane,
-                                                    .farPlane = activeCamera.farPlane,
-                                                    .linearize = 1,
-                                                    .doDepthBuffering = depthView};
-            commandBuffers[currentFrame].pushConstants<DepthVisPushConstants>(*currentDepthPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
-                                                                              0, depthConstants);
-            commandBuffers[currentFrame].draw(3, 1, 0, 0);
-            resourceManager->transitionImageLayout(nullptr, swapchain->getDepthImage(), vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
+        // Render SSAO
+        vk::ClearValue ssaoClear{.color = vk::ClearColorValue(std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f})};
+        vk::RenderingAttachmentInfo ssaoAttachment{.imageView = *ssaoTexture.imageView,
+                                                    .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+                                                    .loadOp = vk::AttachmentLoadOp::eClear,
+                                                    .storeOp = vk::AttachmentStoreOp::eStore,
+                                                    .clearValue = ssaoClear};
+        vk::RenderingInfo ssaoRenderInfo{.renderArea = {{0, 0}, extent}, .layerCount = 1, .colorAttachmentCount = 1, .pColorAttachments = &ssaoAttachment};
 
-            commandBuffers[currentFrame].endRendering();
-        }
-        resourceManager->transitionImageLayout(&commandBuffers[currentFrame], swapchain->getSwapChainImages()[imageIndex], vk::ImageLayout::eColorAttachmentOptimal,
-                                               vk::ImageLayout::ePresentSrcKHR);
+        auto& ssaoPipeline = pipelineManager->getPostProcessPipelines()[ssaoPipelineIndex];
+        cmd.beginRendering(ssaoRenderInfo);
+        setFullscreenViewport(cmd, extent);
+        bindPipeline(cmd, *ssaoPipeline);
+        SSAOPushConstants ssaoPC{.invProjection = glm::inverse(activeCamera.projectionMatrix),
+                                 .depthIndex = swapchain->getDepthResolveIndex(),
+                                 .depthSamplerIndex = depthSamplerIndex,
+                                 .noiseIndex = ssaoNoiseTextureIndex,
+                                 .noiseSamplerIndex = ssaoNoiseSamplerIndex,
+                                 .resolution = glm::uvec2(extent.width, extent.height),
+                                 .radius = 0.5f,
+                                 .bias = 0.025f,
+                                 .power = 2.0f,
+                                 .kernelSize = 32};
+        cmd.pushConstants<SSAOPushConstants>(*ssaoPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, ssaoPC);
+        cmd.draw(3, 1, 0, 0);
+        cmd.endRendering();
 
-        commandBuffers[currentFrame].end();
+        // Blur
+        resourceManager->transitionImageLayout(&cmd, *ssaoTexture.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+        blurAttachment(cmd, ssaoTextureIndex, ssaoBlurTextureIndex, extent.width, extent.height, 2.0f, depthSamplerIndex);
+
+        // Apply to swapchain via multiplicative blend
+        vk::RenderingAttachmentInfo applyAttachment{.imageView = swapchain->getSwapChainImageViews()[imageIndex],
+                                                     .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+                                                     .loadOp = vk::AttachmentLoadOp::eLoad,
+                                                     .storeOp = vk::AttachmentStoreOp::eStore};
+        vk::RenderingInfo applyRenderInfo{.renderArea = {{0, 0}, extent}, .layerCount = 1, .colorAttachmentCount = 1, .pColorAttachments = &applyAttachment};
+
+        auto& applyPipeline = pipelineManager->getPostProcessPipelines()[ssaoApplyPipelineIndex];
+        cmd.beginRendering(applyRenderInfo);
+        setFullscreenViewport(cmd, extent);
+        bindPipeline(cmd, *applyPipeline);
+        SSAOApplyPushConstants applyPC{.ssaoTextureIndex = ssaoTextureIndex, .samplerIndex = depthSamplerIndex};
+        cmd.pushConstants<SSAOApplyPushConstants>(*applyPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, applyPC);
+        cmd.draw(3, 1, 0, 0);
+        cmd.endRendering();
+
+        // Transition depth back
+        resourceManager->transitionImageLayout(&cmd, swapchain->getDepthImage(), vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
+    }
+
+    void recordDepthVisPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
+        auto extent = swapchain->getSwapChainExtent();
+        vk::RenderingAttachmentInfo swapchainAttachment{.imageView = swapchain->getSwapChainImageViews()[imageIndex],
+                                                        .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+                                                        .loadOp = vk::AttachmentLoadOp::eLoad,
+                                                        .storeOp = vk::AttachmentStoreOp::eStore};
+        vk::RenderingInfo renderInfo{.renderArea = {{0, 0}, extent}, .layerCount = 1, .colorAttachmentCount = 1, .pColorAttachments = &swapchainAttachment};
+
+        resourceManager->transitionImageLayout(&cmd, swapchain->getDepthImage(), vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+
+        auto& depthPipeline = pipelineManager->getPostProcessPipelines()[depthPipelineIndex];
+        cmd.beginRendering(renderInfo);
+        setFullscreenViewport(cmd, extent);
+        bindPipeline(cmd, *depthPipeline);
+        DepthVisPushConstants depthConstants = {.depthIndex = swapchain->getDepthResolveIndex(),
+                                                .depthSamplerIndex = depthSamplerIndex,
+                                                .showShadowMap = showShadowMapIndex,
+                                                .shadowMapSamplerIndex = shadowSamplerIndex,
+                                                .nearPlane = activeCamera.nearPlane,
+                                                .farPlane = activeCamera.farPlane,
+                                                .linearize = 1,
+                                                .doDepthBuffering = depthView};
+        cmd.pushConstants<DepthVisPushConstants>(*depthPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, depthConstants);
+        cmd.draw(3, 1, 0, 0);
+        cmd.endRendering();
+
+        resourceManager->transitionImageLayout(&cmd, swapchain->getDepthImage(), vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
     }
 
     void recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light) {
@@ -1068,5 +1207,15 @@ class Renderer {
             // Transition shadow map back to shader read-only for fragment shader sampling
             resourceManager->transitionImageLayout(&cmd, *shadowMap->image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
         }
+    }
+
+    void setFullscreenViewport(vk::raii::CommandBuffer& cmd, vk::Extent2D extent) {
+        cmd.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.0f, 1.0f));
+        cmd.setScissor(0, vk::Rect2D({0, 0}, extent));
+    }
+
+    void bindPipeline(vk::raii::CommandBuffer& cmd, PipelineBase& pipeline) {
+        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline.pipeline);
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipeline.layout, 0, {**pipeline.descriptorSet}, {});
     }
 };

@@ -88,6 +88,26 @@ struct BlurPushConstants {
     uint32_t padding2;
 };
 
+struct SSAOPushConstants {
+    glm::mat4 invProjection;    // 64 bytes
+    uint32_t depthIndex;        // 4
+    uint32_t depthSamplerIndex; // 4
+    uint32_t noiseIndex;        // 4
+    uint32_t noiseSamplerIndex; // 4
+    glm::uvec2 resolution;     // 8
+    float radius;               // 4
+    float bias;                 // 4
+    float power;                // 4
+    uint32_t kernelSize;        // 4
+    // Total: 100 bytes — fits in 128
+};
+
+struct SSAOApplyPushConstants {
+    uint32_t ssaoTextureIndex;
+    uint32_t samplerIndex;
+    uint32_t padding[2];
+};
+
 // matches VkDrawIndexedIndirectCommand)
 struct DrawIndexedIndirectCommand {
     uint32_t indexCount;
