@@ -112,6 +112,9 @@ float4 fragMain(VSOutput input) : SV_Target {
     float3 bitangent = cross(normal, tangent);
     float3x3 TBN = float3x3(tangent, bitangent, normal);
 
+    // Offset fragment position along normal to prevent self-occlusion on flat surfaces
+    float3 biasedFragPos = fragPos - normal * pc.bias;
+
     // Accumulate occlusion
     float occlusion = 0.0;
     uint sampleCount = min(pc.kernelSize, 32u);
@@ -119,22 +122,13 @@ float4 fragMain(VSOutput input) : SV_Target {
     for (uint i = 0; i < sampleCount; i++) {
         // Orient sample in view space
         float3 sampleOffset = mul(KERNEL[i], TBN);
-        float3 samplePos = fragPos + sampleOffset * pc.radius;
+        float3 samplePos = biasedFragPos + sampleOffset * pc.radius;
 
         // Project sample to screen space
-        float4 projected = mul(pc.invProjection, float4(samplePos, 1.0));
-        // We need projection, not inverse projection, for screen-space projection.
-        // But we only have invProjection. So use the depth buffer directly:
-        // Project using the relationship: clip = proj * view, ndc = clip.xy / clip.w
-        // Since invProj * clip = view, then proj * view = clip
-        // Instead, just compute the UV from the view-space position via inverse:
-        float4 clipPos = float4(samplePos, 1.0);
-        // Recover clip space: if invProj * clip = view, then clip = proj * view
-        // We need proj. Reconstruct: proj[0][0] = 1/invProj[0][0], proj[1][1] = 1/invProj[1][1]
+        // Reconstruct proj from invProj: proj[0][0] = 1/invProj[0][0], proj[1][1] = 1/invProj[1][1]
         float2 sampleUV;
         sampleUV.x = (samplePos.x / (-samplePos.z) * (1.0 / pc.invProjection[0][0])) * 0.5 + 0.5;
         sampleUV.y = (samplePos.y / (-samplePos.z) * (1.0 / pc.invProjection[1][1])) * 0.5 + 0.5;
-        sampleUV.y = 1.0 - sampleUV.y;
 
         // Sample depth at projected position
         float sampleDepth = textures[pc.depthIndex].Sample(samplers[pc.depthSamplerIndex], sampleUV).r;
@@ -142,7 +136,7 @@ float4 fragMain(VSOutput input) : SV_Target {
 
         // Range check: only occlude if the depth difference is within radius
         float rangeCheck = smoothstep(0.0, 1.0, pc.radius / abs(fragPos.z - actualPos.z));
-        occlusion += (actualPos.z >= samplePos.z + pc.bias ? 1.0 : 0.0) * rangeCheck;
+        occlusion += (actualPos.z >= samplePos.z ? 1.0 : 0.0) * rangeCheck;
     }
 
     float ao = 1.0 - (occlusion / float(sampleCount));

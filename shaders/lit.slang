@@ -15,12 +15,12 @@ struct PushConstants {
     uint shadowSamplerIndex;
 
     float3 cameraPos;
-    uint textureMask;
+    uint materialFlags;
 
     uint elementOffsetModel;  // Element offset for this frame's model matrices
     uint elementOffsetLight;  // Element offset for this frame's lights
-    uint padding;
-    uint padding1;
+    float metallic;
+    float roughness;
 
     float4x4 viewProjection;
 };
@@ -318,22 +318,23 @@ FragmentOutput fragMain(VertexOutput input)
     FragmentOutput output;
     
     // texture mask checks
-    bool hasAlbedo = (pc.textureMask & (1u << 0)) != 0;
-    bool hasRoughness = (pc.textureMask & (1u << 1)) != 0;
-    bool hasMetallic = (pc.textureMask & (1u << 2)) != 0;
-    bool hasNormal = (pc.textureMask & (1u << 3)) != 0;
+    bool flipNormal = (pc.materialFlags & (1u <<0 )) != 0;
+    bool hasAlbedo = (pc.materialFlags & (1u << 1)) != 0;
+    bool hasRoughness = (pc.materialFlags & (1u << 2)) != 0;
+    bool hasMetallic = (pc.materialFlags & (1u << 3)) != 0;
+    bool hasNormal = (pc.materialFlags & (1u << 4)) != 0;
     
     float4 albedo = hasAlbedo ? 
         textures[pc.albedoTextureIndex].Sample(samplers[pc.samplerIndex], input.texCoord) : 
         float4(1.0, 1.0, 1.0, 1.0);
     
-    float4 roughness = hasRoughness ? 
-        textures[pc.roughnessTextureIndex].Sample(samplers[pc.samplerIndex], input.texCoord) : 
-        float4(0.8, 0.8, 0.8, 1.0);
-    
-    float4 metallic = hasMetallic ? 
-        textures[pc.metallicTextureIndex].Sample(samplers[pc.samplerIndex], input.texCoord) : 
-        float4(0.0, 0.0, 0.0, 1.0);
+    float4 roughness = hasRoughness ?
+        textures[pc.roughnessTextureIndex].Sample(samplers[pc.samplerIndex], input.texCoord) :
+        float4(pc.roughness, pc.roughness, pc.roughness, 1.0);
+
+    float4 metallic = hasMetallic ?
+        textures[pc.metallicTextureIndex].Sample(samplers[pc.samplerIndex], input.texCoord) :
+        float4(pc.metallic, pc.metallic, pc.metallic, 1.0);
     
     float3 N;
     if (hasNormal) {
@@ -341,6 +342,7 @@ FragmentOutput fragMain(VertexOutput input)
         normalMap = normalMap * 2.0 - 1.0;
         float normalIntensity = 1.0;
         normalMap.xy *= normalIntensity; 
+        normalMap.y *= -1.0;
         normalMap = normalize(normalMap);
 
         float3 T = normalize(input.tangent);

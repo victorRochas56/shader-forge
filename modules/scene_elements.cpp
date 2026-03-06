@@ -18,8 +18,8 @@ Node::Node(Renderer* pRenderer, uint32_t arrayIndex, Node* parent, glm::vec3 pos
     relativeRotationEuler = glm::eulerAngles(rotation);
     worldRotationEuler = glm::eulerAngles(rotation);
 
-    if (parent == nullptr && renderer->getRootNode() != nullptr) { // conv to scene->
-        parent = renderer->getRootNode();                          // conv to scene->
+    if (parent == nullptr && renderer->sceneGraph.getRootNode() != nullptr) { // conv to scene->
+        parent = renderer->sceneGraph.getRootNode();                          // conv to scene->
     }
     // Handle keepWorldTransform logic
     if (keepWorldTransform && parent != nullptr) {
@@ -73,8 +73,8 @@ void Node::update() {
     }
 
     // Update world-space bounding box if node has a mesh
-    if (meshIndex < renderer->getMeshes().size() && boundingBoxValid) {
-        const auto& mesh = renderer->getMeshes()[meshIndex];
+    if (meshIndex < renderer->assetManager.meshes.size() && boundingBoxValid) {
+        const auto& mesh = renderer->assetManager.meshes[meshIndex];
         glm::vec3 corners[8] = {
             glm::vec3(mesh.boundingBoxMin.x, mesh.boundingBoxMin.y, mesh.boundingBoxMin.z), glm::vec3(mesh.boundingBoxMax.x, mesh.boundingBoxMin.y, mesh.boundingBoxMin.z),
             glm::vec3(mesh.boundingBoxMin.x, mesh.boundingBoxMax.y, mesh.boundingBoxMin.z), glm::vec3(mesh.boundingBoxMax.x, mesh.boundingBoxMax.y, mesh.boundingBoxMin.z),
@@ -97,17 +97,17 @@ void Node::update() {
 }
 
 void Node::addMesh(uint32_t meshIndex) {
-    if (this->meshIndex < renderer->getMeshes().size()) {
-        renderer->getMeshes()[meshIndex].refCount--;
-        if (renderer->getMeshes()[meshIndex].refCount <= 0) {
-            renderer->getMeshes()[meshIndex].freed = true;
+    if (this->meshIndex < renderer->assetManager.meshes.size()) {
+        renderer->assetManager.meshes[meshIndex].refCount--;
+        if (renderer->assetManager.meshes[meshIndex].refCount <= 0) {
+            renderer->assetManager.meshes[meshIndex].freed = true;
         }
     }
     this->meshIndex = meshIndex;
-    renderer->getMeshes()[meshIndex].refCount++;
+    renderer->assetManager.meshes[meshIndex].refCount++;
 
     // Calculate world-space bounding box from mesh local-space bounding box
-    const auto& mesh = renderer->getMeshes()[meshIndex];
+    const auto& mesh = renderer->assetManager.meshes[meshIndex];
     // Transform all 8 corners of the AABB and find new min/max
     glm::vec3 corners[8] = {
         glm::vec3(mesh.boundingBoxMin.x, mesh.boundingBoxMin.y, mesh.boundingBoxMin.z), glm::vec3(mesh.boundingBoxMax.x, mesh.boundingBoxMin.y, mesh.boundingBoxMin.z),
@@ -127,10 +127,10 @@ void Node::addMesh(uint32_t meshIndex) {
 }
 
 void Node::addMaterial(uint32_t index, uint32_t materialIndex) {
-    if (index >= renderer->getMeshes()[meshIndex].subMeshes.size() || index < 0) {
+    if (index >= renderer->assetManager.meshes[meshIndex].subMeshes.size() || index < 0) {
         throw std::runtime_error("tried adding material to invalid material slot on node mesh!");
     } else {
-        renderer->addMeshToShader(this, renderer->getMeshes()[meshIndex].subMeshes[index], renderer->getMaterials()[materialIndex].shaderSource,
+        renderer->addMeshToShader(this, renderer->assetManager.meshes[meshIndex].subMeshes[index], renderer->getMaterials()[materialIndex].shaderSource,
                                   renderer->getMaterials()[materialIndex]);
         materialIndices.push_back(materialIndex);
     }
@@ -178,7 +178,7 @@ void Node::showMaterialDialog() {
             materialList.push_back(textOption);
         }
 
-        for (int n = 0; n < renderer->getMeshes()[meshIndex].subMeshes.size(); n++) {
+        for (int n = 0; n < renderer->assetManager.meshes[meshIndex].subMeshes.size(); n++) {
             selectedMaterials.push_back(materialIndices[n]);
         }
     }
@@ -187,7 +187,7 @@ void Node::showMaterialDialog() {
 
     // Group submeshes by their original material ID from the OBJ file
     std::map<int, std::vector<uint32_t>> originalMatIdToSubmeshes;
-    const auto& mesh = renderer->getMeshes()[meshIndex];
+    const auto& mesh = renderer->assetManager.meshes[meshIndex];
 
     for (int i = 0; i < mesh.subMeshes.size(); i++) {
         int originalMatId = (i < mesh.originalMaterialIds.size()) ? mesh.originalMaterialIds[i] : -1;
@@ -267,7 +267,7 @@ void Node::showLightInfo() {
 
         if (light.type == LightType::Directional) {
 
-            ImGui::DragInt("show cascades", &light.showCascades);
+            ImGui::DragInt("show cascades", &light.showCascades,1,0,1);
 
             for(int i = 0; i< light.numCascades;i++){
                 std::string cascadeLabel = "cascade ";
@@ -403,8 +403,8 @@ void Node::showTransformInfo() {
 
 void Node::showMeshInfo() {
     if (!changingMesh) {
-        if (meshIndex < renderer->getMeshes().size()) {
-            if (ImGui::Button(renderer->getMeshes()[meshIndex].sourceFile.c_str())) {
+        if (meshIndex < renderer->assetManager.meshes.size()) {
+            if (ImGui::Button(renderer->assetManager.meshes[meshIndex].sourceFile.c_str())) {
                 changingMesh = true;
                 textBuffer[0] = '\0';
             }
@@ -422,17 +422,17 @@ void Node::showMeshInfo() {
         if (ImGui::Button("Confirm")) {
             // remove old mesh from render queue for shader
             for (uint32_t index : materialIndices) {
-                for (int i = 0; i < renderer->getMeshes()[meshIndex].subMeshes.size(); i++) {
-                    renderer->removeMeshFromShader(this, renderer->getMeshes()[meshIndex].subMeshes[i], renderer->getMaterials()[index].shaderSource,
+                for (int i = 0; i < renderer->assetManager.meshes[meshIndex].subMeshes.size(); i++) {
+                    renderer->removeMeshFromShader(this, renderer->assetManager.meshes[meshIndex].subMeshes[i], renderer->getMaterials()[index].shaderSource,
                                                    renderer->getMaterials()[index]);
                 }
             }
             // load new mesh
-            meshIndex = renderer->loadMeshFromFile(std::string(textBuffer));
+            meshIndex = renderer->assetManager.loadMeshFromFile(std::string(textBuffer));
             materialList.clear();
             selectedMaterials.clear();
             materialIndices.clear();
-            for (int i = 0; i < renderer->getMeshes()[meshIndex].subMeshes.size(); i++) {
+            for (int i = 0; i < renderer->assetManager.meshes[meshIndex].subMeshes.size(); i++) {
                 addMaterial(i, renderer->getFallBackMaterial());
             }
 #if DEBUG == 1
@@ -445,7 +445,7 @@ void Node::showMeshInfo() {
             changingMesh = false;
         }
     }
-    if (meshIndex < renderer->getMeshes().size()) {
+    if (meshIndex < renderer->assetManager.meshes.size()) {
         if (ImGui::Button("Assign Materials")) {
             changingMaterials = !changingMaterials;
         }

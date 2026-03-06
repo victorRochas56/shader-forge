@@ -25,6 +25,8 @@ class InputManager {
     bool canMove = true;
     float contextMenuPinX = 0;
     float contextMenuPinY = 0;
+    bool materialPickMode = false;
+    int pickedMaterialIndex = -1; // set when a mesh is clicked in pick mode
   
     static InputManager& getInstance() {
         static InputManager instance;
@@ -64,7 +66,7 @@ class InputManager {
             inst.renderer->activeCamera.moveCamera(moveVector);
         }
 
-        // raycast on left click for selection
+        // raycast on left click for selection or material picking
         if (inst.current.mouse_button == 0 && inst.current.mouse_action == 1 && inst.previous.mouse_action != 1) {
             int width = 0, height = 0;
             glfwGetWindowSize(inst.renderer->getWindow(), &width, &height);
@@ -73,20 +75,39 @@ class InputManager {
             glm::vec3 origin;
             glm::vec3 direction;
             inst.renderer->activeCamera.rayFromScreenCoords(NDCx, NDCy, &origin, &direction);
-            std::vector<uint32_t> hitNodes = inst.renderer->rayCastNodes(origin, direction);
-            if (!hitNodes.empty()) {
-                inst.renderer->selectNode(hitNodes.front());
+
+            if (inst.materialPickMode) {
+                auto hit = Raycast::castMeshes(origin, direction, inst.renderer->sceneGraph.getNodes(), inst.renderer->sceneGraph.getLastNode(),
+                                               inst.renderer->assetManager.meshes, inst.renderer->assetManager.subMeshes);
+                if (hit.nodeIndex != MAX_NODES) {
+                    auto& node = inst.renderer->sceneGraph.getNodes()[hit.nodeIndex];
+                    if (node.has_value() && hit.submeshLocalIndex < node->getMaterialIndices().size()) {
+                        inst.pickedMaterialIndex = static_cast<int>(node->getMaterialIndices()[hit.submeshLocalIndex]);
+                    }
+                }
+                inst.materialPickMode = false;
+            } else {
+                std::vector<uint32_t> hitNodes = Raycast::castNodes(origin, direction, inst.renderer->sceneGraph.getNodes(), inst.renderer->sceneGraph.getLastNode());
+                if (!hitNodes.empty()) {
+                    inst.renderer->sceneGraph.selectNode(hitNodes.front());
+                }
             }
         }
-        // contextual menu on right click
-        if(inst.current.mouse_button == 1 && inst.current.mouse_action == 0 && inst.previous.mouse_action == 1){
+        // contextual menu on shift + right click
+        if (inst.current.mouse_button == 1 && inst.current.mouse_action == 0 && inst.previous.mouse_action == 1 &&
+            (inst.current.keyStates[GLFW_KEY_LEFT_SHIFT] == GLFW_REPEAT || inst.current.keyStates[GLFW_KEY_LEFT_SHIFT] == GLFW_PRESS)) {
+
             inst.contextMenuShown = !inst.contextMenuShown;
             inst.contextMenuPinX = inst.current.mousePos.x;
             inst.contextMenuPinY = inst.current.mousePos.y;
         }
 
         if (inst.current.keyStates[GLFW_KEY_ESCAPE] == GLFW_PRESS && inst.previous.keyStates[GLFW_KEY_ESCAPE] != GLFW_PRESS) {
-            inst.renderer->deSelectNode();
+            if (inst.materialPickMode) {
+                inst.materialPickMode = false;
+            } else {
+                inst.renderer->sceneGraph.deSelectNode();
+            }
         }
         if (inst.current.keyStates[GLFW_KEY_V] == GLFW_PRESS && inst.previous.keyStates[GLFW_KEY_V] != GLFW_PRESS) {
             inst.renderer->toggleVsync();

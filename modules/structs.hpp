@@ -11,10 +11,20 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/hash.hpp>
 
+
+enum MaterialFlags : uint32_t
+{
+    None =          0,
+    flipNormal =    1 << 0,
+    hasAlbedo =     1 << 1,
+    hasRoughness =  1 << 2,
+    hasMetallic =   1 << 3,
+    hasNormal =     1 << 4
+};
+
 /*
 data only structs for push constants and various scene elements
 */
-
 struct PushConstants {
     uint32_t vertexAllocationIndex; // Index into vertex allocations
     uint32_t vertexOffset;          // Byte offset in vertex buffer
@@ -32,12 +42,12 @@ struct PushConstants {
     uint32_t shadowSamplerIndex;
     
     glm::vec3 cameraPosition;
-    uint32_t textureMask;
+    MaterialFlags materialFlags;
 
     uint32_t elementOffsetModel;  // Element offset for this frame's model matrices
     uint32_t elementOffsetLight;  // Element offset for this frame's lights
-    uint32_t padding;
-    uint32_t padding1;
+    float metallic;
+    float roughness;
 
     glm::mat4 viewProjection;
 };
@@ -144,11 +154,11 @@ struct Shader {
 struct Material {
     std::string name; // Material name from .mtl file or assigned name
     Shader shaderSource;
-    uint32_t textureMask;
-    // 1st bit : hasAlbedo
-    // 2nd bit : hasRoughness
-    // 3rd bit : hasMetallic
-    // 4th bit : hasNormal
+    MaterialFlags flags;
+    // 2st bit : hasAlbedo
+    // 3nd bit : hasRoughness
+    // 4rd bit : hasMetallic
+    // 5th bit : hasNormal
     uint32_t usageCount;
     uint32_t materialID;//TODO faire
     glm::vec4 color;
@@ -169,8 +179,8 @@ struct Material {
         if (other.shaderSource < shaderSource)
             return false;
 
-        if (textureMask != other.textureMask)
-            return textureMask < other.textureMask;
+        if (flags != other.flags)
+            return flags < other.flags;
         if (metallic != other.metallic)
             return metallic < other.metallic;
         if (roughness != other.roughness)
@@ -186,7 +196,7 @@ struct Material {
         return false;
     }
     bool operator==(const Material& other) const {
-        return name == other.name && shaderSource.sourceFile == other.shaderSource.sourceFile && textureMask == other.textureMask && metallic == other.metallic &&
+        return name == other.name && shaderSource.sourceFile == other.shaderSource.sourceFile && flags == other.flags && metallic == other.metallic &&
                roughness == other.roughness && color == other.color && albedoTextureIndex == other.albedoTextureIndex && metallicTextureIndex == other.metallicTextureIndex &&
                roughnessTextureIndex == other.roughnessTextureIndex && normalTextureIndex == other.normalTextureIndex;
     }
@@ -218,6 +228,10 @@ struct SubMesh {
     // Local-space AABB for per-submesh culling
     glm::vec3 boundingBoxMin = glm::vec3(0.0f);
     glm::vec3 boundingBoxMax = glm::vec3(0.0f);
+
+    // CPU-side geometry for raycasting
+    std::vector<glm::vec3> cpuPositions;
+    std::vector<uint32_t> cpuIndices;
 };
 
 enum class LightType { Point, Directional, Spot, Area, COUNT };
@@ -279,7 +293,7 @@ template <> struct hash<Material> {
     size_t operator()(Material const& material) const {
         size_t h0 = hash<string>()(material.name);
         size_t h1 = hash<string>()(material.shaderSource.sourceFile);
-        size_t h2 = hash<uint32_t>()(material.textureMask);
+        size_t h2 = hash<uint32_t>()(material.flags);
         size_t h3 = hash<glm::vec4>()(material.color);
         size_t h4 = hash<uint32_t>()(material.albedoTextureIndex);
         size_t h5 = hash<float>()(material.metallic);

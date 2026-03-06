@@ -39,6 +39,9 @@
 #include "pipelines.hpp"
 #include "scene_elements.hpp"
 #include "swapchain.hpp"
+#include "asset_manager.hpp"
+#include "raycast.hpp"
+#include "scene_graph.hpp"
 #include "utils.hpp"
 
 /*
@@ -53,7 +56,8 @@ class Renderer {
   public:
     Camera                              activeCamera;
     Gizmos*                             gizmos = nullptr;
-    uint32_t                            selectedNode = MAX_NODES;
+    AssetManager                        assetManager;
+    SceneGraph                          sceneGraph;
 
   private:
     GLFWwindow*                         window = nullptr;
@@ -102,19 +106,10 @@ class Renderer {
     uint32_t                            skyboxIndex;
 
     //rendering data
-    Node* rootNode = nullptr; 
-    std::array<std::optional<Node>, MAX_NODES>* nodes;
-    uint32_t                            lastNode = 0;
     std::vector<Material>               materials;                                                             
     std::map<Shader, std::map<Material, std::map<Node*, std::unordered_set<uint32_t>>>> shaders; // map between Shaders and Nodes + their submeshes to render
     Shader                              fallbackLitShader;
     uint32_t                            fallbackDefaultMaterialIndex;
-    std::map<std::string, uint32_t>     loadedTextures;
-    std::map<std::string, uint32_t>     loadedCubemaps;
-    std::vector<Mesh>                   meshes; 
-    std::queue<uint32_t>                freeMeshes;
-    std::vector<SubMesh>                subMeshes;
-    std::queue<uint32_t>                freeSubMeshes;
     std::map<uint32_t, Light>           lights; 
     uint32_t                            vertexBufferIndex;
     uint32_t                            indexBufferIndex;
@@ -138,8 +133,14 @@ class Renderer {
     uint32_t                            ssaoNoiseSamplerIndex = 0xFFFFFFFF;
     uint32_t                            ssaoPipelineIndex = 0xFFFFFFFF;
     uint32_t                            ssaoApplyPipelineIndex = 0xFFFFFFFF;
-    bool                                enableSSAO = true;
 
+  public:
+    bool                                enableSSAO = true; 
+    float                               ssaoRadius = 0.3f;
+    float                               ssaoBias = 0.1f;
+    float                               ssaoPower = 2.0f;
+
+  private:
     // Temporary texture for gaussian blur
     uint32_t                            tempBlurTextureIndex = 0xFFFFFFFF;
 
@@ -148,8 +149,7 @@ class Renderer {
 
   public:
 
-    Renderer() : nodes(new std::array<std::optional<Node>, MAX_NODES>()) {}
-    ~Renderer() { delete nodes; }
+    Renderer() = default;
 
     void initVulkan(uint32_t startWidth, uint32_t startHeight) {
         createInstance();
@@ -176,6 +176,7 @@ class Renderer {
         /////=====================================DESCRIPTOR SET BUFFERS=================================================/////
         vertexBufferIndex = descriptorSet->createVariableBuffer(256 * 1024 * 1024);                                       // 256 mb vertex buffer
         indexBufferIndex = descriptorSet->createVariableBuffer(128 * 1024 * 1024, vk::BufferUsageFlagBits::eIndexBuffer); // index buffer (128 MB)
+        assetManager.init(resourceManager.get(), descriptorSet.get(), vertexBufferIndex, indexBufferIndex);
 
         // these buffers store the data once per frame in flight since they are usually accessed every frame by the CPU
         modelMatrixBufferIndex = descriptorSet->createFixedBuffer<glm::mat4>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
@@ -256,7 +257,7 @@ class Renderer {
         litPipelineIndex = pipelineManager->createPipeline<PushConstants>(PipelineCategory::GEOMETRY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eBack, vk::True,
                                                                           vk::True, "shaders/lit.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
         gizmoPipelineIndex =
-            pipelineManager->createPipeline<LinePushConstants>(PipelineCategory::GEOMETRY, vk::PrimitiveTopology::eLineList, vk::CullModeFlagBits::eNone, vk::False, vk::False,
+            pipelineManager->createPipeline<LinePushConstants>(PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eLineList, vk::CullModeFlagBits::eNone, vk::False, vk::False,
                                                                "shaders/line.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
         depthPipelineIndex =
             pipelineManager->createPipeline<DepthVisPushConstants>(PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
@@ -264,12 +265,12 @@ class Renderer {
 
         // default litshader / material
         fallbackLitShader = Shader{.sourceFile = "shaders/lit.spv", .pipelineIndex = litPipelineIndex};
-        uint32_t defaultTexMask = 0x000000000; // see the material struct definition
+        MaterialFlags defaultTexMask = MaterialFlags::None; // see the material struct definition
         // texMask |= (1U << 0);
         // texMask |= (1U << 1);
         // texMask |= (1U << 3);
         Material defaultMaterial = Material{.shaderSource = fallbackLitShader,
-                                            .textureMask = defaultTexMask,
+                                            .flags = defaultTexMask,
                                             .color = glm::vec4(0.5, 0.5, 0.5, 1),
                                             .albedoTextureIndex = defaultAlbedoIndex,
                                             .metallic = 0.0,
@@ -284,9 +285,7 @@ class Renderer {
 #endif
 
         // create the root node - end of initialization
-        (*nodes)[0] = Node(this, 0, nullptr, glm::vec3(0.0), glm::quat(1.0, 0, 0, 0), glm::vec3(1, 1, 1));
-        (*nodes)[0]->name = "root";
-        rootNode = &*(*nodes)[0];
+        sceneGraph.init(this);
     }
 
     // main render loop
@@ -411,117 +410,6 @@ class Renderer {
     uint32_t getFallBackMaterial() { return fallbackDefaultMaterialIndex; }
     void clearRenderList() { shaders.clear(); }
 
-/////=================================================RESOURCE LOADING=================================================/////
-    uint32_t loadMeshFromFile(std::string filePath) {
-        // checks if the mesh already exists in memory
-        for (int i = 0; i < meshes.size(); i++) {
-            if (meshes[i].sourceFile == filePath) {
-                return i;
-            }
-        }
-#if DEBUG == 1
-        std::cout << "Loading mesh from " << filePath << std::endl;
-#endif
-        auto meshData = resourceManager->loadMeshFromFile(filePath);
-        Mesh mainMesh{.sourceFile = filePath, .originalMaterialIds = meshData.materialIds, .originalMaterialNames = meshData.materialNames};
-
-        // Calculate bounding box for the entire mesh
-        glm::vec3 bbMin(std::numeric_limits<float>::max());
-        glm::vec3 bbMax(std::numeric_limits<float>::lowest());
-
-        for (const auto& submesh : meshData.subMeshes) {
-            for (const auto& vertex : submesh) {
-                bbMin = glm::min(bbMin, vertex.position);
-                bbMax = glm::max(bbMax, vertex.position);
-            }
-        }
-        mainMesh.boundingBoxMin = bbMin;
-        mainMesh.boundingBoxMax = bbMax;
-
-        for (size_t i = 0; i < meshData.subMeshes.size(); i++) {
-            auto& vertices = meshData.subMeshes[i];
-            auto& indices = meshData.subMeshIndices[i];
-
-            // Calculate bounding box for this submesh
-            glm::vec3 subBBMin(std::numeric_limits<float>::max());
-            glm::vec3 subBBMax(std::numeric_limits<float>::lowest());
-            for (const auto& vertex : vertices) {
-                subBBMin = glm::min(subBBMin, vertex.position);
-                subBBMax = glm::max(subBBMax, vertex.position);
-            }
-
-            // Allocate vertex buffer
-            uint32_t vertexAllocIndex = descriptorSet->allocateVariableBuffer<Vertex>(vertices, vertexBufferIndex);
-            VariableBufferAllocation vertexAlloc = descriptorSet->getVariableBufferAllocation(vertexBufferIndex, vertexAllocIndex);
-
-            // Allocate index buffer
-            uint32_t indexAllocIndex = descriptorSet->allocateVariableBuffer<uint32_t>(indices, indexBufferIndex);
-            VariableBufferAllocation indexAlloc = descriptorSet->getVariableBufferAllocation(indexBufferIndex, indexAllocIndex);
-
-            SubMesh subMesh = {.vertexAllocationIndex = vertexAllocIndex,
-                               .vertexOffset = vertexAlloc.offset,
-                               .vertexCount = vertexAlloc.count,
-                               .vertexStride = vertexAlloc.stride,
-                               .indexAllocationIndex = indexAllocIndex,
-                               .indexOffset = indexAlloc.offset,
-                               .indexCount = indexAlloc.count,
-                               .boundingBoxMin = subBBMin,
-                               .boundingBoxMax = subBBMax};
-
-            subMeshes.push_back(subMesh);
-            mainMesh.subMeshes.push_back(subMeshes.size() - 1);
-        }
-
-        meshes.push_back(mainMesh);
-        return meshes.size() - 1;
-    }
-
-    uint32_t loadTextureFromFile(std::string filePath, vk::Format format = vk::Format::eR8G8B8A8Srgb) {
-
-        if (loadedTextures.contains(filePath)) {
-            return loadedTextures[filePath];
-        }
-
-        auto [image, memory, view] = resourceManager->loadTextureFromFile(filePath, format);
-        uint32_t allocIndex = descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(view), filePath);
-        loadedTextures[filePath] = allocIndex;
-        return allocIndex;
-    }
-
-    uint32_t loadCubemapFromFile(std::string posX, std::string posY, std::string posZ, std::string negX, std::string negY, std::string negZ, uint32_t width = 2048,
-                                 uint32_t height = 2048) {
-        // Create a unique key for this cubemap based on all 6 face paths
-        std::string cubemapKey = posX + "|" + negX + "|" + posY + "|" + negY + "|" + posZ + "|" + negZ;
-
-        if (loadedCubemaps.contains(cubemapKey)) {
-            return loadedCubemaps[cubemapKey];
-        }
-
-        auto [image, memory, view] = resourceManager->loadCubeMapFromFile(posX, negX, posY, negY, posZ, negZ, width, height);
-        uint32_t allocIndex = descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(view), cubemapKey, true);
-        loadedCubemaps[cubemapKey] = allocIndex;
-        return allocIndex;
-    }
-
-    std::string getTexturePathFromIndex(uint32_t textureIndex) {
-        for (const auto& [path, index] : loadedTextures) {
-            if (index == textureIndex) {
-                return path;
-            }
-        }
-        return ""; // Return empty string for default/procedural textures
-    }
-
-    std::string getCubemapPathFromIndex(uint32_t cubemapIndex) {
-        for (const auto& [path, index] : loadedCubemaps) {
-            if (index == cubemapIndex) {
-                return path; // Returns format: "posX|negX|posY|negY|posZ|negZ"
-            }
-        }
-        return ""; // Return empty string for default/procedural cubemaps
-    }
-
-    std::vector<Mesh>& getMeshes() { return meshes; }
     const std::map<uint32_t, Light>& getLights() { return lights; }
     void addLight(uint32_t index, Light light) { lights[index] = light; }
     Light& getLight(uint32_t index) { return lights[index]; }
@@ -530,51 +418,6 @@ class Renderer {
         lights.clear();
     }
 
-/////=================================================NODE STUFF=================================================/////
-
-    Node* getRootNode() { return rootNode; }
-    std::array<std::optional<Node>, MAX_NODES>& getNodes() { return *nodes; }
-    uint32_t addNode(uint32_t parentIndex = 0, glm::vec3 position = glm::vec3(0.0f), glm::quat rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f), glm::vec3 scale = glm::vec3(1.0f),
-                     bool keepWorldTransform = false) {
-        (*nodes)[lastNode + 1].emplace(this, lastNode + 1, &*(*nodes)[parentIndex], position, rotation, scale, keepWorldTransform);
-        lastNode++;
-        return lastNode;
-    }
-    void removeNode(uint32_t index) { throw std::runtime_error("remove node not implemented!"); }
-    std::vector<uint32_t> rayCastNodes(glm::vec3 origin, glm::vec3 direction) {
-        float margin = 0.05f;
-        glm::vec3 dir = glm::normalize(direction);
-        std::vector<uint32_t> foundNodes;
-
-        for (int i = 1; i <= lastNode; i++) {
-            glm::vec3 nodeWorldLoc = glm::vec3((*nodes)[i]->getWorldPosition());
-            glm::vec3 toNode = nodeWorldLoc - origin;
-            // Project toNode onto the ray direction
-            float projectionLength = glm::dot(toNode, dir);
-            // Skip nodes behind the ray origin
-            if (projectionLength < 0)
-                continue;
-            // Find closest point on ray to the node
-            glm::vec3 closestPointOnRay = origin + dir * projectionLength;
-            // Calculate perpendicular distance from node to ray
-            float distanceToRay = glm::distance(nodeWorldLoc, closestPointOnRay);
-            if (distanceToRay < margin) {
-                foundNodes.push_back(i);
-            }
-        }
-        return foundNodes;
-    }
-    void selectNode(uint32_t nodeIndex) {
-        if (nodeIndex <= lastNode) {
-            selectedNode = nodeIndex;
-        }
-    }
-    void deSelectNode() { selectedNode = MAX_NODES; }
-    uint32_t getNodeCount() { return lastNode + 1; }
-    void resetLastNode() {
-        lastNode = 0;
-        selectedNode = MAX_NODES;
-    }
 
     //toggled by keyboard inputs
     void toggleVsync() {
@@ -584,7 +427,11 @@ class Renderer {
         glfwGetFramebufferSize(window, &width, &height);
         if (width > 0 && height > 0) createSSAOResources(width, height);
     }
+    
+    void toggleSSAO() { enableSSAO = !enableSSAO; }
+    
     void toggleDepthView() { depthView = !depthView; }
+    
     void setSkyBox(uint32_t skyboxIndex) { this->skyboxIndex = skyboxIndex; }
 
     // Generic blur pass that can blur any attachment
@@ -878,6 +725,8 @@ class Renderer {
         if (enableSSAO && ssaoPipelineIndex != 0xFFFFFFFF)
             recordSSAOPass(cmd, imageIndex);
 
+        recordOverlayPass(cmd, imageIndex);
+
         if (depthView || debugShowShadow < 4)
             recordDepthVisPass(cmd, imageIndex);
 
@@ -937,20 +786,20 @@ class Renderer {
             for (auto [material, node_mesh] : materials) {
                 for (auto [node, subMeshIndices] : node_mesh) {
 
-                    if (meshes[node->getMeshIndex()].freed == true) {
-                        for (uint32_t subMesh : meshes[node->getMeshIndex()].subMeshes) {
-                            descriptorSet->freeVariableBuffer(vertexBufferIndex, subMeshes[subMesh].vertexAllocationIndex);
-                            descriptorSet->freeVariableBuffer(indexBufferIndex, subMeshes[subMesh].indexAllocationIndex);
-                            freeSubMeshes.push(subMesh);
+                    if (assetManager.meshes[node->getMeshIndex()].freed == true) {
+                        for (uint32_t subMesh : assetManager.meshes[node->getMeshIndex()].subMeshes) {
+                            descriptorSet->freeVariableBuffer(vertexBufferIndex, assetManager.subMeshes[subMesh].vertexAllocationIndex);
+                            descriptorSet->freeVariableBuffer(indexBufferIndex, assetManager.subMeshes[subMesh].indexAllocationIndex);
+                            assetManager.freeSubMeshes.push(subMesh);
                         }
-                        freeMeshes.push(node->getMeshIndex());
+                        assetManager.freeMeshes.push(node->getMeshIndex());
                         continue;
                     }
                     for (auto mesh : subMeshIndices) {
-                        cmd.bindIndexBuffer(indexBufferHandle, subMeshes[mesh].indexOffset, vk::IndexType::eUint32);
-                        PushConstants pushConstants = {.vertexAllocationIndex = subMeshes[mesh].vertexAllocationIndex,
-                                                       .vertexOffset = static_cast<uint32_t>(subMeshes[mesh].vertexOffset),
-                                                       .vertexStride = subMeshes[mesh].vertexStride,
+                        cmd.bindIndexBuffer(indexBufferHandle, assetManager.subMeshes[mesh].indexOffset, vk::IndexType::eUint32);
+                        PushConstants pushConstants = {.vertexAllocationIndex = assetManager.subMeshes[mesh].vertexAllocationIndex,
+                                                       .vertexOffset = static_cast<uint32_t>(assetManager.subMeshes[mesh].vertexOffset),
+                                                       .vertexStride = assetManager.subMeshes[mesh].vertexStride,
                                                        .modelMatrixIndex = node->getModelMatrixIndex(),
                                                        .albedoTextureIndex = material.albedoTextureIndex,
                                                        .roughnessTextureIndex = material.roughnessTextureIndex,
@@ -961,20 +810,39 @@ class Renderer {
                                                        .lightCount = static_cast<uint32_t>(lights.size()),
                                                        .shadowSamplerIndex = shadowSamplerIndex,
                                                        .cameraPosition = activeCamera.position,
-                                                       .textureMask = material.textureMask,
+                                                       .materialFlags = material.flags,
                                                        .elementOffsetModel = currentFrame * MAX_FIXED_BUFFER,
                                                        .elementOffsetLight = currentFrame * MAX_FIXED_BUFFER,
+                                                       .metallic = material.metallic,
+                                                       .roughness = material.roughness,
                                                        .viewProjection = activeCamera.viewProjection};
 
                         cmd.pushConstants<PushConstants>((*currentPipeline)->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pushConstants);
-                        cmd.drawIndexed(subMeshes[mesh].indexCount, 1, 0, 0, 0);
+                        cmd.drawIndexed(assetManager.subMeshes[mesh].indexCount, 1, 0, 0, 0);
                     }
                 }
             }
         }
 
+        cmd.endRendering();
+    }
+
+    void recordOverlayPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
+        auto extent = swapchain->getSwapChainExtent();
+        vk::RenderingAttachmentInfo colorAttachment = {.imageView = swapchain->getSwapChainImageViews()[imageIndex],
+                                                       .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+                                                       .loadOp = vk::AttachmentLoadOp::eLoad,
+                                                       .storeOp = vk::AttachmentStoreOp::eStore};
+        vk::RenderingInfo renderInfo = {.renderArea = {.offset = {0, 0}, .extent = extent},
+                                        .layerCount = 1,
+                                        .colorAttachmentCount = 1,
+                                        .pColorAttachments = &colorAttachment};
+
+        cmd.beginRendering(renderInfo);
+        setFullscreenViewport(cmd, extent);
+
         // gizmos
-        auto& gizmoPipeline = pipelineManager->getGeoPipelines()[gizmoPipelineIndex];
+        auto& gizmoPipeline = pipelineManager->getPostProcessPipelines()[gizmoPipelineIndex];
         bindPipeline(cmd, *gizmoPipeline);
         LinePushConstants lineConstants = {.viewProjection = activeCamera.viewProjection};
         cmd.pushConstants<LinePushConstants>(*gizmoPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, lineConstants);
@@ -1014,9 +882,9 @@ class Renderer {
                                  .noiseIndex = ssaoNoiseTextureIndex,
                                  .noiseSamplerIndex = ssaoNoiseSamplerIndex,
                                  .resolution = glm::uvec2(extent.width, extent.height),
-                                 .radius = 0.5f,
-                                 .bias = 0.025f,
-                                 .power = 2.0f,
+                                 .radius = ssaoRadius,
+                                 .bias = ssaoBias,
+                                 .power = ssaoPower,
                                  .kernelSize = 32};
         cmd.pushConstants<SSAOPushConstants>(*ssaoPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, ssaoPC);
         cmd.draw(3, 1, 0, 0);
@@ -1077,8 +945,8 @@ class Renderer {
 
     void recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light) {
 
-        if (debugShowShadow < 3 && selectedNode != MAX_NODES) {
-            if (lights[(*nodes)[selectedNode]->getLightIndex()] == light) {
+        if (debugShowShadow < 3 && sceneGraph.selectedNode != MAX_NODES) {
+            if (lights[sceneGraph.getNodes()[sceneGraph.selectedNode]->getLightIndex()] == light) {
                 showShadowMapIndex = light.cascades[debugShowShadow].shadowMapIndex;
             }
         }
@@ -1147,7 +1015,7 @@ class Renderer {
             for (auto [shader, materials] : shaders) {
                 for (auto [material, node_mesh] : materials) {
                     for (auto [node, subMeshIndices] : node_mesh) {
-                        if (meshes[node->getMeshIndex()].freed == true) {
+                        if (assetManager.meshes[node->getMeshIndex()].freed == true) {
                             continue;
                         }
 
@@ -1160,7 +1028,7 @@ class Renderer {
 
                         // Per-submesh frustum culling
                         for (auto mesh : subMeshIndices) {
-                            const auto& subMesh = subMeshes[mesh];
+                            const auto& subMesh = assetManager.subMeshes[mesh];
 
                             // Add indirect draw command
                             indirectCommands.push_back({.indexCount = subMesh.indexCount,

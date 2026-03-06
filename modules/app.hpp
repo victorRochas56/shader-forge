@@ -41,7 +41,7 @@ class App {
         
         //load a default environment map on startup
         uint32_t cubeMapIndex =
-            renderer.loadCubemapFromFile("textures/sky2/posx.jpg", "textures/sky2/posy.jpg", "textures/sky2/posz.jpg", "textures/sky2/negx.jpg", "textures/sky2/negy.jpg", "textures/sky2/negz.jpg");
+            renderer.assetManager.loadCubemapFromFile("textures/sky2/posx.jpg", "textures/sky2/posy.jpg", "textures/sky2/posz.jpg", "textures/sky2/negx.jpg", "textures/sky2/negy.jpg", "textures/sky2/negz.jpg");
         renderer.getMaterials()[renderer.getFallBackMaterial()].environmentMapIndex = cubeMapIndex;
         
         //start of render loop
@@ -53,6 +53,7 @@ class App {
     GLFWwindow* window = nullptr;
     bool framebufferResized = false;
     SceneManager sceneManager;
+    MaterialEditorState materialEditorState;
 
     void initWindow() {
         glfwInit();
@@ -88,8 +89,8 @@ class App {
             //gizmos are used in "immediate mode" so cleared every frame
             renderer.gizmos->clearLineBuffer();
             //draw axes visualization for every node
-            for (int i = 0; i < renderer.getNodeCount(); i++) {
-                renderer.gizmos->drawAxes(renderer.getNodes()[i]->getTransform(), 0.15);
+            for (int i = 0; i < renderer.sceneGraph.getNodeCount(); i++) {
+                renderer.gizmos->drawAxes(renderer.sceneGraph.getNodes()[i]->getTransform(), 0.15);
             }
             //main draw loop
             renderer.drawFrame();
@@ -117,14 +118,27 @@ class App {
         ImGui::End();
 
         ImGui::Begin("node tree");
-        traverseNodeTree(renderer.getRootNode(), 0, renderer.selectedNode, &renderer);
+        traverseNodeTree(renderer.sceneGraph.getRootNode(), 0, renderer.sceneGraph.selectedNode, &renderer);
         ImGui::End();
-        if (renderer.selectedNode != MAX_NODES) {
-            renderer.getNodes()[renderer.selectedNode]->showInfo();
+        if (renderer.sceneGraph.selectedNode != MAX_NODES) {
+            renderer.sceneGraph.getNodes()[renderer.sceneGraph.selectedNode]->showInfo();
         }
         if (InputManager::getInstance().contextMenuShown) {
             showActionMenu(0, &renderer, InputManager::getInstance().contextMenuPinX, InputManager::getInstance().contextMenuPinY);
         }
+
+        showMaterialEditor(materialEditorState, &renderer);
+
+        ImGui::Begin("Toggles");
+        if(ImGui::Button("SSAO")){
+            renderer.toggleSSAO();
+        }
+        if(renderer.enableSSAO){
+            ImGui::SliderFloat("radius",&renderer.ssaoRadius,0.01f,10.0f);
+            ImGui::SliderFloat("bias",&renderer.ssaoBias,0.01f,0.1f);
+            ImGui::SliderFloat("power",&renderer.ssaoPower,0.01f,5.0f);
+        }
+        ImGui::End();
 
         //scenes.hpp
         ImGui::Begin("Scene Manager");
