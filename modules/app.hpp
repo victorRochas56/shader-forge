@@ -113,7 +113,7 @@ class App {
 
         
         ImGui::Begin("frame time");
-        std::string frame_time_str = std::to_string(frame_time.count() * 1000) + " ms";
+        std::string frame_time_str = frame_time.count()*1000 < 10 ? "0":"" + std::to_string(frame_time.count() * 1000) + " ms";
         ImGui::Text(frame_time_str.c_str());
         ImGui::End();
 

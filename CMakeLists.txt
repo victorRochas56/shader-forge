@@ -178,6 +178,11 @@ if(MSVC)
     target_compile_options(shader-forge PRIVATE /std:c++20 /Zc:__cplusplus)
 endif()
 
+target_compile_definitions(shader-forge PRIVATE
+    $<$<CONFIG:Debug>:DEBUG=1>
+    $<$<CONFIG:Release>:DEBUG=0>
+)
+
 # Link libraries
 target_link_libraries(shader-forge PRIVATE
     Vulkan::Vulkan

@@ -14,12 +14,12 @@
 
 enum MaterialFlags : uint32_t
 {
-    None =          0,
-    flipNormal =    1 << 0,
-    hasAlbedo =     1 << 1,
-    hasRoughness =  1 << 2,
-    hasMetallic =   1 << 3,
-    hasNormal =     1 << 4
+    NONE =          0,
+    FLIP_NORMAL =   1 << 0,
+    HAS_ALBEDO  =   1 << 1,
+    HAS_ROUGHNESS = 1 << 2,
+    HAS_METALLIC =  1 << 3,
+    HAS_NORMAL =    1 << 4
 };
 
 /*
@@ -64,15 +64,22 @@ struct SkyBoxPushConstants {
     glm::mat4 invViewProjMatrix;
 };
 
-struct DepthVisPushConstants {
-    uint32_t depthIndex;
-    uint32_t depthSamplerIndex;
-    uint32_t showShadowMap = 0xFFFFFFFF;
-    uint32_t shadowMapSamplerIndex;
+enum ImageVisFlags : uint32_t 
+{
+    DISABLE =           0,
+    ENABLE =            1 << 0,
+    LINEARIZE_DEPTH =   1 << 1 
+};
+
+struct ImageVisPushConstants {
+    uint32_t imageIndex;
+    uint32_t samplerIndex;
+    ImageVisFlags flags;
     float nearPlane;
     float farPlane;
-    uint32_t linearize;
-    uint32_t doDepthBuffering;
+    uint32_t padding0;
+    uint32_t padding1;
+    uint32_t padding2;
 };
 
 struct ShadowPushConstants {

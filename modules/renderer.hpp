@@ -121,6 +121,10 @@ class Renderer {
     vk::raii::Buffer                    indirectDrawBuffer = nullptr;
     vk::raii::DeviceMemory              indirectDrawBufferMemory = nullptr;
 
+    // Reusable staging vectors for shadow pass indirect draw building (cleared per cascade)
+    std::vector<DrawIndexedIndirectCommand> indirectCommands;
+    std::vector<ShadowDrawData>             drawDataList;
+
     vk::raii::Image                     shadowDepthImage = nullptr;
     vk::raii::DeviceMemory              shadowDepthMemory = nullptr;
     vk::raii::ImageView                 shadowDepthView = nullptr;
@@ -153,7 +157,9 @@ class Renderer {
 
     void initVulkan(uint32_t startWidth, uint32_t startHeight) {
         createInstance();
+#if DEBUG == 1
         setupDebugMessenger();
+#endif
         createSurface();
         device = std::make_unique<Device>(instance, requiredDeviceExtension, surface);
         msaaSamples = getMaxUsableSampleCount(*device);
@@ -260,12 +266,12 @@ class Renderer {
             pipelineManager->createPipeline<LinePushConstants>(PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eLineList, vk::CullModeFlagBits::eNone, vk::False, vk::False,
                                                                "shaders/line.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
         depthPipelineIndex =
-            pipelineManager->createPipeline<DepthVisPushConstants>(PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
+            pipelineManager->createPipeline<ImageVisPushConstants>(PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
                                                                    vk::False, "shaders/depth_view.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
 
         // default litshader / material
         fallbackLitShader = Shader{.sourceFile = "shaders/lit.spv", .pipelineIndex = litPipelineIndex};
-        MaterialFlags defaultTexMask = MaterialFlags::None; // see the material struct definition
+        MaterialFlags defaultTexMask = MaterialFlags::NONE; // see the material struct definition
         // texMask |= (1U << 0);
         // texMask |= (1U << 1);
         // texMask |= (1U << 3);
@@ -526,9 +532,10 @@ class Renderer {
                                               .applicationVersion = VK_MAKE_VERSION(1, 0, 0),
                                               .pEngineName = "No Engine",
                                               .engineVersion = VK_MAKE_VERSION(1, 0, 0),
-                                              .apiVersion = vk::ApiVersion14};
+                                              .apiVersion = vk::ApiVersion13};
         // Get the required layers
         std::vector<char const*> requiredLayers;
+#if DEBUG == 1
         requiredLayers.assign(validationLayers.begin(), validationLayers.end());
         // Check if the required layers are supported by the Vulkan implementation.
         auto layerProperties = context.enumerateInstanceLayerProperties();
@@ -537,6 +544,7 @@ class Renderer {
             })) {
             throw std::runtime_error("One or more required layers are not supported!");
         }
+#endif
         // get the required extensions
         auto requiredExtensions = getRequiredExtensions();
         // Check if the required extensions are supported by the Vulkan implementation.
@@ -778,13 +786,14 @@ class Renderer {
 
         // lit geometry
         vk::Buffer indexBufferHandle = descriptorSet->getVariableBuffer(indexBufferIndex);
+        cmd.bindIndexBuffer(indexBufferHandle, 0, vk::IndexType::eUint32);
         auto& geoPipelines = pipelineManager->getGeoPipelines();
-        for (auto [shader, materials] : shaders) {
+        for (const auto& [shader, materials] : shaders) {
             auto currentPipeline = &(geoPipelines[shader.pipelineIndex]);
             bindPipeline(cmd, **currentPipeline);
 
-            for (auto [material, node_mesh] : materials) {
-                for (auto [node, subMeshIndices] : node_mesh) {
+            for (const auto& [material, node_mesh] : materials) {
+                for (const auto& [node, subMeshIndices] : node_mesh) {
 
                     if (assetManager.meshes[node->getMeshIndex()].freed == true) {
                         for (uint32_t subMesh : assetManager.meshes[node->getMeshIndex()].subMeshes) {
@@ -796,10 +805,10 @@ class Renderer {
                         continue;
                     }
                     for (auto mesh : subMeshIndices) {
-                        cmd.bindIndexBuffer(indexBufferHandle, assetManager.subMeshes[mesh].indexOffset, vk::IndexType::eUint32);
-                        PushConstants pushConstants = {.vertexAllocationIndex = assetManager.subMeshes[mesh].vertexAllocationIndex,
-                                                       .vertexOffset = static_cast<uint32_t>(assetManager.subMeshes[mesh].vertexOffset),
-                                                       .vertexStride = assetManager.subMeshes[mesh].vertexStride,
+                        const auto& subMesh = assetManager.subMeshes[mesh];
+                        PushConstants pushConstants = {.vertexAllocationIndex = subMesh.vertexAllocationIndex,
+                                                       .vertexOffset = static_cast<uint32_t>(subMesh.vertexOffset),
+                                                       .vertexStride = subMesh.vertexStride,
                                                        .modelMatrixIndex = node->getModelMatrixIndex(),
                                                        .albedoTextureIndex = material.albedoTextureIndex,
                                                        .roughnessTextureIndex = material.roughnessTextureIndex,
@@ -818,7 +827,7 @@ class Renderer {
                                                        .viewProjection = activeCamera.viewProjection};
 
                         cmd.pushConstants<PushConstants>((*currentPipeline)->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pushConstants);
-                        cmd.drawIndexed(assetManager.subMeshes[mesh].indexCount, 1, 0, 0, 0);
+                        cmd.drawIndexed(subMesh.indexCount, 1, static_cast<uint32_t>(subMesh.indexOffset / sizeof(uint32_t)), 0, 0);
                     }
                 }
             }
@@ -927,8 +936,8 @@ class Renderer {
         auto& depthPipeline = pipelineManager->getPostProcessPipelines()[depthPipelineIndex];
         cmd.beginRendering(renderInfo);
         setFullscreenViewport(cmd, extent);
-        bindPipeline(cmd, *depthPipeline);
-        DepthVisPushConstants depthConstants = {.depthIndex = swapchain->getDepthResolveIndex(),
+        bindPipeline(cmd, *depthPipeline);//TODO implement a register of all viewable images, that can be passed to here for simple debug viewing
+        ImageVisPushConstants depthConstants = {.depthIndex = swapchain->getDepthResolveIndex(),
                                                 .depthSamplerIndex = depthSamplerIndex,
                                                 .showShadowMap = showShadowMapIndex,
                                                 .shadowMapSamplerIndex = shadowSamplerIndex,
@@ -936,7 +945,7 @@ class Renderer {
                                                 .farPlane = activeCamera.farPlane,
                                                 .linearize = 1,
                                                 .doDepthBuffering = depthView};
-        cmd.pushConstants<DepthVisPushConstants>(*depthPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, depthConstants);
+        cmd.pushConstants<ImageVisPushConstants>(*depthPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, depthConstants);
         cmd.draw(3, 1, 0, 0);
         cmd.endRendering();
 
@@ -1006,15 +1015,13 @@ class Renderer {
             std::array<Plane, 6> frustumPlanes = extractFrustumPlanes(lightSpaceMatrix);
 
             // Build indirect draw commands and shadow draw data with CPU frustum culling
-            std::vector<DrawIndexedIndirectCommand> indirectCommands;
-            std::vector<ShadowDrawData> drawDataList;
-            indirectCommands.reserve(1000); // Reserve ahead of loop
-            drawDataList.reserve(1000);
+            indirectCommands.clear();
+            drawDataList.clear();
 
             //basic culling for performance
-            for (auto [shader, materials] : shaders) {
-                for (auto [material, node_mesh] : materials) {
-                    for (auto [node, subMeshIndices] : node_mesh) {
+            for (const auto& [shader, materials] : shaders) {
+                for (const auto& [material, node_mesh] : materials) {
+                    for (const auto& [node, subMeshIndices] : node_mesh) {
                         if (assetManager.meshes[node->getMeshIndex()].freed == true) {
                             continue;
                         }

@@ -455,7 +455,7 @@ class SceneManager {
             ofs << "    ID : " << mat.materialID << std::endl;
             ofs << "    Name : " << mat.name << std::endl;
             ofs << "    Shader : " << mat.shaderSource.sourceFile << std::endl;
-            ofs << "    TextureMask : " << mat.flags << std::endl;
+            ofs << "    MaterialFlags : " << mat.flags << std::endl;
             ofs << "    Color : " << mat.color.r << "," << mat.color.g << "," << mat.color.b << "," << mat.color.a << std::endl;
             ofs << "    Metallic : " << mat.metallic << std::endl;
             ofs << "    Roughness : " << mat.roughness << std::endl;

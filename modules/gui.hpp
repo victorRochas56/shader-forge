@@ -164,6 +164,7 @@ struct MaterialEditorState {
     char metallicPath[256] = "";
     char roughnessPath[256] = "";
     char normalPath[256] = "";
+    bool flipNormal = false;
     char envMapPaths[6][256] = {"", "", "", "", "", ""}; // posX, posY, posZ, negX, negY, negZ
 
     void resetToDefaults() {
@@ -176,6 +177,7 @@ struct MaterialEditorState {
         metallicPath[0] = '\0';
         roughnessPath[0] = '\0';
         normalPath[0] = '\0';
+        flipNormal = false;
         for (int i = 0; i < 6; i++) envMapPaths[i][0] = '\0';
     }
 
@@ -291,6 +293,7 @@ void showMaterialEditor(MaterialEditorState& state, Renderer* renderer) {
     ImGui::SetNextItemWidth(300);
     ImGui::InputText("Normal", state.normalPath, sizeof(state.normalPath));
     browseButton("normal", state.normalPath, sizeof(state.normalPath));
+    ImGui::Checkbox("Flip Normal", &state.flipNormal);
 
     ImGui::Separator();
     ImGui::Text("Environment Map (6 faces)");
@@ -318,7 +321,7 @@ void showMaterialEditor(MaterialEditorState& state, Renderer* renderer) {
         if (strlen(state.albedoPath) > 0) {
             try {
                 mat.albedoTextureIndex = renderer->assetManager.loadTextureFromFile(state.albedoPath);
-                matFlags |= MaterialFlags::hasAlbedo;
+                matFlags |= MaterialFlags::HAS_ALBEDO;
             } catch (...) { mat.albedoTextureIndex = defaultMat.albedoTextureIndex; }
         } else {
             mat.albedoTextureIndex = defaultMat.albedoTextureIndex;
@@ -327,7 +330,7 @@ void showMaterialEditor(MaterialEditorState& state, Renderer* renderer) {
         if (strlen(state.roughnessPath) > 0) {
             try {
                 mat.roughnessTextureIndex = renderer->assetManager.loadTextureFromFile(state.roughnessPath, vk::Format::eR8G8B8A8Unorm);
-                matFlags |= MaterialFlags::hasRoughness;
+                matFlags |= MaterialFlags::HAS_ROUGHNESS;
             } catch (...) { mat.roughnessTextureIndex = defaultMat.roughnessTextureIndex; }
         } else {
             mat.roughnessTextureIndex = defaultMat.roughnessTextureIndex;
@@ -336,7 +339,7 @@ void showMaterialEditor(MaterialEditorState& state, Renderer* renderer) {
         if (strlen(state.metallicPath) > 0) {
             try {
                 mat.metallicTextureIndex = renderer->assetManager.loadTextureFromFile(state.metallicPath, vk::Format::eR8G8B8A8Unorm);
-                matFlags |= MaterialFlags::hasMetallic;
+                matFlags |= MaterialFlags::HAS_METALLIC;
             } catch (...) { mat.metallicTextureIndex = defaultMat.metallicTextureIndex; }
         } else {
             mat.metallicTextureIndex = defaultMat.metallicTextureIndex;
@@ -345,11 +348,12 @@ void showMaterialEditor(MaterialEditorState& state, Renderer* renderer) {
         if (strlen(state.normalPath) > 0) {
             try {
                 mat.normalTextureIndex = renderer->assetManager.loadTextureFromFile(state.normalPath, vk::Format::eR8G8B8A8Unorm);
-                matFlags |= MaterialFlags::hasNormal;
+                matFlags |= MaterialFlags::HAS_NORMAL;
             } catch (...) { mat.normalTextureIndex = defaultMat.normalTextureIndex; }
         } else {
             mat.normalTextureIndex = defaultMat.normalTextureIndex;
         }
+        if(state.flipNormal) matFlags |= MaterialFlags::FLIP_NORMAL; 
 
         mat.flags = static_cast<MaterialFlags>(matFlags);
 
