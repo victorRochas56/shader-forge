@@ -156,7 +156,7 @@ void Node::addLight(Light light) {
             // Initial layout transition from undefined to shader read optimal
             resourceManager->transitionImageLayout(nullptr, shadowMapImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal);
 
-            light.cascades[i].shadowMapIndex = renderer->getDescriptorSet().allocateTexture(std::move(shadowMapImage), std::move(shadowMapMemory), std::move(shadowMapImageView),"internal/csm_"+i);
+            light.cascades[i].shadowMapIndex = renderer->getDescriptorSet().allocateTexture(std::move(shadowMapImage), std::move(shadowMapMemory), std::move(shadowMapImageView),"internal/"+name+"/csm_"+std::to_string(i));
         }
     }
     // Allocate once in the single buffer that spans all frames
@@ -274,6 +274,7 @@ void Node::showLightInfo() {
                 cascadeLabel+= std::to_string(i);
                 ImGui::DragFloat(cascadeLabel.c_str(), &light.cascades[i].splitDistance);
             }
+            lightShadow = light.castsShadows;
             if (ImGui::Checkbox("Enable Shadows", &lightShadow)) {
                 light.castsShadows = lightShadow ? 1 : 0;
                 if (light.castsShadows == 1) {

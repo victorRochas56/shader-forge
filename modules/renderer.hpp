@@ -55,10 +55,8 @@ const std::vector validationLayers = {"VK_LAYER_KHRONOS_validation"};
 class Renderer {
   public:
     Camera                              activeCamera;
-    Gizmos*                             gizmos = nullptr;
     AssetManager                        assetManager;
     SceneGraph                          sceneGraph;
-
     uint32_t                            imageVisIndex = 0xFFFFFFFF;
     uint32_t                            imageVisSamplerIndex = 0xFFFFFFFF;
     ImageVisFlags                       imageVisFlags = ImageVisFlags::IMAGE_VIS_NONE;
@@ -200,7 +198,7 @@ class Renderer {
             descriptorSet->setBufferFrameOffset(shadowDrawDataBufferIndex, i, MAX_FIXED_BUFFER * i);
         }
 
-        gizmos = new Gizmos(MAX_GIZMO_LINES, &*descriptorSet);
+        Gizmos::init(MAX_GIZMO_LINES, &*descriptorSet);
 
         // indirect draw buffer for shadows
         std::tie(indirectDrawBuffer, indirectDrawBufferMemory) = resourceManager->createIndirectDrawBuffer();
@@ -840,11 +838,14 @@ class Renderer {
         setFullscreenViewport(cmd, extent);
 
         // gizmos
+        for(auto& line : Gizmos::getNoDiscardLines()){
+            Gizmos::drawLine(line.second);
+        }
         auto& gizmoPipeline = pipelineManager->getPostProcessPipelines()[gizmoPipelineIndex];
         bindPipeline(cmd, *gizmoPipeline);
         LinePushConstants lineConstants = {.viewProjection = activeCamera.viewProjection};
         cmd.pushConstants<LinePushConstants>(*gizmoPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, lineConstants);
-        cmd.draw(gizmos->getVertexCount(), 1, 0, 0);
+        cmd.draw(Gizmos::getVertexCount(), 1, 0, 0);
 
         // GUI
         ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), *cmd);

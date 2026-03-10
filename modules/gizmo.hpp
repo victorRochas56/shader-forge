@@ -10,24 +10,56 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/hash.hpp>
 
+struct PairVec3Hash {
+    size_t operator()(const std::pair<glm::vec3,glm::vec3>& p) const {
+        size_t h1 = std::hash<glm::vec3>{}(p.first);
+        size_t h2 = std::hash<glm::vec3>{}(p.second);
+        return h1 ^ (h2 << 1);
+    }
+};
+
 /*
 gizmo class allows drawing of colored axes, lines etc
-it handles this in "immediate mode", meaning it can be called 
+it handles this in "immediate mode", meaning it can be called
 to draw gizmos anywhere in the code and it will defer that
 to draw all of them in one call during rendering, before clearing itself again
 
 this means no gizmos have persistent state
 */
+
 class Gizmos {
   public:
-    Gizmos(uint32_t maxLinesCount, DescriptorSet* pDescriptorSet) : descriptorSet(pDescriptorSet) { lineBufferIndex = descriptorSet->createFixedBuffer<LineVertex>(maxLinesCount); }
+    Gizmos(const Gizmos&) = delete;
+    Gizmos& operator=(const Gizmos&) = delete;
 
-    uint32_t getVertexCount() { return activeVertexCount; }
+    static void init(uint32_t maxLinesCount, DescriptorSet* pDescriptorSet) {
+        auto& g = instance();
+        g.descriptorSet = pDescriptorSet;
+        g.lineBufferIndex = pDescriptorSet->createFixedBuffer<LineVertex>(maxLinesCount);
+    }
 
-    void drawLine(glm::vec3 start, glm::vec3 end, glm::vec4 color) { addLineToBuffer({.startPoint = start, .endPoint = end, .color = color}); }
-    void drawLine(Line line) { addLineToBuffer(line); }
+    static uint32_t getVertexCount() { return instance().activeVertexCount; }
 
-    void drawAxes(glm::mat4 transform, float length) {
+    static void drawLine(glm::vec3 start, glm::vec3 end, glm::vec4 color, bool noDiscard = false) {
+        auto& g = instance();
+        if(noDiscard) {
+            if(!g.noDiscardLines.contains(std::make_pair(start,end)))
+                g.noDiscardLines[std::make_pair(start,end)] = {.startPoint = start, .endPoint = end, .color = color};
+        }
+        g.addLineToBuffer({.startPoint = start, .endPoint = end, .color = color});
+    }
+
+    static void drawLine(Line line, bool noDiscard = false) {
+        auto& g = instance();
+        if(noDiscard) {
+            if(!g.noDiscardLines.contains(std::make_pair(line.startPoint,line.endPoint)))
+                g.noDiscardLines[std::make_pair(line.startPoint,line.endPoint)] = line;
+        }
+        g.addLineToBuffer(line);
+    }
+
+    static void drawAxes(glm::mat4 transform, float length) {
+        auto& g = instance();
         glm::vec3 translation;
         glm::vec3 scale;
         glm::quat rotation;
@@ -43,23 +75,34 @@ class Gizmos {
         lineZ.startPoint = glm::vec3(transform * glm::vec4(lineZ.startPoint, 1.0f));
         lineZ.endPoint = glm::vec3(transform * glm::vec4(lineZ.endPoint, 1.0f));
 
-        addLineToBuffer(lineX);
-        addLineToBuffer(lineY);
-        addLineToBuffer(lineZ);
+        g.addLineToBuffer(lineX);
+        g.addLineToBuffer(lineY);
+        g.addLineToBuffer(lineZ);
     }
-    void drawGrid(glm::vec3 origin, glm::vec3 normal, float spacing) {}
 
-    void drawWireFrame(Mesh mesh) {}
-    void drawWireFrame(SubMesh mesh) {}
+    static void drawGrid(glm::vec3 origin, glm::vec3 normal, float spacing) {}
+    static void drawWireFrame(Mesh mesh) {}
+    static void drawWireFrame(SubMesh mesh) {}
 
-    void clearLineBuffer() {
-        descriptorSet->clearFixedBuffer(lineBufferIndex);
-        activeVertexCount = 0;
+    static void clearLineBuffer() {
+        auto& g = instance();
+        g.descriptorSet->clearFixedBuffer(g.lineBufferIndex);
+        g.activeVertexCount = 0;
     }
+
+    static auto& getNoDiscardLines() { return instance().noDiscardLines; }
 
   private:
+    Gizmos() = default;
+
+    static Gizmos& instance() {
+        static Gizmos g;
+        return g;
+    }
+
+    std::unordered_map<std::pair<glm::vec3,glm::vec3>,Line,PairVec3Hash> noDiscardLines;
     DescriptorSet* descriptorSet = nullptr;
-    uint32_t lineBufferIndex;
+    uint32_t lineBufferIndex = 0;
     uint32_t activeVertexCount = 0;
 
     void addLineToBuffer(Line line) {

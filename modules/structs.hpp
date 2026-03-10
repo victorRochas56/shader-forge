@@ -334,5 +334,5 @@ template <> struct hash<Material> {
                (h6 << 6) ^ (h7 << 7) ^ (h8 << 8) ^ (h9 << 9) ^ (h10 << 10);
     }
 };
+} // namespace std
 
-}

@@ -20,6 +20,7 @@
 #include "input.hpp"
 #include "renderer.hpp"
 #include "scenes.hpp"
+#include "gizmo.hpp"
 
 #define GLM_FORCE_RADIANS
 #define GLM_DEPTH_ZERO_TO_ONE
@@ -33,6 +34,7 @@ class App {
     void run() {
         initWindow();
         InputManager::setRenderer(&renderer);
+        InputManager::setMaterialEditorState(&materialEditorState);
 
         renderer.setWindow(window);
         renderer.initVulkan(start_width, start_height);
@@ -87,10 +89,10 @@ class App {
             drawGui(frame_time);
 
             //gizmos are used in "immediate mode" so cleared every frame
-            renderer.gizmos->clearLineBuffer();
+            Gizmos::clearLineBuffer();
             //draw axes visualization for every node
             for (int i = 0; i < renderer.sceneGraph.getNodeCount(); i++) {
-                renderer.gizmos->drawAxes(renderer.sceneGraph.getNodes()[i]->getTransform(), 0.15);
+                Gizmos::drawAxes(renderer.sceneGraph.getNodes()[i]->getTransform(), 0.15);
             }
             //main draw loop
             renderer.drawFrame();

@@ -5,6 +5,8 @@
 #include "renderer.hpp"
 #include "scene_elements.hpp"
 
+#include "material_editor_state.hpp"
+
 /*
 reads inputs through GLFW, stores this frame's and last frame's inputs in 2 InputState structs (current & previous)
 */
@@ -107,6 +109,8 @@ class InputManager {
                 inst.renderer->imageVisIndex = 0xFFFFFFFF;
             } else if (inst.materialPickMode) {
                 inst.materialPickMode = false;
+            } else if (inst.materialEditorState != nullptr && inst.materialEditorState->showEditor) {
+                inst.materialEditorState->showEditor = false;
             } else {
                 inst.renderer->sceneGraph.deSelectNode();
             }
@@ -146,10 +150,12 @@ class InputManager {
     static void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {}
 
     static void setRenderer(Renderer* pRenderer) { getInstance().renderer = pRenderer; }
+    static void setMaterialEditorState(MaterialEditorState* state) { getInstance().materialEditorState = state; }
 
     InputState& getCurrentState() {return current;}
 
   private:
     InputState current, previous;
     Renderer* renderer;
+    MaterialEditorState* materialEditorState = nullptr;
 };
