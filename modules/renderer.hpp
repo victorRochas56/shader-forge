@@ -105,7 +105,7 @@ class Renderer {
     uint32_t                            depthSamplerIndex;
     uint32_t                            shadowSamplerIndex;
     uint32_t                            defaultNormalIndex;
-    uint32_t                            skyboxIndex;
+    uint32_t                            skyboxIndex = 0;
 
     //rendering data
     std::vector<Material>               materials;                                                             

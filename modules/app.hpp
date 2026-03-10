@@ -45,7 +45,8 @@ class App {
         uint32_t cubeMapIndex =
             renderer.assetManager.loadCubemapFromFile("textures/sky2/posx.jpg", "textures/sky2/posy.jpg", "textures/sky2/posz.jpg", "textures/sky2/negx.jpg", "textures/sky2/negy.jpg", "textures/sky2/negz.jpg");
         renderer.getMaterials()[renderer.getFallBackMaterial()].environmentMapIndex = cubeMapIndex;
-        
+        renderer.setSkyBox(cubeMapIndex);
+
         //start of render loop
         mainLoop();
     }

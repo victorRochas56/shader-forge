@@ -83,6 +83,7 @@ float4 fragMain(ScreenVertex input) : SV_Target
     // Sample cubemap
     uint width, height, mipLevels;
     cubemaps[pc.skyboxIndex].GetDimensions(0, width, height, mipLevels);
-    float maxMipLevel = float(mipLevels - 1);
-    return cubemaps[pc.skyboxIndex].SampleLevel(samplers[0], rayDirection,maxMipLevel);
+    //float maxMipLevel = float(mipLevels - 1);
+    //float lod = pc.blur * maxMipLevel;
+    return cubemaps[pc.skyboxIndex].Sample(samplers[0], rayDirection);
 }
