@@ -113,10 +113,10 @@ class InputManager {
         }
         if (inst.current.keyStates[GLFW_KEY_V] == GLFW_PRESS && inst.previous.keyStates[GLFW_KEY_V] != GLFW_PRESS) {
             inst.renderer->toggleVsync();
-        }
+        }/*
         if (inst.current.keyStates[GLFW_KEY_C] == GLFW_PRESS && inst.previous.keyStates[GLFW_KEY_C] != GLFW_PRESS) {
             inst.renderer->showShadowMap();
-        }/*
+        }
         if (current.keyStates[GLFW_KEY_R] == GLFW_PRESS && previous.keyStates[GLFW_KEY_R] != GLFW_PRESS) {
             renderer->showMap(SHOW_ROUGHNESS);
         }
@@ -125,10 +125,10 @@ class InputManager {
         }
         if (current.keyStates[GLFW_KEY_N] == GLFW_PRESS && previous.keyStates[GLFW_KEY_N] != GLFW_PRESS) {
             renderer->showMap(SHOW_NORMAL);
-        }*/
+        }
         if (inst.current.keyStates[GLFW_KEY_F] == GLFW_PRESS && inst.previous.keyStates[GLFW_KEY_F] != GLFW_PRESS) {
             inst.renderer->toggleDepthView();
-        }
+        }*/
         inst.canMove = true;
         inst.current.mouseDelta = inst.current.mousePos - inst.previous.mousePos;
         inst.previous = inst.current;

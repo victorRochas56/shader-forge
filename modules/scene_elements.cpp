@@ -156,7 +156,7 @@ void Node::addLight(Light light) {
             // Initial layout transition from undefined to shader read optimal
             resourceManager->transitionImageLayout(nullptr, shadowMapImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal);
 
-            light.cascades[i].shadowMapIndex = renderer->getDescriptorSet().allocateTexture(std::move(shadowMapImage), std::move(shadowMapMemory), std::move(shadowMapImageView));
+            light.cascades[i].shadowMapIndex = renderer->getDescriptorSet().allocateTexture(std::move(shadowMapImage), std::move(shadowMapMemory), std::move(shadowMapImageView),"internal/csm_"+i);
         }
     }
     // Allocate once in the single buffer that spans all frames
@@ -292,7 +292,7 @@ void Node::showLightInfo() {
                         resourceManager->transitionImageLayout(nullptr, shadowMapImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal);
 
                         light.cascades[i].shadowMapIndex =
-                            renderer->getDescriptorSet().allocateTexture(std::move(shadowMapImage), std::move(shadowMapMemory), std::move(shadowMapImageView));
+                            renderer->getDescriptorSet().allocateTexture(std::move(shadowMapImage), std::move(shadowMapMemory), std::move(shadowMapImageView),"internal/"+name+"/csm_"+std::to_string(i));
                     }
                 } else {
                     for (int i = 0; i < light.numCascades; i++) {

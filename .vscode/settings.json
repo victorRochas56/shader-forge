@@ -14,7 +14,7 @@
         "-DVCPKG_TARGET_TRIPLET=x64-windows"
     ],
     "cmake.configureSettings": {
-        "CMAKE_TOOLCHAIN_FILE": "C:\\Users\\vicro\\Desktop\\dev\\my\\vcpkg/scripts/buildsystems/vcpkg.cmake"
+        "CMAKE_TOOLCHAIN_FILE": "C:\\Users\\victo\\Desktop\\dev\\my\\vcpkg/scripts/buildsystems/vcpkg.cmake"
     },
     "C_Cpp.default.cppStandard": "c++20",
     "C_Cpp.default.cStandard": "c17",

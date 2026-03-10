@@ -67,6 +67,9 @@ float4 fragMain(VertexOutput input) : SV_Target0
 
     // Remap screen UVs to image UVs preserving aspect ratio
     float2 uv = input.texCoord;
+    if(pc.flags & 1<<1) {
+        uv.y = 1 - uv.y;
+    }
     float ratio = pc.imageAspect / pc.screenAspect;
     if (ratio > 1.0) {
         // image wider than screen -> letterbox (bars top/bottom)
@@ -83,12 +86,7 @@ float4 fragMain(VertexOutput input) : SV_Target0
     float4 color = textures[pc.imageIndex].Sample(samplers[pc.samplerIndex], uv);
 
     if(pc.flags & 1) { // LINEARIZE_DEPTH
-        float depth = color.r;
-        float linearDepth = (2.0 * pc.nearPlane) /
-                            (pc.farPlane + pc.nearPlane -
-                            depth * (pc.farPlane - pc.nearPlane));
-        depth = pow(linearDepth, 0.5);
-        return float4(depth, depth, depth, 1.0);
+        return float4(color.r,color.r,color.r, 1.0);
     }
 
     return color;

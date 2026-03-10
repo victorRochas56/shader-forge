@@ -61,6 +61,7 @@ class Renderer {
 
     uint32_t                            imageVisIndex = 0xFFFFFFFF;
     uint32_t                            imageVisSamplerIndex = 0xFFFFFFFF;
+    ImageVisFlags                       imageVisFlags = ImageVisFlags::IMAGE_VIS_NONE;
 
   private:
     GLFWwindow*                         window = nullptr;
@@ -512,21 +513,6 @@ class Renderer {
         }
     }
 
-    // debugging shadows TODO : make access cleaner
-    uint32_t debugShowShadow = 3;
-    uint32_t showShadowMapIndex = 0xFFFFFFFF;
-    void showShadowMap() {
-        debugShowShadow++;
-        if (debugShowShadow == 3) {
-            showShadowMapIndex = 0xFFFFFFFF;
-            return;
-        }
-        if (debugShowShadow >= 4) {
-            debugShowShadow = 0;
-            return;
-        }
-    }
-
 
   private:
 /////=================================================INITIALIZATION HELPER FUNCTIONS=================================================/////
@@ -736,7 +722,7 @@ class Renderer {
         if (enableSSAO && ssaoPipelineIndex != 0xFFFFFFFF)
             recordSSAOPass(cmd, imageIndex);
             
-        if (depthView || debugShowShadow < 4 || imageVisIndex != 0xFFFFFFFF)
+        if (depthView || imageVisIndex != 0xFFFFFFFF)
             recordImageVisPass(cmd, imageIndex);
 
         recordOverlayPass(cmd, imageIndex);
@@ -946,7 +932,7 @@ class Renderer {
             : static_cast<float>(extent.width) / static_cast<float>(extent.height);
         ImageVisPushConstants depthConstants = {.imageIndex = imageVisIndex,
                                                 .samplerIndex = defaultSamplerIndex,
-                                                .flags = depthView ? ImageVisFlags::LINEARIZE_DEPTH : ImageVisFlags::IMAGE_VIS_NONE,
+                                                .flags = imageVisFlags,
                                                 .nearPlane = activeCamera.nearPlane,
                                                 .farPlane = activeCamera.farPlane,
                                                 .imageAspect = imgAspect,
@@ -959,11 +945,6 @@ class Renderer {
 
     void recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light) {
 
-        if (debugShowShadow < 3 && sceneGraph.selectedNode != MAX_NODES) {
-            if (lights[sceneGraph.getNodes()[sceneGraph.selectedNode]->getLightIndex()] == light) {
-                showShadowMapIndex = light.cascades[debugShowShadow].shadowMapIndex;
-            }
-        }
         uint32_t cascadeCount = 1;
         TextureResource* shadowMap = nullptr;
         uint32_t shadowMapResolution = light.shadowResolution;

@@ -67,8 +67,28 @@ struct SkyBoxPushConstants {
 enum ImageVisFlags : uint32_t 
 {
     IMAGE_VIS_NONE =    0,
-    LINEARIZE_DEPTH =   1 << 0 
+    B_W_IMAGE =         1 << 0,
+    FLIP_VERTICAL =     1 << 1
 };
+
+inline ImageVisFlags operator|(ImageVisFlags a, ImageVisFlags b) {
+    return static_cast<ImageVisFlags>(static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
+}
+inline ImageVisFlags& operator|=(ImageVisFlags& a, ImageVisFlags b) {
+    return a = a | b;
+}
+inline ImageVisFlags operator&(ImageVisFlags a, ImageVisFlags b) {
+    return static_cast<ImageVisFlags>(static_cast<uint32_t>(a) & static_cast<uint32_t>(b));
+}
+inline ImageVisFlags& operator&=(ImageVisFlags& a, ImageVisFlags b) {
+    return a = a & b;
+}
+inline ImageVisFlags operator^(ImageVisFlags a, ImageVisFlags b) {
+    return static_cast<ImageVisFlags>(static_cast<uint32_t>(a) ^ static_cast<uint32_t>(b));
+}
+inline ImageVisFlags& operator^=(ImageVisFlags& a, ImageVisFlags b) {
+    return a = a ^ b;
+}
 
 struct ImageVisPushConstants {
     uint32_t imageIndex;

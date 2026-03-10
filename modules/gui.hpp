@@ -439,6 +439,14 @@ void showImageViewList(Renderer* renderer) {
         if (ImGui::Button("Clear Selection")) {
             renderer->imageVisIndex = 0xFFFFFFFF;
         }
+        ImGui::SameLine();
+        if (ImGui::Button("B&W")){
+            renderer->imageVisFlags ^= ImageVisFlags::B_W_IMAGE;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Flip Y")){
+            renderer->imageVisFlags ^= ImageVisFlags::FLIP_VERTICAL;
+        }
     }
 
     int i = 0;
