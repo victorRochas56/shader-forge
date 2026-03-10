@@ -14,6 +14,8 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+#include <filesystem>
+
 #ifdef _WIN32
 #include <windows.h>
 #include <commdlg.h>
@@ -31,7 +33,10 @@ static std::string openFileDialog(const char* filter = "Image Files\0*.png;*.jpg
     ofn.nMaxFile = MAX_PATH;
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
     if (GetOpenFileNameA(&ofn)) {
-        return std::string(filename);
+        std::filesystem::path absPath(filename);
+        std::filesystem::path relPath = std::filesystem::relative(absPath, std::filesystem::current_path());
+        std::string result = relPath.generic_string(); // forward slashes
+        return result;
     }
     return "";
 }
@@ -430,12 +435,29 @@ void showMaterialEditor(MaterialEditorState& state, Renderer* renderer) {
 void showImageViewList(Renderer* renderer) {
     ImGui::Begin("Image Views");
 
-    for(const TextureResource& img : renderer->getDescriptorSet().getTextureResources()){
-        ImGui::Button()
+    if (renderer->imageVisIndex != 0xFFFFFFFF) {
+        if (ImGui::Button("Clear Selection")) {
+            renderer->imageVisIndex = 0xFFFFFFFF;
+        }
+    }
+
+    int i = 0;
+    for (const TextureResource& img : renderer->getDescriptorSet().getTextureResources()) {
+        if(img.source.empty()){
+            i++;
+            continue;
+        }
+        bool selected = (renderer->imageVisIndex == static_cast<uint32_t>(i));
+        if (selected) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+        if (ImGui::Button(img.source.c_str())) {
+            renderer->imageVisIndex = (selected) ? 0xFFFFFFFF : i;
+        }
+        if (selected) ImGui::PopStyleColor();
+        i++;
     }
 
     ImGui::End();
-};
+}
 
 void showActionMenu(uint32_t context, Renderer* renderer, float posX, float posY) {
     ImGui::SetNextWindowPos(ImVec2{posX, posY});

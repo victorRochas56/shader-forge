@@ -103,7 +103,9 @@ class InputManager {
         }
 
         if (inst.current.keyStates[GLFW_KEY_ESCAPE] == GLFW_PRESS && inst.previous.keyStates[GLFW_KEY_ESCAPE] != GLFW_PRESS) {
-            if (inst.materialPickMode) {
+            if (inst.renderer->imageVisIndex != 0xFFFFFFFF) {
+                inst.renderer->imageVisIndex = 0xFFFFFFFF;
+            } else if (inst.materialPickMode) {
                 inst.materialPickMode = false;
             } else {
                 inst.renderer->sceneGraph.deSelectNode();

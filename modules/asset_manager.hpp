@@ -98,8 +98,8 @@ class AssetManager {
             return loadedTextures[filePath];
         }
 
-        auto [image, memory, view] = resourceManager->loadTextureFromFile(filePath, format);
-        uint32_t allocIndex = descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(view), filePath);
+        auto [image, memory, view, texW, texH] = resourceManager->loadTextureFromFile(filePath, format);
+        uint32_t allocIndex = descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(view), filePath, false, texW, texH);
         loadedTextures[filePath] = allocIndex;
         return allocIndex;
     }

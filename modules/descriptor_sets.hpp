@@ -33,11 +33,15 @@ struct TextureResource {
     std::optional<vk::raii::Image> image;
     std::optional<vk::raii::DeviceMemory> memory;
     std::string source;
+    uint32_t width = 0;
+    uint32_t height = 0;
     void reset() {
         imageView.reset();
         image.reset();
         memory.reset();
         source.clear();
+        width = 0;
+        height = 0;
     }
     bool isEmpty() const { return !imageView.has_value(); }
 };
@@ -296,7 +300,7 @@ class DescriptorSet {
     }
 
     //allocates a texture on the gpu in the bindless set, returns its index
-    uint32_t allocateTexture(vk::raii::Image image, vk::raii::DeviceMemory memory, vk::raii::ImageView imageView, std::string source = "", bool isCubeMap = false) {
+    uint32_t allocateTexture(vk::raii::Image image, vk::raii::DeviceMemory memory, vk::raii::ImageView imageView, std::string source = "", bool isCubeMap = false, uint32_t texWidth = 0, uint32_t texHeight = 0) {
 #if DEBUG == 1
         debugDescriptorSetState("before_texture_allocation");
 #endif
@@ -312,6 +316,8 @@ class DescriptorSet {
             textureResources[index].image = std::move(image);
             textureResources[index].memory = std::move(memory);
             textureResources[index].source = source;
+            textureResources[index].width = texWidth;
+            textureResources[index].height = texHeight;
         } else {
             index = textureResources.size();
             TextureResource resource;
@@ -319,6 +325,8 @@ class DescriptorSet {
             resource.image = std::move(image);
             resource.memory = std::move(memory);
             resource.source = source;
+            resource.width = texWidth;
+            resource.height = texHeight;
             textureResources.emplace_back(std::move(resource));
         }
         vk::DescriptorImageInfo imageInfo{.imageView = *textureResources[index].imageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal};
@@ -334,11 +342,13 @@ class DescriptorSet {
         return index;
     }
 
-    void updateTexture(uint32_t index, vk::raii::Image image, vk::raii::DeviceMemory memory, vk::raii::ImageView imageView, std::string source = "", bool isCubeMap = false) {
+    void updateTexture(uint32_t index, vk::raii::Image image, vk::raii::DeviceMemory memory, vk::raii::ImageView imageView, std::string source = "", bool isCubeMap = false, uint32_t texWidth = 0, uint32_t texHeight = 0) {
         textureResources[index].imageView = std::move(imageView);
         textureResources[index].image = std::move(image);
         textureResources[index].memory = std::move(memory);
         textureResources[index].source = source;
+        textureResources[index].width = texWidth;
+        textureResources[index].height = texHeight;
 
         vk::DescriptorImageInfo imageInfo{.imageView = *textureResources[index].imageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal};
         vk::WriteDescriptorSet write{.dstSet = *descriptorSet,

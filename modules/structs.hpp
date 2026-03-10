@@ -14,7 +14,7 @@
 
 enum MaterialFlags : uint32_t
 {
-    NONE =          0,
+    MAT_NONE =      0,
     FLIP_NORMAL =   1 << 0,
     HAS_ALBEDO  =   1 << 1,
     HAS_ROUGHNESS = 1 << 2,
@@ -66,9 +66,8 @@ struct SkyBoxPushConstants {
 
 enum ImageVisFlags : uint32_t 
 {
-    NONE =              0,
-    ENABLED =           1 << 0,
-    LINEARIZE_DEPTH =   1 << 1 
+    IMAGE_VIS_NONE =    0,
+    LINEARIZE_DEPTH =   1 << 0 
 };
 
 struct ImageVisPushConstants {
@@ -77,9 +76,9 @@ struct ImageVisPushConstants {
     ImageVisFlags flags;
     float nearPlane;
     float farPlane;
+    float imageAspect;
+    float screenAspect;
     uint32_t padding0;
-    uint32_t padding1;
-    uint32_t padding2;
 };
 
 struct ShadowPushConstants {

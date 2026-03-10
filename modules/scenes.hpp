@@ -199,7 +199,7 @@ class SceneManager {
                 material.name = value;
             } else if (key == "Shader") {
                 material.shaderSource.sourceFile = value;
-            } else if (key == "TextureMask") {
+            } else if (key == "TextureMask" || key == "MaterialFlags") {
                 material.flags = static_cast<MaterialFlags>(std::stoul(value));
             } else if (key == "Color") {
                 auto parts = split(value, ',');
@@ -287,6 +287,20 @@ class SceneManager {
                 std::cerr << "Failed to load environment map: " << environmentMapPath << " - " << e.what() << std::endl;
             }
         }
+
+        // Set HAS_* flags based on which textures were actually loaded
+        uint32_t defaultAlbedo = renderer.getMaterials()[renderer.getFallBackMaterial()].albedoTextureIndex;
+        uint32_t defaultRoughness = renderer.getMaterials()[renderer.getFallBackMaterial()].roughnessTextureIndex;
+        uint32_t defaultMetallic = renderer.getMaterials()[renderer.getFallBackMaterial()].metallicTextureIndex;
+        uint32_t defaultNormal = renderer.getMaterials()[renderer.getFallBackMaterial()].normalTextureIndex;
+        if (!albedoPath.empty() && material.albedoTextureIndex != defaultAlbedo)
+            material.flags = static_cast<MaterialFlags>(material.flags | HAS_ALBEDO);
+        if (!roughnessPath.empty() && material.roughnessTextureIndex != defaultRoughness)
+            material.flags = static_cast<MaterialFlags>(material.flags | HAS_ROUGHNESS);
+        if (!metallicPath.empty() && material.metallicTextureIndex != defaultMetallic)
+            material.flags = static_cast<MaterialFlags>(material.flags | HAS_METALLIC);
+        if (!normalPath.empty() && material.normalTextureIndex != defaultNormal)
+            material.flags = static_cast<MaterialFlags>(material.flags | HAS_NORMAL);
 
         // Add material to renderer and store the mapping
         uint32_t materialIndex = renderer.addMaterial(material);

@@ -181,10 +181,10 @@ class Swapchain {
 
         if (depthResolveIndex == 0xFFFFFFFF) {
             // First time: allocate new slot
-            depthResolveIndex = descriptorSet.allocateTexture(std::move(depthResolveImage), std::move(depthResolveImageMemory), std::move(depthResolveImageView));
+            depthResolveIndex = descriptorSet.allocateTexture(std::move(depthResolveImage), std::move(depthResolveImageMemory), std::move(depthResolveImageView),"internal/depthResolve");
         } else {
             // Subsequent times: update existing slot
-            descriptorSet.updateTexture(depthResolveIndex, std::move(depthResolveImage), std::move(depthResolveImageMemory), std::move(depthResolveImageView));
+            descriptorSet.updateTexture(depthResolveIndex, std::move(depthResolveImage), std::move(depthResolveImageMemory), std::move(depthResolveImageView),"internal/depthResolve");
         }
     }
 };

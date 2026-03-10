@@ -128,6 +128,8 @@ class App {
         }
 
         showMaterialEditor(materialEditorState, &renderer);
+        
+        showImageViewList(&renderer);
 
         ImGui::Begin("Toggles");
         if(ImGui::Button("SSAO")){

@@ -190,12 +190,13 @@ class ResourceManager {
         // don't free texture/sampler as they might be shared
     }
 
-    std::tuple<vk::raii::Image, vk::raii::DeviceMemory, vk::raii::ImageView> loadTextureFromFile(const std::string& path, vk::Format format = vk::Format::eR8G8B8A8Srgb,
+    std::tuple<vk::raii::Image, vk::raii::DeviceMemory, vk::raii::ImageView, uint32_t, uint32_t> loadTextureFromFile(const std::string& path, vk::Format format = vk::Format::eR8G8B8A8Srgb,
                                                                                                  vk::ImageType imageType = vk::ImageType::e2D,
                                                                                                  vk::ImageViewType viewType = vk::ImageViewType::e2D) {
         auto textureData = loadTextureFromFileImpl(path);
         auto [image, memory, imageView] = createTexture(textureData.data, textureData.width, textureData.height, format, imageType, viewType);
-        return std::make_tuple(std::move(image), std::move(memory), std::move(imageView));
+        return std::make_tuple(std::move(image), std::move(memory), std::move(imageView),
+                               static_cast<uint32_t>(textureData.width), static_cast<uint32_t>(textureData.height));
     }
 
     std::tuple<vk::raii::Image, vk::raii::DeviceMemory, vk::raii::ImageView> loadCubeMapFromFile(std::string posX, std::string negX, std::string posY, std::string negY,
