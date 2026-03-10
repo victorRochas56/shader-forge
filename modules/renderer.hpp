@@ -118,14 +118,18 @@ class Renderer {
     uint32_t                            modelMatrixBufferIndex;
     uint32_t                            lightBufferIndex;
     uint32_t                            shadowDrawDataBufferIndex;
+    uint32_t                            litDrawDataBufferIndex;
 
-    // Persistent buffers for indirect drawing in shadow map
-    vk::raii::Buffer                    indirectDrawBuffer = nullptr;
+    // Persistent buffers for indirect drawing
+    vk::raii::Buffer                    indirectDrawBuffer = nullptr;      // shadow pass
     vk::raii::DeviceMemory              indirectDrawBufferMemory = nullptr;
+    vk::raii::Buffer                    litIndirectDrawBuffer = nullptr;   // lit geometry pass
+    vk::raii::DeviceMemory              litIndirectDrawBufferMemory = nullptr;
 
-    // Reusable staging vectors for shadow pass indirect draw building (cleared per cascade)
+    // Reusable staging vectors (cleared per draw recording)
     std::vector<DrawIndexedIndirectCommand> indirectCommands;
     std::vector<ShadowDrawData>             drawDataList;
+    std::vector<LitDrawData>                litDrawDataList;
 
     vk::raii::Image                     shadowDepthImage = nullptr;
     vk::raii::DeviceMemory              shadowDepthMemory = nullptr;
@@ -198,10 +202,19 @@ class Renderer {
             descriptorSet->setBufferFrameOffset(shadowDrawDataBufferIndex, i, MAX_FIXED_BUFFER * i);
         }
 
+        // Gizmos registers its vertex buffer (fixed buffer) here — must come before litDrawData
+        // so the binding order matches what line.slang expects (lineVerts at binding 7)
         Gizmos::init(MAX_GIZMO_LINES, &*descriptorSet);
 
-        // indirect draw buffer for shadows
-        std::tie(indirectDrawBuffer, indirectDrawBufferMemory) = resourceManager->createIndirectDrawBuffer();
+        // litDrawData comes after gizmos, so it lands at binding 8
+        litDrawDataBufferIndex = descriptorSet->createFixedBuffer<LitDrawData>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
+        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            descriptorSet->setBufferFrameOffset(litDrawDataBufferIndex, i, MAX_FIXED_BUFFER * i);
+        }
+
+        // indirect draw buffers (separate for shadow and lit passes)
+        std::tie(indirectDrawBuffer, indirectDrawBufferMemory)       = resourceManager->createIndirectDrawBuffer();
+        std::tie(litIndirectDrawBuffer, litIndirectDrawBufferMemory) = resourceManager->createIndirectDrawBuffer();
 
         // after having created all our desire buffers we can initialize the descriptor set
         descriptorSet->createDescriptorSet();
@@ -262,8 +275,8 @@ class Renderer {
             pipelineManager->createPipeline<BlurPushConstants>(PipelineCategory::BEFORE_GEOMETRY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
                                                                vk::False, "shaders/blur.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
 
-        litPipelineIndex = pipelineManager->createPipeline<PushConstants>(PipelineCategory::GEOMETRY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eBack, vk::True,
-                                                                          vk::True, "shaders/lit.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
+        litPipelineIndex = pipelineManager->createPipeline<LitPushConstants>(PipelineCategory::GEOMETRY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eBack, vk::True,
+                                                                             vk::True, "shaders/lit.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
         gizmoPipelineIndex =
             pipelineManager->createPipeline<LinePushConstants>(PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eLineList, vk::CullModeFlagBits::eNone, vk::False, vk::False,
                                                                "shaders/line.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
@@ -771,13 +784,18 @@ class Renderer {
         cmd.pushConstants<SkyBoxPushConstants>(*skyboxPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, skyboxConstants);
         cmd.draw(3, 1, 0, 0);
 
-        // lit geometry
+        // lit geometry — indirect draw
         vk::Buffer indexBufferHandle = descriptorSet->getVariableBuffer(indexBufferIndex);
         cmd.bindIndexBuffer(indexBufferHandle, 0, vk::IndexType::eUint32);
         auto& geoPipelines = pipelineManager->getGeoPipelines();
         for (const auto& [shader, materials] : shaders) {
             auto currentPipeline = &(geoPipelines[shader.pipelineIndex]);
             bindPipeline(cmd, **currentPipeline);
+
+            indirectCommands.clear();
+            litDrawDataList.clear();
+
+            std::array<Plane, 6> frustumPlanes = extractFrustumPlanes(activeCamera.viewProjection);
 
             for (const auto& [material, node_mesh] : materials) {
                 for (const auto& [node, subMeshIndices] : node_mesh) {
@@ -791,32 +809,70 @@ class Renderer {
                         assetManager.freeMeshes.push(node->getMeshIndex());
                         continue;
                     }
+
+                    if (node->isBoundingBoxValid()) {
+                        if (!isAABBInFrustum(node->getBoundingBoxMin(), node->getBoundingBoxMax(), frustumPlanes)) {
+                            continue;
+                        }
+                    }
+
                     for (auto mesh : subMeshIndices) {
                         const auto& subMesh = assetManager.subMeshes[mesh];
-                        PushConstants pushConstants = {.vertexAllocationIndex = subMesh.vertexAllocationIndex,
-                                                       .vertexOffset = static_cast<uint32_t>(subMesh.vertexOffset),
-                                                       .vertexStride = subMesh.vertexStride,
-                                                       .modelMatrixIndex = node->getModelMatrixIndex(),
-                                                       .albedoTextureIndex = material.albedoTextureIndex,
-                                                       .roughnessTextureIndex = material.roughnessTextureIndex,
-                                                       .metallicTextureIndex = material.metallicTextureIndex,
-                                                       .normalTextureIndex = material.normalTextureIndex,
-                                                       .environmentMapIndex = material.environmentMapIndex,
-                                                       .samplerIndex = defaultSamplerIndex,
-                                                       .lightCount = static_cast<uint32_t>(lights.size()),
-                                                       .shadowSamplerIndex = shadowSamplerIndex,
-                                                       .cameraPosition = activeCamera.position,
-                                                       .materialFlags = material.flags,
-                                                       .elementOffsetModel = currentFrame * MAX_FIXED_BUFFER,
-                                                       .elementOffsetLight = currentFrame * MAX_FIXED_BUFFER,
-                                                       .metallic = material.metallic,
-                                                       .roughness = material.roughness,
-                                                       .viewProjection = activeCamera.viewProjection};
 
-                        cmd.pushConstants<PushConstants>((*currentPipeline)->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pushConstants);
-                        cmd.drawIndexed(subMesh.indexCount, 1, static_cast<uint32_t>(subMesh.indexOffset / sizeof(uint32_t)), 0, 0);
+                        glm::vec3 subWorldMin, subWorldMax;
+                        transformAABBToWorldSpace(subMesh.boundingBoxMin, subMesh.boundingBoxMax, node->getTransform(), subWorldMin, subWorldMax);
+                        if (!isAABBInFrustum(subWorldMin, subWorldMax, frustumPlanes)) {
+                            continue;
+                        }
+
+                        indirectCommands.push_back({.indexCount    = subMesh.indexCount,
+                                                    .instanceCount = 1,
+                                                    .firstIndex    = static_cast<uint32_t>(subMesh.indexOffset / sizeof(uint32_t)),
+                                                    .vertexOffset  = 0,
+                                                    .firstInstance = 0});
+
+                        litDrawDataList.push_back({.vertexAllocationIndex = subMesh.vertexAllocationIndex,
+                                                   .vertexOffset          = static_cast<uint32_t>(subMesh.vertexOffset),
+                                                   .vertexStride          = subMesh.vertexStride,
+                                                   .modelMatrixIndex      = node->getModelMatrixIndex(),
+                                                   .albedoTextureIndex    = material.albedoTextureIndex,
+                                                   .roughnessTextureIndex = material.roughnessTextureIndex,
+                                                   .metallicTextureIndex  = material.metallicTextureIndex,
+                                                   .normalTextureIndex    = material.normalTextureIndex,
+                                                   .environmentMapIndex   = material.environmentMapIndex,
+                                                   .materialFlags         = static_cast<uint32_t>(material.flags),
+                                                   .metallic              = material.metallic,
+                                                   .roughness             = material.roughness});
                     }
                 }
+            }
+
+            if (!indirectCommands.empty()) {
+                // Upload indirect commands into this frame's slot to avoid overwriting in-flight data
+                vk::DeviceSize frameByteOffset = currentFrame * MAX_INDIRECT_COMMANDS * sizeof(DrawIndexedIndirectCommand);
+                void* data = litIndirectDrawBufferMemory.mapMemory(frameByteOffset, indirectCommands.size() * sizeof(DrawIndexedIndirectCommand));
+                memcpy(data, indirectCommands.data(), indirectCommands.size() * sizeof(DrawIndexedIndirectCommand));
+                litIndirectDrawBufferMemory.unmapMemory();
+
+                // Upload per-draw data
+                auto* litDataPtr = descriptorSet->getFixedBufferMappedData<LitDrawData>(litDrawDataBufferIndex);
+                if (litDataPtr) {
+                    uint32_t frameOffset = currentFrame * MAX_FIXED_BUFFER;
+                    memcpy(&litDataPtr[frameOffset], litDrawDataList.data(), litDrawDataList.size() * sizeof(LitDrawData));
+                }
+
+                // Push frame-level constants (same for every draw in this call)
+                LitPushConstants pushConstants = {.samplerIndex      = defaultSamplerIndex,
+                                                  .lightCount        = static_cast<uint32_t>(lights.size()),
+                                                  .shadowSamplerIndex= shadowSamplerIndex,
+                                                  .elementOffsetModel= currentFrame * MAX_FIXED_BUFFER,
+                                                  .elementOffsetLight= currentFrame * MAX_FIXED_BUFFER,
+                                                  .elementOffsetLit  = currentFrame * MAX_FIXED_BUFFER,
+                                                  .cameraPosition    = activeCamera.position,
+                                                  .viewProjection    = activeCamera.viewProjection};
+                cmd.pushConstants<LitPushConstants>((*currentPipeline)->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pushConstants);
+
+                cmd.drawIndexedIndirect(*litIndirectDrawBuffer, frameByteOffset, static_cast<uint32_t>(indirectCommands.size()), sizeof(DrawIndexedIndirectCommand));
             }
         }
 
@@ -1021,8 +1077,14 @@ class Renderer {
                         }
 
                         // Per-submesh frustum culling
-                        for (auto mesh : subMeshIndices) {
-                            const auto& subMesh = assetManager.subMeshes[mesh];
+                        for (auto meshIdx : subMeshIndices) {
+                            const auto& subMesh = assetManager.subMeshes[meshIdx];
+
+                            glm::vec3 subWorldMin, subWorldMax;
+                            transformAABBToWorldSpace(subMesh.boundingBoxMin, subMesh.boundingBoxMax, node->getTransform(), subWorldMin, subWorldMax);
+                            if (!isAABBInFrustum(subWorldMin, subWorldMax, frustumPlanes)) {
+                                continue;
+                            }
 
                             // Add indirect draw command
                             indirectCommands.push_back({.indexCount = subMesh.indexCount,
@@ -1043,7 +1105,8 @@ class Renderer {
 
             // build the indirect draw command and submit it
             if (!indirectCommands.empty()) {
-                void* data = indirectDrawBufferMemory.mapMemory(0, indirectCommands.size() * sizeof(DrawIndexedIndirectCommand));
+                vk::DeviceSize frameByteOffset = currentFrame * MAX_INDIRECT_COMMANDS * sizeof(DrawIndexedIndirectCommand);
+                void* data = indirectDrawBufferMemory.mapMemory(frameByteOffset, indirectCommands.size() * sizeof(DrawIndexedIndirectCommand));
                 memcpy(data, indirectCommands.data(), indirectCommands.size() * sizeof(DrawIndexedIndirectCommand));
                 indirectDrawBufferMemory.unmapMemory();
 
@@ -1062,7 +1125,7 @@ class Renderer {
                 cmd.pushConstants<ShadowPushConstants>(*currentPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pushConstants);
 
                 cmd.bindIndexBuffer(indexBufferHandle, 0, vk::IndexType::eUint32);
-                cmd.drawIndexedIndirect(*indirectDrawBuffer, 0, static_cast<uint32_t>(indirectCommands.size()), sizeof(DrawIndexedIndirectCommand));
+                cmd.drawIndexedIndirect(*indirectDrawBuffer, frameByteOffset, static_cast<uint32_t>(indirectCommands.size()), sizeof(DrawIndexedIndirectCommand));
             }
             cmd.endRendering();
 

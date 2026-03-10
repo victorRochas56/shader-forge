@@ -43,8 +43,8 @@ class ResourceManager {
 
         vk::raii::Buffer indirectDrawBuffer = nullptr;
         vk::raii::DeviceMemory indirectDrawBufferMemory = nullptr;
-        // Create persistent indirect draw buffer (max 10000 draws)
-        vk::DeviceSize indirectBufferSize = sizeof(DrawIndexedIndirectCommand) * 10000;
+        // Create persistent indirect draw buffer — one slot per frame in flight to avoid write/read races
+        vk::DeviceSize indirectBufferSize = sizeof(DrawIndexedIndirectCommand) * MAX_INDIRECT_COMMANDS * MAX_FRAMES_IN_FLIGHT;
         vk::BufferCreateInfo indirectBufferInfo{.size = indirectBufferSize, .usage = vk::BufferUsageFlagBits::eIndirectBuffer, .sharingMode = vk::SharingMode::eExclusive};
 
         indirectDrawBuffer = vk::raii::Buffer(device.getDevice(), indirectBufferInfo);

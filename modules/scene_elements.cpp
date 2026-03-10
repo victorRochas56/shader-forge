@@ -514,7 +514,7 @@ void calculateCascadedLightSpaceMatrices(Light& light, Camera& camera, Renderer*
 
         // Position light far enough back to see entire frustum + shadow casters
         // Use the cascade's far plane distance as a guide for how far back to position the light
-        float lightDistance = farPlane * 0.5f; // Position light at half the cascade distance
+        float lightDistance = farPlane * 0.65f; // Position light at half the cascade distance
         glm::mat4 lightView = glm::lookAt(frustumCenter - lightDir * lightDistance, frustumCenter, up);
 
         // Find Z extents in light space for depth range
@@ -600,9 +600,9 @@ std::array<Plane, 6> extractFrustumPlanes(const glm::mat4& lightSpaceMatrix) {
     planes[3].normal = glm::vec3(lightSpaceMatrix[0][3] - lightSpaceMatrix[0][1], lightSpaceMatrix[1][3] - lightSpaceMatrix[1][1], lightSpaceMatrix[2][3] - lightSpaceMatrix[2][1]);
     planes[3].distance = lightSpaceMatrix[3][3] - lightSpaceMatrix[3][1];
 
-    // Near plane
-    planes[4].normal = glm::vec3(lightSpaceMatrix[0][3] + lightSpaceMatrix[0][2], lightSpaceMatrix[1][3] + lightSpaceMatrix[1][2], lightSpaceMatrix[2][3] + lightSpaceMatrix[2][2]);
-    planes[4].distance = lightSpaceMatrix[3][3] + lightSpaceMatrix[3][2];
+    // Near plane (Vulkan/GLM_DEPTH_ZERO_TO_ONE: depth range [0,1], near at z_ndc=0, so just row2)
+    planes[4].normal = glm::vec3(lightSpaceMatrix[0][2], lightSpaceMatrix[1][2], lightSpaceMatrix[2][2]);
+    planes[4].distance = lightSpaceMatrix[3][2];
 
     // Far plane
     planes[5].normal = glm::vec3(lightSpaceMatrix[0][3] - lightSpaceMatrix[0][2], lightSpaceMatrix[1][3] - lightSpaceMatrix[1][2], lightSpaceMatrix[2][3] - lightSpaceMatrix[2][2]);

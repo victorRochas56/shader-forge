@@ -144,6 +144,36 @@ struct SSAOApplyPushConstants {
     uint32_t padding[2];
 };
 
+struct LitDrawData {
+    uint32_t vertexAllocationIndex;
+    uint32_t vertexOffset;
+    uint32_t vertexStride;
+    uint32_t modelMatrixIndex;
+    uint32_t albedoTextureIndex;
+    uint32_t roughnessTextureIndex;
+    uint32_t metallicTextureIndex;
+    uint32_t normalTextureIndex;
+    uint32_t environmentMapIndex;
+    uint32_t materialFlags;
+    float    metallic;
+    float    roughness;
+};
+
+// Frame-level push constants for the lit indirect pass (per-draw data moved to LitDrawData buffer)
+struct LitPushConstants {
+    uint32_t  samplerIndex;
+    uint32_t  lightCount;
+    uint32_t  shadowSamplerIndex;
+    uint32_t  elementOffsetModel;
+    uint32_t  elementOffsetLight;
+    uint32_t  elementOffsetLit;  // frame offset into the LitDrawData buffer
+    uint32_t  padding0;
+    uint32_t  padding1;
+    glm::vec3 cameraPosition;
+    uint32_t  padding2;
+    glm::mat4 viewProjection;
+};
+
 // matches VkDrawIndexedIndirectCommand)
 struct DrawIndexedIndirectCommand {
     uint32_t indexCount;
@@ -186,7 +216,7 @@ struct Material {
     // 4rd bit : hasMetallic
     // 5th bit : hasNormal
     uint32_t usageCount;
-    uint32_t materialID;//TODO faire
+    uint32_t materialID;
     glm::vec4 color;
     uint32_t albedoTextureIndex;
     float metallic;
