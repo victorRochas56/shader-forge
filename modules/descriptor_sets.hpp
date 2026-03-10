@@ -601,6 +601,8 @@ class DescriptorSet {
     vk::raii::DescriptorSet& getDescriptorSet() { return *descriptorSet; }
     vk::raii::DescriptorSetLayout& getDescriptorSetLayout() { return *descriptorSetLayout; }
     TextureResource& getTextureResource(uint32_t index) { return textureResources[index]; } // TODO bounds check this
+    const std::vector<TextureResource>& getTextureResources() { return textureResources; }
+    const std::vector<SamplerResource>& getSamplerResources() { return samplerResources; }
     void debugDescriptorSet(const std::string& context) { debugDescriptorSetState(context); }
 
   private:

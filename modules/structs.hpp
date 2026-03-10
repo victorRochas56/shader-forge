@@ -66,8 +66,8 @@ struct SkyBoxPushConstants {
 
 enum ImageVisFlags : uint32_t 
 {
-    DISABLE =           0,
-    ENABLE =            1 << 0,
+    NONE =              0,
+    ENABLED =           1 << 0,
     LINEARIZE_DEPTH =   1 << 1 
 };
 

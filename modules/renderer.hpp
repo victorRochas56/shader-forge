@@ -931,25 +931,22 @@ class Renderer {
                                                         .storeOp = vk::AttachmentStoreOp::eStore};
         vk::RenderingInfo renderInfo{.renderArea = {{0, 0}, extent}, .layerCount = 1, .colorAttachmentCount = 1, .pColorAttachments = &swapchainAttachment};
 
-        resourceManager->transitionImageLayout(&cmd, swapchain->getDepthImage(), vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
-
         auto& depthPipeline = pipelineManager->getPostProcessPipelines()[depthPipelineIndex];
         cmd.beginRendering(renderInfo);
         setFullscreenViewport(cmd, extent);
         bindPipeline(cmd, *depthPipeline);//TODO implement a register of all viewable images, that can be passed to here for simple debug viewing
-        ImageVisPushConstants depthConstants = {.depthIndex = swapchain->getDepthResolveIndex(),
-                                                .depthSamplerIndex = depthSamplerIndex,
-                                                .showShadowMap = showShadowMapIndex,
-                                                .shadowMapSamplerIndex = shadowSamplerIndex,
+                                          //transition image
+        ImageVisPushConstants depthConstants = {.imageIndex = 0,
+                                                .samplerIndex = 0,
+                                                .flags = ImageVisFlags::NONE,
                                                 .nearPlane = activeCamera.nearPlane,
-                                                .farPlane = activeCamera.farPlane,
-                                                .linearize = 1,
-                                                .doDepthBuffering = depthView};
+                                                .farPlane = activeCamera.farPlane
+                                                };
         cmd.pushConstants<ImageVisPushConstants>(*depthPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, depthConstants);
         cmd.draw(3, 1, 0, 0);
+        //transition back
         cmd.endRendering();
 
-        resourceManager->transitionImageLayout(&cmd, swapchain->getDepthImage(), vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
     }
 
     void recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light) {

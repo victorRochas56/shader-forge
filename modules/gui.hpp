@@ -427,16 +427,26 @@ void showMaterialEditor(MaterialEditorState& state, Renderer* renderer) {
     ImGui::End();
 }
 
-void showActionMenu(uint32_t context, Renderer* pRenderer, float posX, float posY) {
+void showImageViewList(Renderer* renderer) {
+    ImGui::Begin("Image Views");
+
+    for(const TextureResource& img : renderer->getDescriptorSet().getTextureResources()){
+        ImGui::Button()
+    }
+
+    ImGui::End();
+};
+
+void showActionMenu(uint32_t context, Renderer* renderer, float posX, float posY) {
     ImGui::SetNextWindowPos(ImVec2{posX, posY});
     ImGui::Begin("Action");
     if (ImGui::Button("Add Node")) {
         glm::vec3 origin;
         glm::vec3 direction;
         int width = 0, height = 0;
-        glfwGetWindowSize(pRenderer->getWindow(), &width, &height);
-        pRenderer->activeCamera.rayFromScreenCoords((posX / width) * 2.0 - 1.0, (posY / height) * 2.0 - 1.0, &origin, &direction);
-        pRenderer->sceneGraph.addNode(0, origin + direction);
+        glfwGetWindowSize(renderer->getWindow(), &width, &height);
+        renderer->activeCamera.rayFromScreenCoords((posX / width) * 2.0 - 1.0, (posY / height) * 2.0 - 1.0, &origin, &direction);
+        renderer->sceneGraph.addNode(0, origin + direction);
     }
 
     ImGui::End();
