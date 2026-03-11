@@ -16,7 +16,7 @@
 #include "structs.hpp"
 
 #define GLM_FORCE_RADIANS
-#define GLM_DEPTH_ZERO_TO_OzNE
+#define GLM_DEPTH_ZERO_TO_ONE
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #define GLM_ENABLE_EXPERIMENTAL
@@ -248,7 +248,7 @@ struct Camera {
         glm::vec3 upVector = glm::vec3(0.0f, 1.0f, 0.0f); // World up direction
         // Create view matrix using lookAt
         viewMatrix = glm::lookAt(position, target, upVector);
-        projectionMatrix = glm::perspective(fov, aspectRatio, nearPlane, farPlane);
+        projectionMatrix = glm::perspective(glm::radians(fov), aspectRatio, nearPlane, farPlane);
         projectionMatrix[1][1] *= -1.0f; // Flip Y axis for vulkan
         viewProjection = projectionMatrix * viewMatrix;
     }

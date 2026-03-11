@@ -82,7 +82,7 @@ struct FixedBufferResourceBase {
     vk::raii::Buffer buffer;
     vk::raii::DeviceMemory memory;
     void* mappedData = nullptr;
-    vk::DeviceSize bufferSize;
+    vk::DeviceSize bufferSize = 0;
     std::vector<FixedBufferAllocation> allocations;
     std::deque<uint32_t> freeSlots;
     uint32_t maxSize = MAX_FIXED_BUFFER;
@@ -614,6 +614,9 @@ class DescriptorSet {
     const std::vector<TextureResource>& getTextureResources() { return textureResources; }
     const std::vector<SamplerResource>& getSamplerResources() { return samplerResources; }
     void debugDescriptorSet(const std::string& context) { debugDescriptorSetState(context); }
+
+    const std::vector<std::optional<VariableBufferResource>>& getVariableBuffers() { return variableBuffers; }
+    const std::vector<std::unique_ptr<FixedBufferResourceBase>>& getFixedBuffers() { return fixedBuffers; }
 
   private:
     Device& device;

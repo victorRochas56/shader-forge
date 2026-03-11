@@ -2,6 +2,8 @@
 #include "input.hpp"
 #include "renderer.hpp"
 
+#define GLM_DEPTH_ZERO_TO_ONE
+
 /*
 all node related logic and code that interacts with renderer
 */
@@ -462,102 +464,73 @@ glm::mat4 calculateLightSpaceMatrix(Light& light, Camera& camera) {
 }
 
 void calculateCascadedLightSpaceMatrices(Light& light, Camera& camera, Renderer* renderer) {
-    std::vector<float> cascadeSplits = {};
-    for(int i = 0; i< light.numCascades; i++){
-        cascadeSplits.push_back(light.cascades[i].splitDistance);
-    }
-
     glm::vec3 lightDir = glm::normalize(light.direction);
 
-    // Create a stable light view basis that doesn't depend on camera orientation
+    // Choose a stable up vector that isn't parallel to lightDir
     glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);
-    if (glm::abs(glm::dot(lightDir, up)) > 0.99f) {
-        up = glm::vec3(1.0f, 0.0f, 0.0f);
+    if (std::abs(glm::dot(lightDir, up)) > 0.99f) {
+        up = glm::vec3(0.0f, 0.0f, 1.0f);
     }
-    glm::vec3 right = glm::normalize(glm::cross(up, lightDir));
-    up = glm::normalize(glm::cross(lightDir, right));
 
-    for (int i = 0; i < light.numCascades; i++) {
-        float nearPlane = (i == 0) ? camera.nearPlane : cascadeSplits[i - 1];
-        float farPlane = cascadeSplits[i];
+    for (uint32_t i = 0; i < light.numCascades; i++) {
+        float nearSplit = (i == 0) ? camera.nearPlane : light.cascades[i - 1].splitDistance;
+        float farSplit = light.cascades[i].splitDistance;
 
-        nearPlane = nearPlane * (2.0f - CASCADE_OVERLAP_FACTOR);
-        farPlane = farPlane * CASCADE_OVERLAP_FACTOR;
+        // Build a sub-frustum projection for this cascade's range
+        // Note: camera.projectionMatrix has Y flipped for Vulkan, so build a clean one
+        glm::mat4 cascadeProj = glm::perspective(glm::radians(camera.fov), camera.aspectRatio, nearSplit, farSplit);
+        glm::mat4 invCascadeVP = glm::inverse(cascadeProj * camera.viewMatrix);
 
-        // Create a camera for this cascade split
-        Camera cascadeCamera = camera;
-        cascadeCamera.nearPlane = nearPlane;
-        cascadeCamera.farPlane = farPlane;
-        cascadeCamera.calculateViewProjectionMatrix();
-
-        // Get frustum corners in world space for this cascade
-        std::vector<glm::vec4> frustumCorners = getCameraFrustumCorners(cascadeCamera);
-
-        // Calculate the center of the frustum
-        glm::vec3 frustumCenter = glm::vec3(0.0f);
-        for (const auto& corner : frustumCorners) {
-            frustumCenter += glm::vec3(corner);
-        }
-        frustumCenter /= frustumCorners.size();
-
-        // Use a sphere-based bounding to maintain consistent size
-        // Calculate radius from frustum center
-        float radius = 0.0f;
-        for (const auto& corner : frustumCorners) {
-            float distance = glm::length(glm::vec3(corner) - frustumCenter);
-            radius = std::max(radius, distance);
+        // Get the 8 corners of the sub-frustum in world space
+        glm::vec3 frustumCorners[8];
+        int idx = 0;
+        for (int x = 0; x < 2; ++x) {
+            for (int y = 0; y < 2; ++y) {
+                for (int z = 0; z < 2; ++z) {
+                    glm::vec4 corner = invCascadeVP * glm::vec4(2.0f * x - 1.0f, 2.0f * y - 1.0f, static_cast<float>(z), 1.0f);
+                    frustumCorners[idx++] = glm::vec3(corner) / corner.w;
+                }
+            }
         }
 
-        // Use radius to create a square projection (prevents rotation shimmer)
-        float width = radius * 2.0f;
-        float height = radius * 2.0f;
+        // Find the center of the sub-frustum
+        glm::vec3 center(0.0f);
+        for (int j = 0; j < 8; j++) {
+            center += frustumCorners[j];
+        }
+        center /= 8.0f;
 
-        // Position light far enough back to see entire frustum + shadow casters
-        // Use the cascade's far plane distance as a guide for how far back to position the light
-        float lightDistance = farPlane * 0.65f; // Position light at half the cascade distance
-        glm::mat4 lightView = glm::lookAt(frustumCenter - lightDir * lightDistance, frustumCenter, up);
+        // Light view matrix looking at the center from behind along the light direction
+        glm::mat4 lightView = glm::lookAt(center - lightDir, center, up);
 
-        // Find Z extents in light space for depth range
-        float minZ = std::numeric_limits<float>::max();
-        float maxZ = std::numeric_limits<float>::lowest();
-
-        for (const auto& corner : frustumCorners) {
-            glm::vec4 lightSpaceCorner = lightView * corner;
-            minZ = std::min(minZ, lightSpaceCorner.z);
-            maxZ = std::max(maxZ, lightSpaceCorner.z);  
+        // Find the bounding box of the sub-frustum in light view space
+        glm::vec3 minBounds(std::numeric_limits<float>::max());
+        glm::vec3 maxBounds(std::numeric_limits<float>::lowest());
+        for (int j = 0; j < 8; j++) {
+            glm::vec3 lsCorner = glm::vec3(lightView * glm::vec4(frustumCorners[j], 1.0f));
+            minBounds = glm::min(minBounds, lsCorner);
+            maxBounds = glm::max(maxBounds, lsCorner);
         }
 
-        // Extend the Z range to capture shadow casters outside the frustum
-        // In orthographic projection, minZ is near plane, maxZ is far plane
-        float depthRange = maxZ - minZ;
+        // Extend the near/far to catch shadow casters behind the camera frustum
+        float zMargin = (maxBounds.z - minBounds.z) * 2.0f;
+        minBounds.z -= zMargin;
 
-        // Aggressively extend the near plane to prevent clipping
-        // The near plane must be significantly behind (negative in light space) the closest geometry
-        float nearExtension = std::max(depthRange * 3.0f, 200.0f); // 3x depth or min 200 units
-        float farExtension = std::max(depthRange * 1.0f, 100.0f);   // 1x depth or min 100 units
+        // Texel snapping: round the ortho extents to texel-sized increments
+        // to prevent shadow swimming when the camera moves
+        float worldUnitsPerTexelX = (maxBounds.x - minBounds.x) / static_cast<float>(light.shadowResolution);
+        float worldUnitsPerTexelY = (maxBounds.y - minBounds.y) / static_cast<float>(light.shadowResolution);
 
-        minZ -= nearExtension;
-        maxZ += farExtension;
+        minBounds.x = std::floor(minBounds.x / worldUnitsPerTexelX) * worldUnitsPerTexelX;
+        maxBounds.x = std::floor(maxBounds.x / worldUnitsPerTexelX) * worldUnitsPerTexelX;
+        minBounds.y = std::floor(minBounds.y / worldUnitsPerTexelY) * worldUnitsPerTexelY;
+        maxBounds.y = std::floor(maxBounds.y / worldUnitsPerTexelY) * worldUnitsPerTexelY;
 
-        // Texel snapping to prevent shimmer
-        // Calculate texel size in light space
-        float worldTexelSize = width / static_cast<float>(light.shadowResolution);
+        glm::mat4 lightProj = glm::ortho(minBounds.x, maxBounds.x, minBounds.y, maxBounds.y, minBounds.z, maxBounds.z);
 
-        // Transform frustum center to light space and snap to texel grid
-        glm::vec3 centerLS = glm::vec3(lightView * glm::vec4(frustumCenter, 1.0f));
-        centerLS.x = glm::floor(centerLS.x / worldTexelSize) * worldTexelSize;
-        centerLS.y = glm::floor(centerLS.y / worldTexelSize) * worldTexelSize;
-
-        // Create orthographic projection centered on snapped position
-        // Using sphere-based width/height for stable size
-        glm::mat4 lightProjection = glm::ortho(centerLS.x - width / 2.0f, centerLS.x + width / 2.0f, centerLS.y - height / 2.0f, centerLS.y + height / 2.0f, minZ, maxZ);
-
-        // Store the light space matrix
-        light.cascades[i].lightSpaceMatrix = lightProjection * lightView;
-
-        // Calculate and store texel sizes
+        light.cascades[i].lightSpaceMatrix = lightProj * lightView;
         light.cascades[i].texelSize = 1.0f / static_cast<float>(light.shadowResolution);
-        light.cascades[i].worldTexelSize = worldTexelSize;
+        light.cascades[i].worldTexelSize = worldUnitsPerTexelX;
     }
 }
 
@@ -571,7 +544,7 @@ std::vector<glm::vec4> getCameraFrustumCorners(Camera& camera) {
     for (int x = 0; x < 2; ++x) {
         for (int y = 0; y < 2; ++y) {
             for (int z = 0; z < 2; ++z) {
-                glm::vec4 corner = invViewProj * glm::vec4(2.0f * x - 1.0f, 2.0f * y - 1.0f, 2.0f * z - 1.0f, 1.0f);
+                glm::vec4 corner = invViewProj * glm::vec4(2.0f * x - 1.0f, 2.0f * y - 1.0f, static_cast<float>(z), 1.0f);
                 corners.push_back(corner / corner.w);
             }
         }

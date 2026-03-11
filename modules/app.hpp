@@ -134,6 +134,9 @@ class App {
         
         showImageViewList(&renderer);
 
+        showBufferAllocs(&renderer);
+        showDebugWindow(&renderer);
+
         ImGui::Begin("Toggles");
         if(ImGui::Button("SSAO")){
             renderer.toggleSSAO();

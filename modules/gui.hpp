@@ -421,3 +421,85 @@ void showActionMenu(uint32_t context, Renderer* renderer, float posX, float posY
 
     ImGui::End();
 }
+
+void showBufferAllocs(Renderer* renderer){
+
+    ImGui::Begin("Buffers");
+
+    vk::DeviceSize grandTotal = 0;
+
+    ImGui::Text("Variable Buffers");
+    int i =0;
+    for(auto& buffer : renderer->getDescriptorSet().getVariableBuffers()){
+        vk::DeviceSize usedBytes = 0;
+        for (const auto& alloc : buffer->allocations)
+            usedBytes += alloc.size;
+        float usedMB = usedBytes / (1024.0f * 1024.0f);
+        float totalMB = buffer->bufferSize / (1024.0f * 1024.0f);
+        ImGui::Text("Buffer %d : %d allocs | %.2f / %.2f MB", i, (int)buffer->allocations.size(), usedMB, totalMB);
+        grandTotal += buffer->bufferSize;
+        i++;
+    }
+
+    ImGui::Text("Fixed Buffers");
+    i =0;
+    for(auto& buffer : renderer->getDescriptorSet().getFixedBuffers()){
+        uint32_t inUse = 0;
+        for (const auto& alloc : buffer->allocations)
+            if (alloc.inUse) inUse++;
+        vk::DeviceSize usedBytes = inUse * buffer->elementSize;
+        float usedMB = usedBytes / (1024.0f * 1024.0f);
+        float totalMB = buffer->bufferSize / (1024.0f * 1024.0f);
+        ImGui::Text("Buffer %d : %u / %d slots | %.2f / %.2f MB", i, inUse, (int)buffer->allocations.size(), usedMB, totalMB);
+        ImGui::Text("  Free Slots : %d", (int)buffer->freeSlots.size());
+        grandTotal += buffer->bufferSize;
+        i++;
+    }
+
+    ImGui::Separator();
+    ImGui::Text("Textures");
+    vk::DeviceSize totalTexBytes = 0;
+    int texCount = 0;
+    for (const auto& tex : renderer->getDescriptorSet().getTextureResources()) {
+        if (tex.isEmpty()) continue;
+        // base RGBA8 size * ~1.33 for mip chain
+        vk::DeviceSize baseSize = (vk::DeviceSize)tex.width * tex.height * 4;
+        vk::DeviceSize withMips = baseSize * 4 / 3;
+        totalTexBytes += withMips;
+        texCount++;
+    }
+    ImGui::Text("%d textures | ~%.2f MB (with mips)", texCount, totalTexBytes / (1024.0f * 1024.0f));
+    grandTotal += totalTexBytes;
+
+    ImGui::Text("Samplers: %d", (int)renderer->getDescriptorSet().getSamplerResources().size());
+
+    ImGui::Separator();
+    ImGui::Text("Meshes");
+    vk::DeviceSize totalVertexBytes = 0;
+    vk::DeviceSize totalIndexBytes = 0;
+    int meshCount = 0;
+    for (const auto& mesh : renderer->assetManager.meshes) {
+        if (mesh.freed) continue;
+        meshCount++;
+        for (uint32_t subIdx : mesh.subMeshes) {
+            const auto& sub = renderer->assetManager.subMeshes[subIdx];
+            totalVertexBytes += (vk::DeviceSize)sub.vertexCount * sub.vertexStride;
+            totalIndexBytes += (vk::DeviceSize)sub.indexCount * sizeof(uint32_t);
+        }
+    }
+    float vertMB = totalVertexBytes / (1024.0f * 1024.0f);
+    float idxMB = totalIndexBytes / (1024.0f * 1024.0f);
+    ImGui::Text("%d meshes | Verts: %.2f MB | Idx: %.2f MB | Total: %.2f MB", meshCount, vertMB, idxMB, vertMB + idxMB);
+
+    ImGui::Separator();
+    float grandTotalMB = grandTotal / (1024.0f * 1024.0f);
+    ImGui::Text("Total GPU Memory: ~%.2f MB", grandTotalMB);
+
+    ImGui::End();
+}
+
+void showDebugWindow(Renderer* renderer){
+    ImGui::Begin("Debug");
+    ImGui::SliderFloat("Cull FOV Scale", &renderer->cullFovScale, 0.1f, 1.0f);
+    ImGui::End();
+}

@@ -60,6 +60,7 @@ class Renderer {
     uint32_t                            imageVisIndex = 0xFFFFFFFF;
     uint32_t                            imageVisSamplerIndex = 0xFFFFFFFF;
     ImageVisFlags                       imageVisFlags = ImageVisFlags::IMAGE_VIS_NONE;
+    float                               cullFovScale = 1.0f;
 
   private:
     GLFWwindow*                         window = nullptr;
@@ -795,7 +796,10 @@ class Renderer {
             indirectCommands.clear();
             litDrawDataList.clear();
 
-            std::array<Plane, 6> frustumPlanes = extractFrustumPlanes(activeCamera.viewProjection);
+            Camera fakeCam = activeCamera;
+            fakeCam.fov = cullFovScale * activeCamera.fov;
+            fakeCam.calculateViewProjectionMatrix();
+            std::array<Plane, 6> frustumPlanes = extractFrustumPlanes(fakeCam.viewProjection);
 
             for (const auto& [material, node_mesh] : materials) {
                 for (const auto& [node, subMeshIndices] : node_mesh) {
@@ -824,6 +828,8 @@ class Renderer {
                         if (!isAABBInFrustum(subWorldMin, subWorldMax, frustumPlanes)) {
                             continue;
                         }
+                        
+                        Gizmos::drawBox(subWorldMin,subWorldMax,glm::vec4(1.0f,1.0f,0.0f,1.0f));
 
                         indirectCommands.push_back({.indexCount    = subMesh.indexCount,
                                                     .instanceCount = 1,

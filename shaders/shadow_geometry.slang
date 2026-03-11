@@ -67,8 +67,8 @@ VertexOutput vertMain(uint vertexID : SV_VertexID, uint drawID : SV_DrawIndex)
 
     VertexOutput output;
     output.position = mul(pc.lightSpaceMatrix, worldPos);
-    // Use the depth value directly from the projection (already in [0,1] for Vulkan with GLM_DEPTH_ZERO_TO_ONE)
-    output.depth = output.position.z;
+    // Store NDC depth (after perspective divide) to match sampling in lit.slang
+    output.depth = output.position.z / output.position.w;
     return output;
 }
 
@@ -81,11 +81,6 @@ struct FragmentOutput
 FragmentOutput fragMain(VertexOutput input)
 {
     FragmentOutput output;
-
-    // PCF: Percentage Closer Filtering
-    // Simply output the normalized depth value [0,1]
-    // No complex moment calculations needed
-
     output.depth = input.depth;
 
     return output;

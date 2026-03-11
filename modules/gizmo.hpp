@@ -80,6 +80,41 @@ class Gizmos {
         g.addLineToBuffer(lineZ);
     }
 
+    static void drawBox(glm::vec3 min, glm::vec3 max, glm::vec4 color){
+        auto& g = instance();
+        float spanX = max.x - min.x;
+        float spanY = max.y - min.y;
+        float spanZ = max.z - min.z;
+
+        Line top0 = {.startPoint = min + glm::vec3(0,spanY,0), .endPoint = min + glm::vec3(spanX,spanY,0), .color = color};
+        Line top1 = {.startPoint = min + glm::vec3(spanX,spanY,0), .endPoint = min + glm::vec3(spanX,spanY,spanZ), .color = color};
+        Line top2 = {.startPoint = min + glm::vec3(0,spanY,0), .endPoint = min + glm::vec3(0,spanY,spanZ), .color = color};
+        Line top3 = {.startPoint = min + glm::vec3(0,spanY,spanZ), .endPoint = min + glm::vec3(spanX,spanY,spanZ), .color = color};
+
+        Line bottom0 = {.startPoint = min, .endPoint = min + glm::vec3(spanX,0,0), .color = color};
+        Line bottom1 = {.startPoint = min + glm::vec3(spanX,0,0), .endPoint = min + glm::vec3(spanX,0,spanZ), .color = color};
+        Line bottom2 = {.startPoint = min, .endPoint = min + glm::vec3(0,0,spanZ), .color = color};
+        Line bottom3 = {.startPoint = min + glm::vec3(0,0,spanZ), .endPoint = min + glm::vec3(spanX,0,spanZ), .color = color};
+
+        Line pillar0 = {.startPoint = min + glm::vec3(spanX,0,0), .endPoint = min + glm::vec3(spanX,spanY,0), .color = color};
+        Line pillar1 = {.startPoint = min + glm::vec3(0,0,spanZ), .endPoint = min + glm::vec3(0,spanY,spanZ), .color = color};
+        Line pillar2 = {.startPoint = min + glm::vec3(spanX,0,spanZ), .endPoint = min + glm::vec3(spanX,spanY,spanZ), .color = color};
+        Line pillar3 = {.startPoint = min + glm::vec3(0,0,0), .endPoint = min + glm::vec3(0,spanY,0), .color = color};
+        
+        g.addLineToBuffer(top0);
+        g.addLineToBuffer(top1);
+        g.addLineToBuffer(top2);
+        g.addLineToBuffer(top3);
+        g.addLineToBuffer(bottom0);
+        g.addLineToBuffer(bottom1);
+        g.addLineToBuffer(bottom2);
+        g.addLineToBuffer(bottom3);
+        g.addLineToBuffer(pillar0);
+        g.addLineToBuffer(pillar1);
+        g.addLineToBuffer(pillar2);
+        g.addLineToBuffer(pillar3);
+    }
+
     static void drawGrid(glm::vec3 origin, glm::vec3 normal, float spacing) {}
     static void drawWireFrame(Mesh mesh) {}
     static void drawWireFrame(SubMesh mesh) {}
