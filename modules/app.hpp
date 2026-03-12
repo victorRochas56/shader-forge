@@ -146,7 +146,11 @@ class App {
             ImGui::SliderFloat("bias",&renderer.ssaoBias,0.01f,0.1f);
             ImGui::SliderFloat("power",&renderer.ssaoPower,0.01f,5.0f);
         }
+        if(ImGui::Button("Show BBOXes")){
+            renderer.toggleBBOXes();
+        }
         ImGui::End();
+
 
         //scenes.hpp
         ImGui::Begin("Scene Manager");

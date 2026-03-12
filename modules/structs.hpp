@@ -19,7 +19,8 @@ enum MaterialFlags : uint32_t
     HAS_ALBEDO  =   1 << 1,
     HAS_ROUGHNESS = 1 << 2,
     HAS_METALLIC =  1 << 3,
-    HAS_NORMAL =    1 << 4
+    HAS_NORMAL =    1 << 4,
+    ALPHA_CLIP =    1 << 5
 };
 
 /*
@@ -157,6 +158,8 @@ struct LitDrawData {
     uint32_t materialFlags;
     float    metallic;
     float    roughness;
+    float    alphaCutoff;
+    uint32_t padding;
 };
 
 // Frame-level push constants for the lit indirect pass (per-draw data moved to LitDrawData buffer)
@@ -225,7 +228,8 @@ struct Material {
     uint32_t roughnessTextureIndex;
     uint32_t normalTextureIndex; // should be set to default normal if not present
     uint32_t environmentMapIndex;
-    uint32_t padding3;
+    float alphaCutoff = 0.5f;
+    bool alphaClip = false;
 
     bool operator<(const Material& other) const {
         if (name != other.name)

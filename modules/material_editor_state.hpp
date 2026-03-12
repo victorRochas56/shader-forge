@@ -18,6 +18,8 @@ struct MaterialEditorState {
     char roughnessPath[256] = "";
     char normalPath[256] = "";
     bool flipNormal = false;
+    bool alphaClip = false;
+    float alphaCutoff = 0.5f;
     char envMapPaths[6][256] = {"", "", "", "", "", ""}; // posX, posY, posZ, negX, negY, negZ
 
     void resetToDefaults() {
@@ -31,6 +33,8 @@ struct MaterialEditorState {
         roughnessPath[0] = '\0';
         normalPath[0] = '\0';
         flipNormal = false;
+        alphaClip = false;
+        alphaCutoff = 0.5f;
         for (int i = 0; i < 6; i++) envMapPaths[i][0] = '\0';
     }
 
@@ -49,6 +53,10 @@ struct MaterialEditorState {
         copyPath(metallicPath, sizeof(metallicPath), renderer->assetManager.getTexturePathFromIndex(mat.metallicTextureIndex));
         copyPath(roughnessPath, sizeof(roughnessPath), renderer->assetManager.getTexturePathFromIndex(mat.roughnessTextureIndex));
         copyPath(normalPath, sizeof(normalPath), renderer->assetManager.getTexturePathFromIndex(mat.normalTextureIndex));
+
+        flipNormal = (mat.flags & MaterialFlags::FLIP_NORMAL) != 0;
+        alphaClip = mat.alphaClip;
+        alphaCutoff = mat.alphaCutoff;
 
         std::string cubemapPath = renderer->assetManager.getCubemapPathFromIndex(mat.environmentMapIndex);
         for (int i = 0; i < 6; i++) envMapPaths[i][0] = '\0';

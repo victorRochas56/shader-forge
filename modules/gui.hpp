@@ -239,6 +239,10 @@ void showMaterialEditor(MaterialEditorState& state, Renderer* renderer) {
     ImGui::InputText("Normal", state.normalPath, sizeof(state.normalPath));
     browseButton("normal", state.normalPath, sizeof(state.normalPath));
     ImGui::Checkbox("Flip Normal", &state.flipNormal);
+    ImGui::Checkbox("Alpha Clip", &state.alphaClip);
+    if (state.alphaClip) {
+        ImGui::SliderFloat("Alpha Cutoff", &state.alphaCutoff, 0.0f, 1.0f);
+    }
 
     ImGui::Separator();
     ImGui::Text("Environment Map (6 faces)");
@@ -298,9 +302,12 @@ void showMaterialEditor(MaterialEditorState& state, Renderer* renderer) {
         } else {
             mat.normalTextureIndex = defaultMat.normalTextureIndex;
         }
-        if(state.flipNormal) matFlags |= MaterialFlags::FLIP_NORMAL; 
+        if(state.flipNormal) matFlags |= MaterialFlags::FLIP_NORMAL;
+        if(state.alphaClip) matFlags |= MaterialFlags::ALPHA_CLIP;
 
         mat.flags = static_cast<MaterialFlags>(matFlags);
+        mat.alphaClip = state.alphaClip;
+        mat.alphaCutoff = state.alphaCutoff;
 
         // environment map
         bool hasEnvMap = false;

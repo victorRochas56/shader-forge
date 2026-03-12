@@ -210,6 +210,10 @@ class SceneManager {
                 material.metallic = std::stof(value);
             } else if (key == "Roughness") {
                 material.roughness = std::stof(value);
+            } else if (key == "AlphaClip") {
+                material.alphaClip = (std::stoi(value) != 0);
+            } else if (key == "AlphaCutoff") {
+                material.alphaCutoff = std::stof(value);
             } else if (key == "AlbedoTexture") {
                 albedoPath = value;
             } else if (key == "MetallicTexture") {
@@ -301,6 +305,8 @@ class SceneManager {
             material.flags = static_cast<MaterialFlags>(material.flags | HAS_METALLIC);
         if (!normalPath.empty() && material.normalTextureIndex != defaultNormal)
             material.flags = static_cast<MaterialFlags>(material.flags | HAS_NORMAL);
+        if (material.alphaClip)
+            material.flags = static_cast<MaterialFlags>(material.flags | ALPHA_CLIP);
 
         // Add material to renderer and store the mapping
         uint32_t materialIndex = renderer.addMaterial(material);
@@ -473,6 +479,8 @@ class SceneManager {
             ofs << "    Color : " << mat.color.r << "," << mat.color.g << "," << mat.color.b << "," << mat.color.a << std::endl;
             ofs << "    Metallic : " << mat.metallic << std::endl;
             ofs << "    Roughness : " << mat.roughness << std::endl;
+            ofs << "    AlphaClip : " << (mat.alphaClip ? 1 : 0) << std::endl;
+            ofs << "    AlphaCutoff : " << mat.alphaCutoff << std::endl;
 
             // Save texture paths
             std::string albedoPath = renderer.assetManager.getTexturePathFromIndex(mat.albedoTextureIndex);

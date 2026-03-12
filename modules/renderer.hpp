@@ -98,8 +98,9 @@ class Renderer {
     uint32_t                            shadowPipelineIndex;
     uint32_t                            litPipelineIndex;
     uint32_t                            gizmoPipelineIndex;
-    uint32_t                            depthPipelineIndex;
+    uint32_t                            imageViewPipelineIndex;
     uint32_t                            blurPipelineIndex;
+    uint32_t                            depthPipelineIndex;
 
     //defaults
     uint32_t                            defaultSamplerIndex;
@@ -156,7 +157,7 @@ class Renderer {
     uint32_t                            tempBlurTextureIndex = 0xFFFFFFFF;
 
     bool                                vSync = true;
-    bool                                depthView = false;
+    bool                                showBBOXes = false;
 
   public:
 
@@ -269,21 +270,25 @@ class Renderer {
             pipelineManager->createPipeline<SkyBoxPushConstants>(PipelineCategory::GEOMETRY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
                                                                  vk::False, "shaders/skybox.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
 
-        shadowPipelineIndex = pipelineManager->createPipeline<ShadowPushConstants>(PipelineCategory::BEFORE_GEOMETRY, vk::PrimitiveTopology::eTriangleList,
+        shadowPipelineIndex = pipelineManager->createPipeline<ShadowPushConstants>(PipelineCategory::SHADOW, vk::PrimitiveTopology::eTriangleList,
                                                                                    vk::CullModeFlagBits::eNone, vk::True, vk::True, "shaders/shadow_geometry.spv",
                                                                                    descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
         blurPipelineIndex =
             pipelineManager->createPipeline<BlurPushConstants>(PipelineCategory::BEFORE_GEOMETRY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
                                                                vk::False, "shaders/blur.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
 
+        depthPipelineIndex =
+            pipelineManager->createPipeline<LitPushConstants>(PipelineCategory::DEPTH_PREPASS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eBack,vk::True,
+                                                                            vk::True,"shaders/depth_prepass.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
+
         litPipelineIndex = pipelineManager->createPipeline<LitPushConstants>(PipelineCategory::GEOMETRY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eBack, vk::True,
                                                                              vk::True, "shaders/lit.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
         gizmoPipelineIndex =
             pipelineManager->createPipeline<LinePushConstants>(PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eLineList, vk::CullModeFlagBits::eNone, vk::False, vk::False,
                                                                "shaders/line.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
-        depthPipelineIndex =
+        imageViewPipelineIndex =
             pipelineManager->createPipeline<ImageVisPushConstants>(PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
-                                                                   vk::False, "shaders/depth_view.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
+                                                                   vk::False, "shaders/image_view.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
 
         // default litshader / material
         fallbackLitShader = Shader{.sourceFile = "shaders/lit.spv", .pipelineIndex = litPipelineIndex};
@@ -452,7 +457,7 @@ class Renderer {
     
     void toggleSSAO() { enableSSAO = !enableSSAO; }
     
-    void toggleDepthView() { depthView = !depthView; }
+    void toggleBBOXes() { showBBOXes = !showBBOXes; }
     
     void setSkyBox(uint32_t skyboxIndex) { this->skyboxIndex = skyboxIndex; }
 
@@ -734,13 +739,61 @@ class Renderer {
         if (enableSSAO && ssaoPipelineIndex != 0xFFFFFFFF)
             recordSSAOPass(cmd, imageIndex);
             
-        if (depthView || imageVisIndex != 0xFFFFFFFF)
+        if (imageVisIndex != 0xFFFFFFFF)
             recordImageVisPass(cmd, imageIndex);
 
         recordOverlayPass(cmd, imageIndex);
 
         resourceManager->transitionImageLayout(&cmd, swapchain->getSwapChainImages()[imageIndex], vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::ePresentSrcKHR);
         cmd.end();
+    }
+
+    // Shared frustum culling — builds indirect draw commands and calls perSubMeshFn for each visible submesh
+    template <typename PerSubMeshFn>
+    void buildGeometryDrawCommands(const std::array<Plane, 6>& frustumPlanes, bool doCulling, PerSubMeshFn&& perSubMeshFn) {
+        indirectCommands.clear();
+
+        for (const auto& [shader, materials] : shaders) {
+            for (const auto& [material, node_mesh] : materials) {
+                for (const auto& [node, subMeshIndices] : node_mesh) {
+
+                    if (assetManager.meshes[node->getMeshIndex()].freed == true) {
+                        for (uint32_t subMesh : assetManager.meshes[node->getMeshIndex()].subMeshes) {
+                            descriptorSet->freeVariableBuffer(vertexBufferIndex, assetManager.subMeshes[subMesh].vertexAllocationIndex);
+                            descriptorSet->freeVariableBuffer(indexBufferIndex, assetManager.subMeshes[subMesh].indexAllocationIndex);
+                            assetManager.freeSubMeshes.push(subMesh);
+                        }
+                        assetManager.freeMeshes.push(node->getMeshIndex());
+                        continue;
+                    }
+
+                    if (node->isBoundingBoxValid() && doCulling) {
+                        if (!isAABBInFrustum(node->getBoundingBoxMin(), node->getBoundingBoxMax(), frustumPlanes))
+                            continue;
+                    }
+
+                    for (auto mesh : subMeshIndices) {
+                        const auto& subMesh = assetManager.subMeshes[mesh];
+
+                        glm::vec3 subWorldMin, subWorldMax;
+                        transformAABBToWorldSpace(subMesh.boundingBoxMin, subMesh.boundingBoxMax, node->getTransform(), subWorldMin, subWorldMax);
+                        if (!isAABBInFrustum(subWorldMin, subWorldMax, frustumPlanes) && doCulling)
+                            continue;
+
+                        if(showBBOXes)
+                            Gizmos::drawBox(subWorldMin,subWorldMax,glm::vec4(1.0f,1.0f,0.0f,1.0f));
+
+                        indirectCommands.push_back({.indexCount    = subMesh.indexCount,
+                                                    .instanceCount = 1,
+                                                    .firstIndex    = static_cast<uint32_t>(subMesh.indexOffset / sizeof(uint32_t)),
+                                                    .vertexOffset  = 0,
+                                                    .firstInstance = 0});
+
+                        perSubMeshFn(subMesh, *node, material);
+                    }
+                }
+            }
+        }
     }
 
     void recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
@@ -751,6 +804,82 @@ class Renderer {
         vk::ClearValue clearColor{.color = vk::ClearColorValue(std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f})};
         vk::ClearValue clearDepth{.depthStencil = vk::ClearDepthStencilValue{1.0f, 0}};
 
+        // Frustum cull and build draw commands + lit draw data
+        Camera fakeCam = activeCamera;
+        fakeCam.fov = cullFovScale * activeCamera.fov;
+        fakeCam.calculateViewProjectionMatrix();
+        std::array<Plane, 6> frustumPlanes = extractFrustumPlanes(fakeCam.viewProjection);
+
+        litDrawDataList.clear();
+        buildGeometryDrawCommands(frustumPlanes, true, [&](const auto& subMesh, auto& node, const auto& material) {
+            litDrawDataList.push_back({.vertexAllocationIndex = subMesh.vertexAllocationIndex,
+                                       .vertexOffset          = static_cast<uint32_t>(subMesh.vertexOffset),
+                                       .vertexStride          = subMesh.vertexStride,
+                                       .modelMatrixIndex      = node.getModelMatrixIndex(),
+                                       .albedoTextureIndex    = material.albedoTextureIndex,
+                                       .roughnessTextureIndex = material.roughnessTextureIndex,
+                                       .metallicTextureIndex  = material.metallicTextureIndex,
+                                       .normalTextureIndex    = material.normalTextureIndex,
+                                       .environmentMapIndex   = material.environmentMapIndex,
+                                       .materialFlags         = static_cast<uint32_t>(material.flags),
+                                       .metallic              = material.metallic,
+                                       .roughness             = material.roughness,
+                                       .alphaCutoff           = material.alphaCutoff});
+        });
+
+        vk::DeviceSize frameByteOffset = currentFrame * MAX_INDIRECT_COMMANDS * sizeof(DrawIndexedIndirectCommand);
+        vk::Buffer indexBufferHandle = descriptorSet->getVariableBuffer(indexBufferIndex);
+
+        if (!indirectCommands.empty()) {
+            // Upload indirect commands and per-draw data (shared between depth prepass and lit pass)
+            void* data = litIndirectDrawBufferMemory.mapMemory(frameByteOffset, indirectCommands.size() * sizeof(DrawIndexedIndirectCommand));
+            memcpy(data, indirectCommands.data(), indirectCommands.size() * sizeof(DrawIndexedIndirectCommand));
+            litIndirectDrawBufferMemory.unmapMemory();
+
+            auto* litDataPtr = descriptorSet->getFixedBufferMappedData<LitDrawData>(litDrawDataBufferIndex);
+            if (litDataPtr) {
+                uint32_t frameOffset = currentFrame * MAX_FIXED_BUFFER;
+                memcpy(&litDataPtr[frameOffset], litDrawDataList.data(), litDrawDataList.size() * sizeof(LitDrawData));
+            }
+
+            LitPushConstants pushConstants = {.samplerIndex      = defaultSamplerIndex,
+                                              .lightCount        = static_cast<uint32_t>(lights.size()),
+                                              .shadowSamplerIndex= shadowSamplerIndex,
+                                              .elementOffsetModel= currentFrame * MAX_FIXED_BUFFER,
+                                              .elementOffsetLight= currentFrame * MAX_FIXED_BUFFER,
+                                              .elementOffsetLit  = currentFrame * MAX_FIXED_BUFFER,
+                                              .cameraPosition    = activeCamera.position,
+                                              .viewProjection    = activeCamera.viewProjection};
+
+            // --- Depth prepass (depth-only, no color attachment) ---
+            vk::RenderingAttachmentInfo depthPrepassAttachment = {.imageView = swapchain->getDepthImageView(),
+                                                                  .imageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
+                                                                  .resolveMode = vk::ResolveModeFlagBits::eMin,
+                                                                  .resolveImageView = swapchain->getDepthResolveImageView(),
+                                                                  .resolveImageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
+                                                                  .loadOp = vk::AttachmentLoadOp::eClear,
+                                                                  .storeOp = vk::AttachmentStoreOp::eStore,
+                                                                  .clearValue = clearDepth};
+
+            vk::RenderingInfo depthRenderingInfo = {.renderArea = {.offset = {0, 0}, .extent = swapchain->getSwapChainExtent()},
+                                                    .layerCount = 1,
+                                                    .colorAttachmentCount = 0,
+                                                    .pColorAttachments = nullptr,
+                                                    .pDepthAttachment = &depthPrepassAttachment};
+
+            cmd.beginRendering(depthRenderingInfo);
+            setFullscreenViewport(cmd, swapchain->getSwapChainExtent());
+
+            auto& depthPipeline = pipelineManager->getBeforeGeoPipelines()[depthPipelineIndex];
+            bindPipeline(cmd, *depthPipeline);
+            cmd.bindIndexBuffer(indexBufferHandle, 0, vk::IndexType::eUint32);
+            cmd.pushConstants<LitPushConstants>(depthPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pushConstants);
+            cmd.drawIndexedIndirect(*litIndirectDrawBuffer, frameByteOffset, static_cast<uint32_t>(indirectCommands.size()), sizeof(DrawIndexedIndirectCommand));
+
+            cmd.endRendering();
+        }
+
+        // --- Lit geometry pass (loads depth from prepass) ---
         vk::RenderingAttachmentInfo colorAttachment = {.imageView = swapchain->getColorImageView(),
                                                        .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
                                                        .resolveMode = vk::ResolveModeFlagBits::eAverage,
@@ -765,9 +894,8 @@ class Renderer {
                                                            .resolveMode = vk::ResolveModeFlagBits::eMin,
                                                            .resolveImageView = swapchain->getDepthResolveImageView(),
                                                            .resolveImageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
-                                                           .loadOp = vk::AttachmentLoadOp::eClear,
-                                                           .storeOp = vk::AttachmentStoreOp::eDontCare,
-                                                           .clearValue = clearDepth};
+                                                           .loadOp = vk::AttachmentLoadOp::eLoad,
+                                                           .storeOp = vk::AttachmentStoreOp::eDontCare};
 
         vk::RenderingInfo renderingInfo = {.renderArea = {.offset = {0, 0}, .extent = swapchain->getSwapChainExtent()},
                                            .layerCount = 1,
@@ -785,99 +913,24 @@ class Renderer {
         cmd.pushConstants<SkyBoxPushConstants>(*skyboxPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, skyboxConstants);
         cmd.draw(3, 1, 0, 0);
 
-        // lit geometry — indirect draw
-        vk::Buffer indexBufferHandle = descriptorSet->getVariableBuffer(indexBufferIndex);
-        cmd.bindIndexBuffer(indexBufferHandle, 0, vk::IndexType::eUint32);
-        auto& geoPipelines = pipelineManager->getGeoPipelines();
-        for (const auto& [shader, materials] : shaders) {
-            auto currentPipeline = &(geoPipelines[shader.pipelineIndex]);
-            bindPipeline(cmd, **currentPipeline);
+        // lit geometry — reuses the same indirect buffer from the prepass
+        if (!indirectCommands.empty()) {
+            cmd.bindIndexBuffer(indexBufferHandle, 0, vk::IndexType::eUint32);
+            auto& geoPipelines = pipelineManager->getGeoPipelines();
 
-            indirectCommands.clear();
-            litDrawDataList.clear();
+            LitPushConstants pushConstants = {.samplerIndex      = defaultSamplerIndex,
+                                              .lightCount        = static_cast<uint32_t>(lights.size()),
+                                              .shadowSamplerIndex= shadowSamplerIndex,
+                                              .elementOffsetModel= currentFrame * MAX_FIXED_BUFFER,
+                                              .elementOffsetLight= currentFrame * MAX_FIXED_BUFFER,
+                                              .elementOffsetLit  = currentFrame * MAX_FIXED_BUFFER,
+                                              .cameraPosition    = activeCamera.position,
+                                              .viewProjection    = activeCamera.viewProjection};
 
-            Camera fakeCam = activeCamera;
-            fakeCam.fov = cullFovScale * activeCamera.fov;
-            fakeCam.calculateViewProjectionMatrix();
-            std::array<Plane, 6> frustumPlanes = extractFrustumPlanes(fakeCam.viewProjection);
-
-            for (const auto& [material, node_mesh] : materials) {
-                for (const auto& [node, subMeshIndices] : node_mesh) {
-
-                    if (assetManager.meshes[node->getMeshIndex()].freed == true) {
-                        for (uint32_t subMesh : assetManager.meshes[node->getMeshIndex()].subMeshes) {
-                            descriptorSet->freeVariableBuffer(vertexBufferIndex, assetManager.subMeshes[subMesh].vertexAllocationIndex);
-                            descriptorSet->freeVariableBuffer(indexBufferIndex, assetManager.subMeshes[subMesh].indexAllocationIndex);
-                            assetManager.freeSubMeshes.push(subMesh);
-                        }
-                        assetManager.freeMeshes.push(node->getMeshIndex());
-                        continue;
-                    }
-
-                    if (node->isBoundingBoxValid()) {
-                        if (!isAABBInFrustum(node->getBoundingBoxMin(), node->getBoundingBoxMax(), frustumPlanes)) {
-                            continue;
-                        }
-                    }
-
-                    for (auto mesh : subMeshIndices) {
-                        const auto& subMesh = assetManager.subMeshes[mesh];
-
-                        glm::vec3 subWorldMin, subWorldMax;
-                        transformAABBToWorldSpace(subMesh.boundingBoxMin, subMesh.boundingBoxMax, node->getTransform(), subWorldMin, subWorldMax);
-                        if (!isAABBInFrustum(subWorldMin, subWorldMax, frustumPlanes)) {
-                            continue;
-                        }
-                        
-                        Gizmos::drawBox(subWorldMin,subWorldMax,glm::vec4(1.0f,1.0f,0.0f,1.0f));
-
-                        indirectCommands.push_back({.indexCount    = subMesh.indexCount,
-                                                    .instanceCount = 1,
-                                                    .firstIndex    = static_cast<uint32_t>(subMesh.indexOffset / sizeof(uint32_t)),
-                                                    .vertexOffset  = 0,
-                                                    .firstInstance = 0});
-
-                        litDrawDataList.push_back({.vertexAllocationIndex = subMesh.vertexAllocationIndex,
-                                                   .vertexOffset          = static_cast<uint32_t>(subMesh.vertexOffset),
-                                                   .vertexStride          = subMesh.vertexStride,
-                                                   .modelMatrixIndex      = node->getModelMatrixIndex(),
-                                                   .albedoTextureIndex    = material.albedoTextureIndex,
-                                                   .roughnessTextureIndex = material.roughnessTextureIndex,
-                                                   .metallicTextureIndex  = material.metallicTextureIndex,
-                                                   .normalTextureIndex    = material.normalTextureIndex,
-                                                   .environmentMapIndex   = material.environmentMapIndex,
-                                                   .materialFlags         = static_cast<uint32_t>(material.flags),
-                                                   .metallic              = material.metallic,
-                                                   .roughness             = material.roughness});
-                    }
-                }
-            }
-
-            if (!indirectCommands.empty()) {
-                // Upload indirect commands into this frame's slot to avoid overwriting in-flight data
-                vk::DeviceSize frameByteOffset = currentFrame * MAX_INDIRECT_COMMANDS * sizeof(DrawIndexedIndirectCommand);
-                void* data = litIndirectDrawBufferMemory.mapMemory(frameByteOffset, indirectCommands.size() * sizeof(DrawIndexedIndirectCommand));
-                memcpy(data, indirectCommands.data(), indirectCommands.size() * sizeof(DrawIndexedIndirectCommand));
-                litIndirectDrawBufferMemory.unmapMemory();
-
-                // Upload per-draw data
-                auto* litDataPtr = descriptorSet->getFixedBufferMappedData<LitDrawData>(litDrawDataBufferIndex);
-                if (litDataPtr) {
-                    uint32_t frameOffset = currentFrame * MAX_FIXED_BUFFER;
-                    memcpy(&litDataPtr[frameOffset], litDrawDataList.data(), litDrawDataList.size() * sizeof(LitDrawData));
-                }
-
-                // Push frame-level constants (same for every draw in this call)
-                LitPushConstants pushConstants = {.samplerIndex      = defaultSamplerIndex,
-                                                  .lightCount        = static_cast<uint32_t>(lights.size()),
-                                                  .shadowSamplerIndex= shadowSamplerIndex,
-                                                  .elementOffsetModel= currentFrame * MAX_FIXED_BUFFER,
-                                                  .elementOffsetLight= currentFrame * MAX_FIXED_BUFFER,
-                                                  .elementOffsetLit  = currentFrame * MAX_FIXED_BUFFER,
-                                                  .cameraPosition    = activeCamera.position,
-                                                  .viewProjection    = activeCamera.viewProjection};
+            for (const auto& [shader, materials] : shaders) {
+                auto currentPipeline = &(geoPipelines[shader.pipelineIndex]);
+                bindPipeline(cmd, **currentPipeline);
                 cmd.pushConstants<LitPushConstants>((*currentPipeline)->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pushConstants);
-
                 cmd.drawIndexedIndirect(*litIndirectDrawBuffer, frameByteOffset, static_cast<uint32_t>(indirectCommands.size()), sizeof(DrawIndexedIndirectCommand));
             }
         }
@@ -985,7 +1038,7 @@ class Renderer {
                                                         .storeOp = vk::AttachmentStoreOp::eStore};
         vk::RenderingInfo renderInfo{.renderArea = {{0, 0}, extent}, .layerCount = 1, .colorAttachmentCount = 1, .pColorAttachments = &swapchainAttachment};
 
-        auto& depthPipeline = pipelineManager->getPostProcessPipelines()[depthPipelineIndex];
+        auto& depthPipeline = pipelineManager->getPostProcessPipelines()[imageViewPipelineIndex];
         cmd.beginRendering(renderInfo);
         setFullscreenViewport(cmd, extent);
         bindPipeline(cmd, *depthPipeline);
@@ -1062,52 +1115,16 @@ class Renderer {
                 lightSpaceMatrix = light.cascades[i].lightSpaceMatrix;
             }
             std::array<Plane, 6> frustumPlanes = extractFrustumPlanes(lightSpaceMatrix);
+            //Gizmos::drawFrustum(lightSpaceMatrix,glm::vec4(0,1,0,1));
 
             // Build indirect draw commands and shadow draw data with CPU frustum culling
-            indirectCommands.clear();
             drawDataList.clear();
-
-            //basic culling for performance
-            for (const auto& [shader, materials] : shaders) {
-                for (const auto& [material, node_mesh] : materials) {
-                    for (const auto& [node, subMeshIndices] : node_mesh) {
-                        if (assetManager.meshes[node->getMeshIndex()].freed == true) {
-                            continue;
-                        }
-
-                        // CPU frustum culling: skips node if outside frustum
-                        //if (node->isBoundingBoxValid()) {
-                        //    if (!isAABBInFrustum(node->getBoundingBoxMin(), node->getBoundingBoxMax(), frustumPlanes)) {
-                        //        continue;
-                        //    }
-                        //}
-
-                        // Per-submesh frustum culling
-                        for (auto meshIdx : subMeshIndices) {
-                            const auto& subMesh = assetManager.subMeshes[meshIdx];
-
-                            //glm::vec3 subWorldMin, subWorldMax;
-                            //transformAABBToWorldSpace(subMesh.boundingBoxMin, subMesh.boundingBoxMax, node->getTransform(), subWorldMin, subWorldMax);
-                            //if (!isAABBInFrustum(subWorldMin, subWorldMax, frustumPlanes)) {
-                            //    continue;
-                            //}
-
-                            // Add indirect draw command
-                            indirectCommands.push_back({.indexCount = subMesh.indexCount,
-                                                        .instanceCount = 1,
-                                                        .firstIndex = static_cast<uint32_t>(subMesh.indexOffset / sizeof(uint32_t)),
-                                                        .vertexOffset = 0,
-                                                        .firstInstance = 0});
-
-                            // Add per-draw data
-                            drawDataList.push_back({.vertexAllocationIndex = subMesh.vertexAllocationIndex,
-                                                    .vertexOffset = static_cast<uint32_t>(subMesh.vertexOffset),
-                                                    .vertexStride = subMesh.vertexStride,
-                                                    .modelMatrixIndex = node->getModelMatrixIndex()});
-                        }
-                    }
-                }
-            }
+            buildGeometryDrawCommands(frustumPlanes, false, [&](const auto& subMesh, auto& node, const auto& material) {
+                drawDataList.push_back({.vertexAllocationIndex = subMesh.vertexAllocationIndex,
+                                        .vertexOffset = static_cast<uint32_t>(subMesh.vertexOffset),
+                                        .vertexStride = subMesh.vertexStride,
+                                        .modelMatrixIndex = node.getModelMatrixIndex()});
+            });
 
             // build the indirect draw command and submit it
             if (!indirectCommands.empty()) {

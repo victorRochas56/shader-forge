@@ -471,7 +471,6 @@ void calculateCascadedLightSpaceMatrices(Light& light, Camera& camera, Renderer*
     if (glm::abs(glm::dot(lightDir, up)) > 0.99f) {
         up = glm::vec3(1.0f, 0.0f, 0.0f);
     }
-
     // Unproject the full camera frustum to world space (Vulkan NDC: z in [0,1])
     // z-outermost so indices 0-3 = near plane, 4-7 = far plane
     glm::mat4 invCamVP = glm::inverse(camera.viewProjection);
@@ -488,14 +487,13 @@ void calculateCascadedLightSpaceMatrices(Light& light, Camera& camera, Renderer*
 
     for (uint32_t i = 0; i < light.numCascades; i++) {
 
-        // Cascade split as a fraction [0,1] of the full frustum depth
+        // Cascade splits are in world-space units
         float splitDist;
         if (light.cascades[i].splitDistance > 0.0f) {
             splitDist = (light.cascades[i].splitDistance - camera.nearPlane) / (camera.farPlane - camera.nearPlane);
             splitDist = glm::clamp(splitDist, lastSplitDist + 0.001f, 1.0f);
         } else {
             splitDist = static_cast<float>(i + 1) / static_cast<float>(light.numCascades);
-            // Write back the world-space split distance so the lit shader can select cascades
             light.cascades[i].splitDistance = camera.nearPlane + splitDist * (camera.farPlane - camera.nearPlane);
         }
 
@@ -512,34 +510,41 @@ void calculateCascadedLightSpaceMatrices(Light& light, Camera& camera, Renderer*
         for (const auto& c : corners) center += c;
         center /= 8.0f;
 
-        // Bounding sphere radius (sphere avoids shadow shimmer on camera rotation)
-        float radius = 0.0f;
-        for (const auto& c : corners) {
-            radius = glm::max(radius, glm::length(c - center));
-        }
-        radius = std::ceil(radius * 16.0f) / 16.0f;
-
-        // Place the light eye far behind the sub-frustum center so that
-        // shadow casters between the light source and the camera are captured.
-        // x/y use the tight bounding-sphere extents (good texel density + no shimmer),
-        // z gets a generous range so partially-overlapping geometry isn't depth-clipped.
-        float zPullBack = radius * 10.0f;
-
+        // Build light view matrix looking at the frustum center
+        float zPullBack = 500.0f;
         glm::mat4 lightView = glm::lookAt(
             center - lightDir * zPullBack,
             center,
             up
         );
 
+        // Compute tight AABB in light space from the frustum corners
+        glm::vec3 lsMin(std::numeric_limits<float>::max());
+        glm::vec3 lsMax(std::numeric_limits<float>::lowest());
+        for (const auto& c : corners) {
+            glm::vec3 ls = glm::vec3(lightView * glm::vec4(c, 1.0f));
+            lsMin = glm::min(lsMin, ls);
+            lsMax = glm::max(lsMax, ls);
+        }
+
+        // Near=0.1 captures shadow casters between the light eye and the frustum.
+        // Far extends just past the farthest frustum corner in light space.
+        float orthoNear = 0.1f;
+        float orthoFar  = -lsMin.z + 10.0f;
+
         glm::mat4 lightProj = glm::ortho(
-            -radius, radius,
-            -radius, radius,
-            0.0f, zPullBack + radius
+            lsMin.x, lsMax.x,
+            lsMin.y, lsMax.y,
+            orthoNear, orthoFar
         );
+
+        float extentX = lsMax.x - lsMin.x;
+        float extentY = lsMax.y - lsMin.y;
+        float maxExtent = glm::max(extentX, extentY);
 
         light.cascades[i].lightSpaceMatrix = lightProj * lightView;
         light.cascades[i].texelSize = 1.0f / static_cast<float>(light.shadowResolution);
-        light.cascades[i].worldTexelSize = (2.0f * radius) / static_cast<float>(light.shadowResolution);
+        light.cascades[i].worldTexelSize = maxExtent / static_cast<float>(light.shadowResolution);
 
         lastSplitDist = splitDist;
     }

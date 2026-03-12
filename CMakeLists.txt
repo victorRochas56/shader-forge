@@ -51,25 +51,27 @@ function(add_slang_shader_target TARGET EXECUTABLE_TARGET)
         COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADERS_DIR}
     )
    
-    # Get all .slang files in the directory
+    # Get compilable .slang files (top-level only, modules/ is excluded by the glob pattern)
     file(GLOB SLANG_FILES "${SHADERS_DIR}/*.slang")
+    # Get all module files as dependencies (any .slang in modules/ subfolder)
+    file(GLOB SLANG_MODULES "${SHADERS_DIR}/modules/*.slang")
     # Generate output filenames
     set(SLANG_SPV_FILES)
     foreach(SLANG_FILE ${SLANG_FILES})
         get_filename_component(FILENAME ${SLANG_FILE} NAME_WE)
         list(APPEND SLANG_SPV_FILES "${SHADERS_DIR}/${FILENAME}.spv")
     endforeach()
-    
+
     #compile each .slang to corresponding .spv
     foreach(SLANG_FILE ${SLANG_FILES})
         get_filename_component(FILENAME ${SLANG_FILE} NAME_WE)
         set(OUTPUT_FILE "${SHADERS_DIR}/${FILENAME}.spv")
-       
+
         add_custom_command(
             OUTPUT ${OUTPUT_FILE}
             COMMAND ${SLANGC_EXECUTABLE} ${SLANG_FILE} -target spirv -profile spirv_1_4 -fvk-use-entrypoint-name -o ${FILENAME}.spv
             WORKING_DIRECTORY ${SHADERS_DIR}
-            DEPENDS ${SLANG_FILE}
+            DEPENDS ${SLANG_FILE} ${SLANG_MODULES}
             COMMENT "Compiling ${FILENAME}.slang"
             VERBATIM
         )

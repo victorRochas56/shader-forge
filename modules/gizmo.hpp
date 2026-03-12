@@ -115,6 +115,39 @@ class Gizmos {
         g.addLineToBuffer(pillar3);
     }
 
+    static void drawFrustum(const glm::mat4& viewProjection, glm::vec4 color) {
+        auto& g = instance();
+        glm::mat4 inv = glm::inverse(viewProjection);
+
+        // Unproject 8 NDC corners (Vulkan: z in [0,1])
+        glm::vec3 corners[8];
+        int idx = 0;
+        for (int z = 0; z < 2; ++z)
+            for (int y = 0; y < 2; ++y)
+                for (int x = 0; x < 2; ++x) {
+                    glm::vec4 c = inv * glm::vec4(2.f * x - 1.f, 2.f * y - 1.f, static_cast<float>(z), 1.f);
+                    corners[idx++] = glm::vec3(c / c.w);
+                }
+
+        // Near face edges (z=0: indices 0-3)
+        g.addLineToBuffer({.startPoint = corners[0], .endPoint = corners[1], .color = color});
+        g.addLineToBuffer({.startPoint = corners[0], .endPoint = corners[2], .color = color});
+        g.addLineToBuffer({.startPoint = corners[1], .endPoint = corners[3], .color = color});
+        g.addLineToBuffer({.startPoint = corners[2], .endPoint = corners[3], .color = color});
+
+        // Far face edges (z=1: indices 4-7)
+        g.addLineToBuffer({.startPoint = corners[4], .endPoint = corners[5], .color = color});
+        g.addLineToBuffer({.startPoint = corners[4], .endPoint = corners[6], .color = color});
+        g.addLineToBuffer({.startPoint = corners[5], .endPoint = corners[7], .color = color});
+        g.addLineToBuffer({.startPoint = corners[6], .endPoint = corners[7], .color = color});
+
+        // Connecting edges (near to far)
+        g.addLineToBuffer({.startPoint = corners[0], .endPoint = corners[4], .color = color});
+        g.addLineToBuffer({.startPoint = corners[1], .endPoint = corners[5], .color = color});
+        g.addLineToBuffer({.startPoint = corners[2], .endPoint = corners[6], .color = color});
+        g.addLineToBuffer({.startPoint = corners[3], .endPoint = corners[7], .color = color});
+    }
+
     static void drawGrid(glm::vec3 origin, glm::vec3 normal, float spacing) {}
     static void drawWireFrame(Mesh mesh) {}
     static void drawWireFrame(SubMesh mesh) {}
