@@ -1076,21 +1076,21 @@ class Renderer {
                         }
 
                         // CPU frustum culling: skips node if outside frustum
-                        if (node->isBoundingBoxValid()) {
-                            if (!isAABBInFrustum(node->getBoundingBoxMin(), node->getBoundingBoxMax(), frustumPlanes)) {
-                                continue;
-                            }
-                        }
+                        //if (node->isBoundingBoxValid()) {
+                        //    if (!isAABBInFrustum(node->getBoundingBoxMin(), node->getBoundingBoxMax(), frustumPlanes)) {
+                        //        continue;
+                        //    }
+                        //}
 
                         // Per-submesh frustum culling
                         for (auto meshIdx : subMeshIndices) {
                             const auto& subMesh = assetManager.subMeshes[meshIdx];
 
-                            glm::vec3 subWorldMin, subWorldMax;
-                            transformAABBToWorldSpace(subMesh.boundingBoxMin, subMesh.boundingBoxMax, node->getTransform(), subWorldMin, subWorldMax);
-                            if (!isAABBInFrustum(subWorldMin, subWorldMax, frustumPlanes)) {
-                                continue;
-                            }
+                            //glm::vec3 subWorldMin, subWorldMax;
+                            //transformAABBToWorldSpace(subMesh.boundingBoxMin, subMesh.boundingBoxMax, node->getTransform(), subWorldMin, subWorldMax);
+                            //if (!isAABBInFrustum(subWorldMin, subWorldMax, frustumPlanes)) {
+                            //    continue;
+                            //}
 
                             // Add indirect draw command
                             indirectCommands.push_back({.indexCount = subMesh.indexCount,
