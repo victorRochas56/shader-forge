@@ -204,7 +204,7 @@ class PipelineManager {
                           .frontFace = vk::FrontFace::eCounterClockwise,
                           .depthBiasEnable = vk::False,
                           .depthBiasSlopeFactor = 1.0f};
-            multisampling = {.rasterizationSamples = msaaSamples, .sampleShadingEnable = vk::False};
+            multisampling = {.rasterizationSamples = msaaSamples, .sampleShadingEnable = vk::True, .minSampleShading = 0.2f};
             depthStencil = {.depthTestEnable = depthTestEnable,
                             .depthWriteEnable = depthWriteEnable,
                             .depthCompareOp = vk::CompareOp::eLessOrEqual,

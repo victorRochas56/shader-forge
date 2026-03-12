@@ -58,6 +58,11 @@ class App {
     SceneManager sceneManager;
     MaterialEditorState materialEditorState;
 
+    static constexpr int FRAME_HISTORY_COUNT = 128;
+    double frameTimeHistory[FRAME_HISTORY_COUNT] = {};
+    int frameTimeIndex = 0;
+    int frameTimeCount = 0;
+
     void initWindow() {
         glfwInit();
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -101,6 +106,10 @@ class App {
             frame_end = std::chrono::high_resolution_clock::now();
             frame_time = frame_end - frame_start;
 
+            frameTimeHistory[frameTimeIndex] = frame_time.count();
+            frameTimeIndex = (frameTimeIndex + 1) % FRAME_HISTORY_COUNT;
+            if (frameTimeCount < FRAME_HISTORY_COUNT) frameTimeCount++;
+
             InputManager::tickInputState();
         }
         renderer.getDevice().getDevice().waitIdle();
@@ -116,8 +125,10 @@ class App {
 
         
         ImGui::Begin("frame time");
-        std::string frame_time_str = frame_time.count()*1000 < 10 ? "0":"" + std::to_string(frame_time.count() * 1000) + " ms";
-        ImGui::Text(frame_time_str.c_str());
+        double avgFrameTime = 0.0;
+        for (int i = 0; i < frameTimeCount; i++) avgFrameTime += frameTimeHistory[i];
+        if (frameTimeCount > 0) avgFrameTime /= frameTimeCount;
+        ImGui::Text("%.2f ms (avg %d frames)", avgFrameTime * 1000.0, frameTimeCount);
         ImGui::End();
 
         ImGui::Begin("node tree");
