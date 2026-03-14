@@ -28,6 +28,8 @@ struct LitPushConstants {
     uint padding1;
     float3 cameraPos;
     uint padding2;
+    float3 cameraForward;
+    uint padding3;
     float4x4 viewProjection;
 };
 
@@ -102,6 +104,29 @@ StructuredBuffer<Light> lights[];
 
 [[vk::binding(8,0)]]
 StructuredBuffer<LitDrawData> litDrawData[];
+
+
+float3 reconstructViewPos(float2 uv, float depth, float4x4 invProjection) {
+    float4 clip = float4(uv * 2.0 - 1.0, depth, 1.0);
+    float4 view = mul(invProjection, clip);
+    return view.xyz / view.w;
+}
+
+float3 calculateViewSpaceNormal(uint depthIndex,uint depthSamplerIndex, float4x4 invProjection, float2 texelSize, float2 uv, float3 fragPos) {
+    float3 posRight = reconstructViewPos(uv + float2(texelSize.x, 0.0),
+        textures[depthIndex].Sample(samplers[depthSamplerIndex], uv + float2(texelSize.x, 0.0)).r, invProjection);
+    float3 posLeft = reconstructViewPos(uv - float2(texelSize.x, 0.0),
+        textures[depthIndex].Sample(samplers[depthSamplerIndex], uv - float2(texelSize.x, 0.0)).r, invProjection);
+    float3 posUp = reconstructViewPos(uv + float2(0.0, texelSize.y),
+        textures[depthIndex].Sample(samplers[depthSamplerIndex], uv + float2(0.0, texelSize.y)).r, invProjection);
+    float3 posDown = reconstructViewPos(uv - float2(0.0, texelSize.y),
+        textures[depthIndex].Sample(samplers[depthSamplerIndex], uv - float2(0.0, texelSize.y)).r, invProjection);
+
+    // Use the smaller delta to avoid artifacts at edges
+    float3 dx = (abs(posRight.z - fragPos.z) < abs(fragPos.z - posLeft.z)) ? (posRight - fragPos) : (fragPos - posLeft);
+    float3 dy = (abs(posUp.z - fragPos.z) < abs(fragPos.z - posDown.z)) ? (posUp - fragPos) : (fragPos - posDown);
+    return normalize(cross(dx, dy));
+}
 
 Vertex loadVertex(uint vertexIndex, uint stride, uint offset)
 {

@@ -9,7 +9,9 @@ VertexOutput vertMain(uint vertexID : SV_VertexID, uint drawID : SV_DrawIndex)
 struct FragmentOutput
 {
     float4 color : SV_Target0;
+    float4 roughness_metal : SV_Target1;
 };
+
 [shader("fragment")]
 FragmentOutput fragMain(VertexOutput input)
 {
@@ -128,7 +130,7 @@ FragmentOutput fragMain(VertexOutput input)
         float shadow = 0.0;
         if(currentLight.castsShadows == 1) {
             float3 geometricNormal = normalize(input.normal);
-            shadow = calculateShadow(input.worldPos, pc.cameraPos, geometricNormal, L, currentLight);
+            shadow = calculateShadow(input.worldPos, pc.cameraPos, pc.cameraForward, geometricNormal, L, currentLight);
             if( currentLight.showCascades>0){
                 if(shadow == 0){
                     output.color = float4(1,0,0,1);
@@ -163,6 +165,7 @@ FragmentOutput fragMain(VertexOutput input)
     float3 color = ambient + Lo;
 
     output.color = float4(color, 1.0);
+    output.roughness_metal = float4(roughness.r, metallic.r, 0.0, 1.0);
     return output;
 }
 
@@ -240,9 +243,9 @@ float3 calculateDiffuseIBL(float3 N, float3 albedo, TextureCube envMap, SamplerS
     return irradiance * albedo / 3.14159265;
 }
 
-float calculateShadow(float3 fragWorldPos, float3 cameraPos, float3 geometricNormal, float3 L, Light light)
+float calculateShadow(float3 fragWorldPos, float3 cameraPos, float3 cameraForward, float3 geometricNormal, float3 L, Light light)
 {
-    float viewDepth = length(cameraPos - fragWorldPos);
+    float viewDepth = dot(fragWorldPos - cameraPos, cameraForward);
 
     int cascadeIndex = int(light.numCascades) - 1;
     for (int i = 0; i < int(light.numCascades); i++) {

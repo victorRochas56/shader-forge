@@ -507,6 +507,7 @@ void showBufferAllocs(Renderer* renderer){
 
 void showDebugWindow(Renderer* renderer){
     ImGui::Begin("Debug");
+    ImGui::Text(("Culled : " + std::to_string(renderer->culledCount)).c_str());
     ImGui::SliderFloat("Cull FOV Scale", &renderer->cullFovScale, 0.1f, 1.0f);
     ImGui::End();
 }

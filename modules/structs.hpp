@@ -145,6 +145,12 @@ struct SSAOApplyPushConstants {
     uint32_t padding[2];
 };
 
+struct SSRApplyPushConstants {
+    uint32_t ssrTextureIndex;
+    uint32_t samplerIndex;
+    uint32_t padding[2];
+};
+
 struct LitDrawData {
     uint32_t vertexAllocationIndex;
     uint32_t vertexOffset;
@@ -174,6 +180,8 @@ struct LitPushConstants {
     uint32_t  padding1;
     glm::vec3 cameraPosition;
     uint32_t  padding2;
+    glm::vec3 cameraForward;
+    uint32_t  padding3;
     glm::mat4 viewProjection;
 };
 
@@ -262,6 +270,12 @@ struct Material {
     }
 
 
+};
+
+struct Image {
+    vk::raii::Image image = nullptr;
+    vk::raii::DeviceMemory memory = nullptr;
+    vk::raii::ImageView view = nullptr;
 };
 
 struct Mesh {

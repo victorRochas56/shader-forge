@@ -18,9 +18,9 @@
 #include "swapchain.hpp"
 #include "utils.hpp"
 /*
-handles pipeline creation, there are only 3 types for now
-BEFORE_GEOMETRY is only used by shadow renedering
-GEOMETRY is the main pass
+handles pipeline creation
+BEFORE_GEOMETRY is only used by shadow rendering
+GEOMETRY is the main pass with 2 color attachments (color + roughness/metallic)
 POSTPROCESS are passes that process color attachments
 */
 enum class PipelineCategory { BEFORE_GEOMETRY, GEOMETRY, POSTPROCESS, POSTPROCESS_MULTIPLY, SHADOW, DEPTH_PREPASS };
@@ -157,6 +157,11 @@ class PipelineManager {
 
         // Format variables must persist beyond the switch scope since pointers to them are used
         vk::Format pcfFormat = vk::Format::eR32Sfloat; // PCF uses R32F for raw depth values
+        vk::Format mrtFormats[2] = {swapchain.getSwapChainImageFormat(), vk::Format::eR8G8B8A8Unorm};
+        vk::PipelineColorBlendAttachmentState mrtBlendAttachments[2] = {
+            {.blendEnable = vk::False, .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA},
+            {.blendEnable = vk::False, .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA}
+        };
 
         switch (pipelineCategory) {
         case PipelineCategory::SHADOW:
@@ -218,6 +223,7 @@ class PipelineManager {
             break;
         }
         case PipelineCategory::GEOMETRY: {
+            pipelineRenderingCreateInfo = {.colorAttachmentCount = 2, .pColorAttachmentFormats = mrtFormats, .depthAttachmentFormat = depthFormat};
             inputAssembly = {.topology = topology};
             rasterizer = {.depthClampEnable = vk::False,
                           .rasterizerDiscardEnable = vk::False,
@@ -233,10 +239,7 @@ class PipelineManager {
                             .depthCompareOp = vk::CompareOp::eLessOrEqual,
                             .depthBoundsTestEnable = vk::False,
                             .stencilTestEnable = vk::False};
-            colorBlendAttachment = {.blendEnable = vk::False,
-                                    .colorWriteMask =
-                                        vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA};
-            colorBlending = {.logicOpEnable = vk::False, .logicOp = vk::LogicOp::eCopy, .attachmentCount = 1, .pAttachments = &colorBlendAttachment};
+            colorBlending = {.logicOpEnable = vk::False, .logicOp = vk::LogicOp::eCopy, .attachmentCount = 2, .pAttachments = mrtBlendAttachments};
             pushConstantRange = {.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, .offset = 0, .size = sizeof(T)};
             vk::PipelineLayoutCreateInfo pipelineLayoutInfo{
                 .setLayoutCount = 1, .pSetLayouts = &*setLayout, .pushConstantRangeCount = 1, .pPushConstantRanges = &pushConstantRange};

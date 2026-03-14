@@ -1,3 +1,5 @@
+import modules.common;
+
 struct SSAOPushConstants {
     float4x4 invProjection;
     uint depthIndex;
@@ -11,10 +13,7 @@ struct SSAOPushConstants {
     uint kernelSize;
 };
 
-[[vk::push_constant]] SSAOPushConstants pc;
-
-[[vk::binding(0, 0)]] Texture2D textures[];
-[[vk::binding(2, 0)]] SamplerState samplers[];
+[[vk::push_constant]] SSAOPushConstants SSAOpc;
 
 struct VSOutput {
     float4 position : SV_Position;
@@ -59,11 +58,6 @@ static const float3 KERNEL[32] = {
     float3(-0.2400,  0.3290,  0.2940),
 };
 
-float3 reconstructViewPos(float2 uv, float depth) {
-    float4 clip = float4(uv * 2.0 - 1.0, depth, 1.0);
-    float4 view = mul(pc.invProjection, clip);
-    return view.xyz / view.w;
-}
 
 [shader("vertex")]
 VSOutput vertMain(uint vertexID : SV_VertexID) {
@@ -78,32 +72,18 @@ VSOutput vertMain(uint vertexID : SV_VertexID) {
 [shader("fragment")]
 float4 fragMain(VSOutput input) : SV_Target {
     float2 uv = input.texCoord;
-    float2 texelSize = 1.0 / float2(pc.resolution);
+    float2 texelSize = 1.0 / float2(SSAOpc.resolution);
 
     // Sample depth and reconstruct view-space position
-    float depth = textures[pc.depthIndex].Sample(samplers[pc.depthSamplerIndex], uv).r;
+    float depth = textures[SSAOpc.depthIndex].Sample(samplers[SSAOpc.depthSamplerIndex], uv).r;
     if (depth >= 1.0) return float4(1.0); // skip skybox
 
-    float3 fragPos = reconstructViewPos(uv, depth);
-
-    // Reconstruct view-space normal from depth via partial derivatives
-    float3 posRight = reconstructViewPos(uv + float2(texelSize.x, 0.0),
-        textures[pc.depthIndex].Sample(samplers[pc.depthSamplerIndex], uv + float2(texelSize.x, 0.0)).r);
-    float3 posLeft = reconstructViewPos(uv - float2(texelSize.x, 0.0),
-        textures[pc.depthIndex].Sample(samplers[pc.depthSamplerIndex], uv - float2(texelSize.x, 0.0)).r);
-    float3 posUp = reconstructViewPos(uv + float2(0.0, texelSize.y),
-        textures[pc.depthIndex].Sample(samplers[pc.depthSamplerIndex], uv + float2(0.0, texelSize.y)).r);
-    float3 posDown = reconstructViewPos(uv - float2(0.0, texelSize.y),
-        textures[pc.depthIndex].Sample(samplers[pc.depthSamplerIndex], uv - float2(0.0, texelSize.y)).r);
-
-    // Use the smaller delta to avoid artifacts at edges
-    float3 dx = (abs(posRight.z - fragPos.z) < abs(fragPos.z - posLeft.z)) ? (posRight - fragPos) : (fragPos - posLeft);
-    float3 dy = (abs(posUp.z - fragPos.z) < abs(fragPos.z - posDown.z)) ? (posUp - fragPos) : (fragPos - posDown);
-    float3 normal = normalize(cross(dx, dy));
+    float3 fragPos = reconstructViewPos(uv,depth,SSAOpc.invProjection);
+    float3 normal = calculateViewSpaceNormal(SSAOpc.depthIndex,SSAOpc.depthSamplerIndex,SSAOpc.invProjection,texelSize,uv,fragPos);
 
     // Sample noise texture (tiled across screen)
-    float2 noiseUV = uv * float2(pc.resolution) / 4.0;
-    float3 randomVec = textures[pc.noiseIndex].Sample(samplers[pc.noiseSamplerIndex], noiseUV).rgb * 2.0 - 1.0;
+    float2 noiseUV = uv * float2(SSAOpc.resolution) / 4.0;
+    float3 randomVec = textures[SSAOpc.noiseIndex].Sample(samplers[SSAOpc.noiseSamplerIndex], noiseUV).rgb * 2.0 - 1.0;
     randomVec.z = 0.0;
     randomVec = normalize(randomVec);
 
@@ -113,33 +93,33 @@ float4 fragMain(VSOutput input) : SV_Target {
     float3x3 TBN = float3x3(tangent, bitangent, normal);
 
     // Offset fragment position along normal to prevent self-occlusion on flat surfaces
-    float3 biasedFragPos = fragPos - normal * pc.bias;
+    float3 biasedFragPos = fragPos - normal * SSAOpc.bias;
 
     // Accumulate occlusion
     float occlusion = 0.0;
-    uint sampleCount = min(pc.kernelSize, 32u);
+    uint sampleCount = min(SSAOpc.kernelSize, 32u);
 
     for (uint i = 0; i < sampleCount; i++) {
         // Orient sample in view space
         float3 sampleOffset = mul(KERNEL[i], TBN);
-        float3 samplePos = biasedFragPos + sampleOffset * pc.radius;
+        float3 samplePos = biasedFragPos + sampleOffset * SSAOpc.radius;
 
         // Project sample to screen space
         // Reconstruct proj from invProj: proj[0][0] = 1/invProj[0][0], proj[1][1] = 1/invProj[1][1]
         float2 sampleUV;
-        sampleUV.x = (samplePos.x / (-samplePos.z) * (1.0 / pc.invProjection[0][0])) * 0.5 + 0.5;
-        sampleUV.y = (samplePos.y / (-samplePos.z) * (1.0 / pc.invProjection[1][1])) * 0.5 + 0.5;
+        sampleUV.x = (samplePos.x / (-samplePos.z) * (1.0 / SSAOpc.invProjection[0][0])) * 0.5 + 0.5;
+        sampleUV.y = (samplePos.y / (-samplePos.z) * (1.0 / SSAOpc.invProjection[1][1])) * 0.5 + 0.5;
 
         // Sample depth at projected position
-        float sampleDepth = textures[pc.depthIndex].Sample(samplers[pc.depthSamplerIndex], sampleUV).r;
-        float3 actualPos = reconstructViewPos(sampleUV, sampleDepth);
+        float sampleDepth = textures[SSAOpc.depthIndex].Sample(samplers[SSAOpc.depthSamplerIndex], sampleUV).r;
+        float3 actualPos = reconstructViewPos(sampleUV, sampleDepth,SSAOpc.invProjection);
 
         // Range check: only occlude if the depth difference is within radius
-        float rangeCheck = smoothstep(0.0, 1.0, pc.radius / abs(fragPos.z - actualPos.z));
+        float rangeCheck = smoothstep(0.0, 1.0, SSAOpc.radius / abs(fragPos.z - actualPos.z));
         occlusion += (actualPos.z >= samplePos.z ? 1.0 : 0.0) * rangeCheck;
     }
 
     float ao = 1.0 - (occlusion / float(sampleCount));
-    ao = pow(saturate(ao), pc.power);
+    ao = pow(saturate(ao), SSAOpc.power);
     return float4(ao, ao, ao, 1.0);
 }

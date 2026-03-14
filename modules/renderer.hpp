@@ -49,7 +49,8 @@ main rendering engine holds the state of the scene, nodes, meshes, lights, mater
 handles vulkan initialization and the main render loop
 */
 
-// TODO gpu side material data ("uber shader" approach)
+// TODO gpu side material data
+// with a vis-buffer
 const std::vector validationLayers = {"VK_LAYER_KHRONOS_validation"};
 
 class Renderer {
@@ -61,6 +62,7 @@ class Renderer {
     uint32_t                            imageVisSamplerIndex = 0xFFFFFFFF;
     ImageVisFlags                       imageVisFlags = ImageVisFlags::IMAGE_VIS_NONE;
     float                               cullFovScale = 1.0f;
+    uint32_t                            culledCount = 0;
 
   private:
     GLFWwindow*                         window = nullptr;
@@ -133,9 +135,7 @@ class Renderer {
     std::vector<ShadowDrawData>             drawDataList;
     std::vector<LitDrawData>                litDrawDataList;
 
-    vk::raii::Image                     shadowDepthImage = nullptr;
-    vk::raii::DeviceMemory              shadowDepthMemory = nullptr;
-    vk::raii::ImageView                 shadowDepthView = nullptr;
+    Image                               shadowDepth;
     uint32_t                            currentShadowDepthResolution = 0;
 
     //SSAO
@@ -145,6 +145,15 @@ class Renderer {
     uint32_t                            ssaoNoiseSamplerIndex = 0xFFFFFFFF;
     uint32_t                            ssaoPipelineIndex = 0xFFFFFFFF;
     uint32_t                            ssaoApplyPipelineIndex = 0xFFFFFFFF;
+
+    // Roughness-metallic MRT from lit pass
+    uint32_t                            roughnessMetalTextureIndex = 0xFFFFFFFF;
+    Image                               roughnessMetal;
+
+    //SSR
+    uint32_t                            ssrTextureIndex = 0xFFFFFFFF;
+    uint32_t                            ssrPipelineIndex = 0xFFFFFFFF;
+    uint32_t                            ssrApplyPipelineIndex = 0xFFFFFFFF;
 
   public:
     bool                                enableSSAO = true; 
@@ -224,6 +233,8 @@ class Renderer {
         swapchain->create(*window, vSync);
         createShadowDepthBuffer(DEFAULT_SHADOW_RESOLUTION);
         createSSAOResources(startWidth, startHeight);
+        createRoughnessMetalResources(startWidth, startHeight);
+        createSSRResources(startWidth,startHeight);
         createSyncObjects();
 
 #if DEBUG == 1
@@ -325,7 +336,11 @@ class Renderer {
             swapchain->recreate(window, vSync);
             int width = 0, height = 0;
             glfwGetFramebufferSize(window, &width, &height);
-            if (width > 0 && height > 0) createSSAOResources(width, height);
+            if (width > 0 && height > 0) {
+                createSSAOResources(width, height);
+                createRoughnessMetalResources(width, height);
+                createSSRResources(width,height);
+            }
             activeCamera.aspectRatio = static_cast<float>(width) / static_cast<float>(height);
             activeCamera.calculateViewProjectionMatrix();
             return;
@@ -384,7 +399,11 @@ class Renderer {
 
             int width = 0, height = 0;
             glfwGetFramebufferSize(window, &width, &height);
-            if (width > 0 && height > 0) createSSAOResources(width, height);
+            if (width > 0 && height > 0) {
+                createSSAOResources(width, height);
+                createRoughnessMetalResources(width, height);
+                createSSRResources(width, height);
+            }
             activeCamera.aspectRatio = static_cast<float>(width) / static_cast<float>(height);
             activeCamera.calculateViewProjectionMatrix();
 
@@ -393,7 +412,7 @@ class Renderer {
         }
 
         currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
-        pipelineManager->checkForShaderUpdates(); // TODO enable this
+        //pipelineManager->checkForShaderUpdates(); // TODO enable this
     }
 
     GLFWwindow* getWindow() { return window; }
@@ -452,7 +471,11 @@ class Renderer {
         swapchain->recreate(window, vSync);
         int width = 0, height = 0;
         glfwGetFramebufferSize(window, &width, &height);
-        if (width > 0 && height > 0) createSSAOResources(width, height);
+        if (width > 0 && height > 0) {
+            createSSAOResources(width, height);
+            createRoughnessMetalResources(width, height);
+            createSSRResources(width, height);
+        }
     }
     
     void toggleSSAO() { enableSSAO = !enableSSAO; }
@@ -616,17 +639,17 @@ class Renderer {
 
     void createShadowDepthBuffer(uint32_t resolution) {
         // only recreates if resolution changed
-        if (currentShadowDepthResolution == resolution && shadowDepthView != nullptr) {
+        if (currentShadowDepthResolution == resolution && shadowDepth.view != nullptr) {
             return;
         }
         // Free old resources if they exist
-        shadowDepthView = nullptr;
-        shadowDepthImage = nullptr;
-        shadowDepthMemory = nullptr;
+        shadowDepth.image = nullptr;
+        shadowDepth.view = nullptr;
+        shadowDepth.memory = nullptr;
         resourceManager->createImage(resolution, resolution, 1, vk::SampleCountFlagBits::e1, vk::Format::eD32Sfloat, vk::ImageTiling::eOptimal,
-                                     vk::ImageUsageFlagBits::eDepthStencilAttachment, vk::MemoryPropertyFlagBits::eDeviceLocal, shadowDepthImage, shadowDepthMemory, 1);
-        shadowDepthView = resourceManager->createImageView(shadowDepthImage, vk::Format::eD32Sfloat, vk::ImageAspectFlagBits::eDepth);
-        resourceManager->transitionImageLayout(nullptr, shadowDepthImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal);
+                                     vk::ImageUsageFlagBits::eDepthStencilAttachment, vk::MemoryPropertyFlagBits::eDeviceLocal, shadowDepth.image, shadowDepth.memory, 1);
+        shadowDepth.view = resourceManager->createImageView(shadowDepth.image, vk::Format::eD32Sfloat, vk::ImageAspectFlagBits::eDepth);
+        resourceManager->transitionImageLayout(nullptr, shadowDepth.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal);
         currentShadowDepthResolution = resolution;
     }
 
@@ -702,6 +725,63 @@ class Renderer {
         }
     }
 
+    void createRoughnessMetalResources(uint32_t width, uint32_t height) {
+        // Free previous texture if it exists (resize case)
+        if (roughnessMetalTextureIndex != 0xFFFFFFFF) {
+            descriptorSet->freeTexture(roughnessMetalTextureIndex);
+            roughnessMetalTextureIndex = 0xFFFFFFFF;
+        }
+
+        // MSAA roughness-metal render target
+        resourceManager->createImage(width, height, 1, msaaSamples, vk::Format::eR8G8B8A8Unorm, vk::ImageTiling::eOptimal,
+                                     vk::ImageUsageFlagBits::eTransientAttachment | vk::ImageUsageFlagBits::eColorAttachment,
+                                     vk::MemoryPropertyFlagBits::eDeviceLocal, roughnessMetal.image, roughnessMetal.memory);
+        roughnessMetal.view = resourceManager->createImageView(roughnessMetal.image, vk::Format::eR8G8B8A8Unorm, vk::ImageAspectFlagBits::eColor, 1);
+        resourceManager->transitionImageLayout(nullptr, roughnessMetal.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
+
+        // Resolve target (single-sample, sampled by SSR)
+        vk::raii::Image resolveImage = nullptr;
+        vk::raii::DeviceMemory resolveMemory = nullptr;
+        resourceManager->createImage(width, height, 1, vk::SampleCountFlagBits::e1, vk::Format::eR8G8B8A8Unorm, vk::ImageTiling::eOptimal,
+                                     vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
+                                     vk::MemoryPropertyFlagBits::eDeviceLocal, resolveImage, resolveMemory, 1);
+        auto resolveView = resourceManager->createImageView(resolveImage, vk::Format::eR8G8B8A8Unorm, vk::ImageAspectFlagBits::eColor);
+        resourceManager->transitionImageLayout(nullptr, resolveImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal);
+        roughnessMetalTextureIndex = descriptorSet->allocateTexture(std::move(resolveImage), std::move(resolveMemory), std::move(resolveView), "internal/roughness_metal");
+    }
+
+    void createSSRResources(uint32_t width, uint32_t height) {
+        // Free previous SSR textures if they exist (resize case)
+        if (ssrTextureIndex != 0xFFFFFFFF) {
+            descriptorSet->freeTexture(ssrTextureIndex);
+            ssrTextureIndex = 0xFFFFFFFF;
+        }
+
+        // SSR render target (same as color target)
+        vk::raii::Image ssrImage = nullptr;
+        vk::raii::DeviceMemory ssrMemory = nullptr;
+        resourceManager->createImage(width, height, 1, vk::SampleCountFlagBits::e1, swapchain->getSwapChainImageFormat(), vk::ImageTiling::eOptimal,
+                                     vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, ssrImage,
+                                     ssrMemory, 1);
+        auto ssrView = resourceManager->createImageView(ssrImage, swapchain->getSwapChainImageFormat(), vk::ImageAspectFlagBits::eColor);
+        resourceManager->transitionImageLayout(nullptr, ssrImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal);
+        ssrTextureIndex = descriptorSet->allocateTexture(std::move(ssrImage), std::move(ssrMemory), std::move(ssrView), "internal/ssr");
+
+        // SSR pipeline (only created once)
+        if (ssrPipelineIndex == 0xFFFFFFFF) {
+            ssrPipelineIndex = pipelineManager->createPipeline<SSAOPushConstants>(
+                PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone,
+                vk::False, vk::False, "shaders/ssr.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
+        }
+
+        // SSR apply pipeline with multiplicative blending (only created once)
+        if (ssrApplyPipelineIndex == 0xFFFFFFFF) {
+            ssrApplyPipelineIndex = pipelineManager->createPipeline<SSRApplyPushConstants>(
+                PipelineCategory::POSTPROCESS_MULTIPLY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone,
+                vk::False, vk::False, "shaders/ssr_apply.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
+        }
+    }
+
     void createSyncObjects() {
         presentCompleteSemaphores.clear();
         renderFinishedSemaphores.clear();
@@ -739,6 +819,8 @@ class Renderer {
         if (enableSSAO && ssaoPipelineIndex != 0xFFFFFFFF)
             recordSSAOPass(cmd, imageIndex);
             
+        recordSSRPass(cmd, imageIndex);
+
         if (imageVisIndex != 0xFFFFFFFF)
             recordImageVisPass(cmd, imageIndex);
 
@@ -777,8 +859,10 @@ class Renderer {
 
                         glm::vec3 subWorldMin, subWorldMax;
                         transformAABBToWorldSpace(subMesh.boundingBoxMin, subMesh.boundingBoxMax, node->getTransform(), subWorldMin, subWorldMax);
-                        if (!isAABBInFrustum(subWorldMin, subWorldMax, frustumPlanes) && doCulling)
+                        if (!isAABBInFrustum(subWorldMin, subWorldMax, frustumPlanes) && doCulling){
+                            culledCount++;
                             continue;
+                        }
 
                         if(showBBOXes)
                             Gizmos::drawBox(subWorldMin,subWorldMax,glm::vec4(1.0f,1.0f,0.0f,1.0f));
@@ -800,6 +884,9 @@ class Renderer {
         resourceManager->transitionImageLayout(&cmd, swapchain->getSwapChainImages()[imageIndex], vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
         resourceManager->transitionImageLayout(&cmd, swapchain->getColorImage(), vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
         resourceManager->transitionImageLayout(&cmd, swapchain->getDepthImage(), vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal);
+        resourceManager->transitionImageLayout(&cmd, roughnessMetal.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
+        resourceManager->transitionImageLayout(&cmd, *descriptorSet->getTextureResource(roughnessMetalTextureIndex).image,
+                                               vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
 
         vk::ClearValue clearColor{.color = vk::ClearColorValue(std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f})};
         vk::ClearValue clearDepth{.depthStencil = vk::ClearDepthStencilValue{1.0f, 0}};
@@ -809,7 +896,7 @@ class Renderer {
         fakeCam.fov = cullFovScale * activeCamera.fov;
         fakeCam.calculateViewProjectionMatrix();
         std::array<Plane, 6> frustumPlanes = extractFrustumPlanes(fakeCam.viewProjection);
-
+        culledCount = 0;
         litDrawDataList.clear();
         buildGeometryDrawCommands(frustumPlanes, true, [&](const auto& subMesh, auto& node, const auto& material) {
             litDrawDataList.push_back({.vertexAllocationIndex = subMesh.vertexAllocationIndex,
@@ -830,6 +917,8 @@ class Renderer {
         vk::DeviceSize frameByteOffset = currentFrame * MAX_INDIRECT_COMMANDS * sizeof(DrawIndexedIndirectCommand);
         vk::Buffer indexBufferHandle = descriptorSet->getVariableBuffer(indexBufferIndex);
 
+        glm::vec3 cameraForward = glm::normalize(activeCamera.target - activeCamera.position);
+
         if (!indirectCommands.empty()) {
             // Upload indirect commands and per-draw data (shared between depth prepass and lit pass)
             void* data = litIndirectDrawBufferMemory.mapMemory(frameByteOffset, indirectCommands.size() * sizeof(DrawIndexedIndirectCommand));
@@ -849,6 +938,7 @@ class Renderer {
                                               .elementOffsetLight= currentFrame * MAX_FIXED_BUFFER,
                                               .elementOffsetLit  = currentFrame * MAX_FIXED_BUFFER,
                                               .cameraPosition    = activeCamera.position,
+                                              .cameraForward     = cameraForward,
                                               .viewProjection    = activeCamera.viewProjection};
 
             // --- Depth prepass (depth-only, no color attachment) ---
@@ -879,7 +969,7 @@ class Renderer {
             cmd.endRendering();
         }
 
-        // --- Lit geometry pass (loads depth from prepass) ---
+        // --- Lit geometry pass (2 color attachments: color + roughness/metallic) ---
         vk::RenderingAttachmentInfo colorAttachment = {.imageView = swapchain->getColorImageView(),
                                                        .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
                                                        .resolveMode = vk::ResolveModeFlagBits::eAverage,
@@ -889,6 +979,17 @@ class Renderer {
                                                        .storeOp = vk::AttachmentStoreOp::eStore,
                                                        .clearValue = clearColor};
 
+        auto& roughnessMetalResolve = descriptorSet->getTextureResource(roughnessMetalTextureIndex);
+        vk::ClearValue clearRoughMetal{.color = vk::ClearColorValue(std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f})};
+        vk::RenderingAttachmentInfo roughnessMetalAttachment = {.imageView = *roughnessMetal.view,
+                                                                 .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+                                                                 .resolveMode = vk::ResolveModeFlagBits::eAverage,
+                                                                 .resolveImageView = *roughnessMetalResolve.imageView,
+                                                                 .resolveImageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+                                                                 .loadOp = vk::AttachmentLoadOp::eClear,
+                                                                 .storeOp = vk::AttachmentStoreOp::eStore,
+                                                                 .clearValue = clearRoughMetal};
+
         vk::RenderingAttachmentInfo depthAttachmentInfo = {.imageView = swapchain->getDepthImageView(),
                                                            .imageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
                                                            .resolveMode = vk::ResolveModeFlagBits::eMin,
@@ -897,10 +998,11 @@ class Renderer {
                                                            .loadOp = vk::AttachmentLoadOp::eLoad,
                                                            .storeOp = vk::AttachmentStoreOp::eDontCare};
 
+        std::array<vk::RenderingAttachmentInfo, 2> colorAttachments = {colorAttachment, roughnessMetalAttachment};
         vk::RenderingInfo renderingInfo = {.renderArea = {.offset = {0, 0}, .extent = swapchain->getSwapChainExtent()},
                                            .layerCount = 1,
-                                           .colorAttachmentCount = 1,
-                                           .pColorAttachments = &colorAttachment,
+                                           .colorAttachmentCount = 2,
+                                           .pColorAttachments = colorAttachments.data(),
                                            .pDepthAttachment = &depthAttachmentInfo};
 
         cmd.beginRendering(renderingInfo);
@@ -925,6 +1027,7 @@ class Renderer {
                                               .elementOffsetLight= currentFrame * MAX_FIXED_BUFFER,
                                               .elementOffsetLit  = currentFrame * MAX_FIXED_BUFFER,
                                               .cameraPosition    = activeCamera.position,
+                                              .cameraForward     = cameraForward,
                                               .viewProjection    = activeCamera.viewProjection};
 
             for (const auto& [shader, materials] : shaders) {
@@ -936,6 +1039,10 @@ class Renderer {
         }
 
         cmd.endRendering();
+
+        // Transition roughness-metal resolve to shader readable for SSR
+        resourceManager->transitionImageLayout(&cmd, *descriptorSet->getTextureResource(roughnessMetalTextureIndex).image,
+                                               vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
     }
 
     void recordOverlayPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
@@ -1028,6 +1135,65 @@ class Renderer {
         resourceManager->transitionImageLayout(&cmd, swapchain->getDepthImage(), vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
     }
 
+    //TODO streamline the process of adding a new post processing pass
+    void recordSSRPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
+        auto extent = swapchain->getSwapChainExtent();
+        auto& ssrTexture = descriptorSet->getTextureResource(ssrTextureIndex);
+
+        // Transition depth to readable, SSAO target to color attachment
+        resourceManager->transitionImageLayout(&cmd, swapchain->getDepthImage(),
+            vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+        resourceManager->transitionImageLayout(&cmd, *ssrTexture.image,
+            vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
+
+        // Render SSR
+        vk::ClearValue ssrClear{.color = vk::ClearColorValue(std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f})};
+        vk::RenderingAttachmentInfo ssrAttachment{.imageView = *ssrTexture.imageView,
+                                                    .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+                                                    .loadOp = vk::AttachmentLoadOp::eClear,
+                                                    .storeOp = vk::AttachmentStoreOp::eStore,
+                                                    .clearValue = ssrClear};
+        vk::RenderingInfo ssrRenderInfo{.renderArea = {{0, 0}, extent}, .layerCount = 1, .colorAttachmentCount = 1, .pColorAttachments = &ssrAttachment};
+
+        auto& ssrPipeline = pipelineManager->getPostProcessPipelines()[ssrPipelineIndex];
+        cmd.beginRendering(ssrRenderInfo);
+        setFullscreenViewport(cmd, extent);
+        bindPipeline(cmd, *ssrPipeline);
+        SSAOPushConstants ssaoPC{.invProjection = glm::inverse(activeCamera.projectionMatrix),
+                                 .depthIndex = swapchain->getDepthResolveIndex(),
+                                 .depthSamplerIndex = depthSamplerIndex,
+                                 .noiseIndex = ssaoNoiseTextureIndex,
+                                 .noiseSamplerIndex = ssaoNoiseSamplerIndex,
+                                 .resolution = glm::uvec2(extent.width, extent.height),
+                                 .radius = ssaoRadius,
+                                 .bias = ssaoBias,
+                                 .power = ssaoPower,
+                                 .kernelSize = 32};
+        cmd.pushConstants<SSAOPushConstants>(*ssrPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, ssaoPC);
+        cmd.draw(3, 1, 0, 0);
+        cmd.endRendering();
+
+        resourceManager->transitionImageLayout(&cmd, *ssrTexture.image,vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+        // Apply to swapchain via multiplicative blend
+        vk::RenderingAttachmentInfo applyAttachment{.imageView = swapchain->getSwapChainImageViews()[imageIndex],
+                                                     .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+                                                     .loadOp = vk::AttachmentLoadOp::eLoad,
+                                                     .storeOp = vk::AttachmentStoreOp::eStore};
+        vk::RenderingInfo applyRenderInfo{.renderArea = {{0, 0}, extent}, .layerCount = 1, .colorAttachmentCount = 1, .pColorAttachments = &applyAttachment};
+
+        auto& applyPipeline = pipelineManager->getPostProcessPipelines()[ssrApplyPipelineIndex];
+        cmd.beginRendering(applyRenderInfo);
+        setFullscreenViewport(cmd, extent);
+        bindPipeline(cmd, *applyPipeline);
+        SSRApplyPushConstants applyPC{.ssrTextureIndex = ssrTextureIndex, .samplerIndex = defaultSamplerIndex};
+        cmd.pushConstants<SSRApplyPushConstants>(*applyPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, applyPC);
+        cmd.draw(3, 1, 0, 0);
+        cmd.endRendering();
+
+        // Transition depth back
+        resourceManager->transitionImageLayout(&cmd, swapchain->getDepthImage(), vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
+    }
+
     void recordImageVisPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
         if (imageVisIndex == 0xFFFFFFFF) return;
 
@@ -1093,7 +1259,7 @@ class Renderer {
                                                         .clearValue = clearDepthValue};
 
             vk::ClearValue clearDepth{.depthStencil = vk::ClearDepthStencilValue{1.0f, 0}};
-            vk::RenderingAttachmentInfo depthAttachment{.imageView = *shadowDepthView,
+            vk::RenderingAttachmentInfo depthAttachment{.imageView = *shadowDepth.view,
                                                         .imageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
                                                         .loadOp = vk::AttachmentLoadOp::eClear,
                                                         .storeOp = vk::AttachmentStoreOp::eDontCare,
