@@ -10,6 +10,7 @@ struct FragmentOutput
 {
     float4 color : SV_Target0;
     float4 roughness_metal : SV_Target1;
+    float4 worldNormal : SV_Target2;
 };
 
 [shader("fragment")]
@@ -166,6 +167,7 @@ FragmentOutput fragMain(VertexOutput input)
 
     output.color = float4(color, 1.0);
     output.roughness_metal = float4(roughness.r, metallic.r, 0.0, 1.0);
+    output.worldNormal = float4(N * 0.5 + 0.5, 1.0);
     return output;
 }
 

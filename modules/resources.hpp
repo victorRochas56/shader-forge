@@ -337,6 +337,30 @@ class ResourceManager {
             barrier.subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1};
         }
 
+        else if (oldLayout == vk::ImageLayout::eColorAttachmentOptimal && newLayout == vk::ImageLayout::eTransferSrcOptimal) {
+            barrier.srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
+            barrier.dstAccessMask = vk::AccessFlagBits2::eTransferRead;
+            barrier.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
+            barrier.dstStageMask = vk::PipelineStageFlagBits2::eTransfer;
+            barrier.subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1};
+        }
+
+        else if (oldLayout == vk::ImageLayout::eColorAttachmentOptimal && newLayout == vk::ImageLayout::eTransferDstOptimal) {
+            barrier.srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
+            barrier.dstAccessMask = vk::AccessFlagBits2::eTransferWrite;
+            barrier.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
+            barrier.dstStageMask = vk::PipelineStageFlagBits2::eTransfer;
+            barrier.subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1};
+        }
+
+        else if (oldLayout == vk::ImageLayout::eTransferDstOptimal && newLayout == vk::ImageLayout::eColorAttachmentOptimal) {
+            barrier.srcAccessMask = vk::AccessFlagBits2::eTransferWrite;
+            barrier.dstAccessMask = vk::AccessFlagBits2::eColorAttachmentRead | vk::AccessFlagBits2::eColorAttachmentWrite;
+            barrier.srcStageMask = vk::PipelineStageFlagBits2::eTransfer;
+            barrier.dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
+            barrier.subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1};
+        }
+
         else if (oldLayout == vk::ImageLayout::eTransferDstOptimal && newLayout == vk::ImageLayout::eTransferSrcOptimal) {
             barrier.srcAccessMask = vk::AccessFlagBits2::eTransferWrite;
             barrier.dstAccessMask = vk::AccessFlagBits2::eTransferRead;
@@ -375,6 +399,13 @@ class ResourceManager {
             barrier.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
             barrier.subresourceRange = {
                 .aspectMask = vk::ImageAspectFlagBits::eColor, .baseMipLevel = 0, .levelCount = mipLevelCount, .baseArrayLayer = 0, .layerCount = layerCount};
+        }
+
+        else if (oldLayout == vk::ImageLayout::eShaderReadOnlyOptimal && newLayout == vk::ImageLayout::eTransferDstOptimal) {
+            barrier.srcAccessMask = vk::AccessFlagBits2::eShaderRead;
+            barrier.dstAccessMask = vk::AccessFlagBits2::eTransferWrite;
+            barrier.srcStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+            barrier.dstStageMask = vk::PipelineStageFlagBits2::eTransfer;
         }
 
         else {

@@ -150,10 +150,15 @@ class Renderer {
     uint32_t                            roughnessMetalTextureIndex = 0xFFFFFFFF;
     Image                               roughnessMetal;
 
+    // World-space normals MRT from lit pass
+    uint32_t                            normalTextureIndex = 0xFFFFFFFF;
+    Image                               normalMSAA;
+
     //SSR
     uint32_t                            ssrTextureIndex = 0xFFFFFFFF;
     uint32_t                            ssrPipelineIndex = 0xFFFFFFFF;
     uint32_t                            ssrApplyPipelineIndex = 0xFFFFFFFF;
+    uint32_t                            colorResolveTextureIndex = 0xFFFFFFFF;
 
   public:
     bool                                enableSSAO = true; 
@@ -234,6 +239,7 @@ class Renderer {
         createShadowDepthBuffer(DEFAULT_SHADOW_RESOLUTION);
         createSSAOResources(startWidth, startHeight);
         createRoughnessMetalResources(startWidth, startHeight);
+        createNormalResources(startWidth, startHeight);
         createSSRResources(startWidth,startHeight);
         createSyncObjects();
 
@@ -339,6 +345,7 @@ class Renderer {
             if (width > 0 && height > 0) {
                 createSSAOResources(width, height);
                 createRoughnessMetalResources(width, height);
+                createNormalResources(width, height);
                 createSSRResources(width,height);
             }
             activeCamera.aspectRatio = static_cast<float>(width) / static_cast<float>(height);
@@ -402,6 +409,7 @@ class Renderer {
             if (width > 0 && height > 0) {
                 createSSAOResources(width, height);
                 createRoughnessMetalResources(width, height);
+                createNormalResources(width, height);
                 createSSRResources(width, height);
             }
             activeCamera.aspectRatio = static_cast<float>(width) / static_cast<float>(height);
@@ -474,6 +482,7 @@ class Renderer {
         if (width > 0 && height > 0) {
             createSSAOResources(width, height);
             createRoughnessMetalResources(width, height);
+            createNormalResources(width, height);
             createSSRResources(width, height);
         }
     }
@@ -750,6 +759,30 @@ class Renderer {
         roughnessMetalTextureIndex = descriptorSet->allocateTexture(std::move(resolveImage), std::move(resolveMemory), std::move(resolveView), "internal/roughness_metal");
     }
 
+    void createNormalResources(uint32_t width, uint32_t height) {
+        if (normalTextureIndex != 0xFFFFFFFF) {
+            descriptorSet->freeTexture(normalTextureIndex);
+            normalTextureIndex = 0xFFFFFFFF;
+        }
+
+        // MSAA normal render target
+        resourceManager->createImage(width, height, 1, msaaSamples, vk::Format::eR8G8B8A8Unorm, vk::ImageTiling::eOptimal,
+                                     vk::ImageUsageFlagBits::eTransientAttachment | vk::ImageUsageFlagBits::eColorAttachment,
+                                     vk::MemoryPropertyFlagBits::eDeviceLocal, normalMSAA.image, normalMSAA.memory);
+        normalMSAA.view = resourceManager->createImageView(normalMSAA.image, vk::Format::eR8G8B8A8Unorm, vk::ImageAspectFlagBits::eColor, 1);
+        resourceManager->transitionImageLayout(nullptr, normalMSAA.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
+
+        // Resolve target (single-sample, sampled by SSR)
+        vk::raii::Image resolveImage = nullptr;
+        vk::raii::DeviceMemory resolveMemory = nullptr;
+        resourceManager->createImage(width, height, 1, vk::SampleCountFlagBits::e1, vk::Format::eR8G8B8A8Unorm, vk::ImageTiling::eOptimal,
+                                     vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
+                                     vk::MemoryPropertyFlagBits::eDeviceLocal, resolveImage, resolveMemory, 1);
+        auto resolveView = resourceManager->createImageView(resolveImage, vk::Format::eR8G8B8A8Unorm, vk::ImageAspectFlagBits::eColor);
+        resourceManager->transitionImageLayout(nullptr, resolveImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal);
+        normalTextureIndex = descriptorSet->allocateTexture(std::move(resolveImage), std::move(resolveMemory), std::move(resolveView), "internal/normals");
+    }
+
     void createSSRResources(uint32_t width, uint32_t height) {
         // Free previous SSR textures if they exist (resize case)
         if (ssrTextureIndex != 0xFFFFFFFF) {
@@ -757,7 +790,21 @@ class Renderer {
             ssrTextureIndex = 0xFFFFFFFF;
         }
 
-        // SSR render target (same as color target)
+        // Color resolve target (MSAA color resolves here, SSR samples from it)
+        if (colorResolveTextureIndex != 0xFFFFFFFF) {
+            descriptorSet->freeTexture(colorResolveTextureIndex);
+            colorResolveTextureIndex = 0xFFFFFFFF;
+        }
+        vk::raii::Image colorResolveImage = nullptr;
+        vk::raii::DeviceMemory colorResolveMemory = nullptr;
+        resourceManager->createImage(width, height, 1, vk::SampleCountFlagBits::e1, swapchain->getSwapChainImageFormat(), vk::ImageTiling::eOptimal,
+                                     vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferSrc,
+                                     vk::MemoryPropertyFlagBits::eDeviceLocal, colorResolveImage, colorResolveMemory, 1);
+        auto colorResolveView = resourceManager->createImageView(colorResolveImage, swapchain->getSwapChainImageFormat(), vk::ImageAspectFlagBits::eColor);
+        resourceManager->transitionImageLayout(nullptr, colorResolveImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal);
+        colorResolveTextureIndex = descriptorSet->allocateTexture(std::move(colorResolveImage), std::move(colorResolveMemory), std::move(colorResolveView), "internal/color_resolve");
+
+        // SSR render target
         vk::raii::Image ssrImage = nullptr;
         vk::raii::DeviceMemory ssrMemory = nullptr;
         resourceManager->createImage(width, height, 1, vk::SampleCountFlagBits::e1, swapchain->getSwapChainImageFormat(), vk::ImageTiling::eOptimal,
@@ -769,7 +816,7 @@ class Renderer {
 
         // SSR pipeline (only created once)
         if (ssrPipelineIndex == 0xFFFFFFFF) {
-            ssrPipelineIndex = pipelineManager->createPipeline<SSAOPushConstants>(
+            ssrPipelineIndex = pipelineManager->createPipeline<SSRPushConstants>(
                 PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone,
                 vk::False, vk::False, "shaders/ssr.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
         }
@@ -777,7 +824,7 @@ class Renderer {
         // SSR apply pipeline with multiplicative blending (only created once)
         if (ssrApplyPipelineIndex == 0xFFFFFFFF) {
             ssrApplyPipelineIndex = pipelineManager->createPipeline<SSRApplyPushConstants>(
-                PipelineCategory::POSTPROCESS_MULTIPLY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone,
+                PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone,
                 vk::False, vk::False, "shaders/ssr_apply.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
         }
     }
@@ -887,6 +934,9 @@ class Renderer {
         resourceManager->transitionImageLayout(&cmd, roughnessMetal.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
         resourceManager->transitionImageLayout(&cmd, *descriptorSet->getTextureResource(roughnessMetalTextureIndex).image,
                                                vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
+        resourceManager->transitionImageLayout(&cmd, normalMSAA.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
+        resourceManager->transitionImageLayout(&cmd, *descriptorSet->getTextureResource(normalTextureIndex).image,
+                                               vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
 
         vk::ClearValue clearColor{.color = vk::ClearColorValue(std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f})};
         vk::ClearValue clearDepth{.depthStencil = vk::ClearDepthStencilValue{1.0f, 0}};
@@ -970,10 +1020,14 @@ class Renderer {
         }
 
         // --- Lit geometry pass (2 color attachments: color + roughness/metallic) ---
+        auto& colorResolve = descriptorSet->getTextureResource(colorResolveTextureIndex);
+        resourceManager->transitionImageLayout(&cmd, *colorResolve.image,
+            vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
+
         vk::RenderingAttachmentInfo colorAttachment = {.imageView = swapchain->getColorImageView(),
                                                        .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
                                                        .resolveMode = vk::ResolveModeFlagBits::eAverage,
-                                                       .resolveImageView = swapchain->getSwapChainImageViews()[imageIndex],
+                                                       .resolveImageView = *colorResolve.imageView,
                                                        .resolveImageLayout = vk::ImageLayout::eColorAttachmentOptimal,
                                                        .loadOp = vk::AttachmentLoadOp::eClear,
                                                        .storeOp = vk::AttachmentStoreOp::eStore,
@@ -990,6 +1044,17 @@ class Renderer {
                                                                  .storeOp = vk::AttachmentStoreOp::eStore,
                                                                  .clearValue = clearRoughMetal};
 
+        auto& normalResolve = descriptorSet->getTextureResource(normalTextureIndex);
+        vk::ClearValue clearNormal{.color = vk::ClearColorValue(std::array<float, 4>{0.5f, 0.5f, 1.0f, 1.0f})};
+        vk::RenderingAttachmentInfo normalAttachment = {.imageView = *normalMSAA.view,
+                                                         .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+                                                         .resolveMode = vk::ResolveModeFlagBits::eAverage,
+                                                         .resolveImageView = *normalResolve.imageView,
+                                                         .resolveImageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+                                                         .loadOp = vk::AttachmentLoadOp::eClear,
+                                                         .storeOp = vk::AttachmentStoreOp::eStore,
+                                                         .clearValue = clearNormal};
+
         vk::RenderingAttachmentInfo depthAttachmentInfo = {.imageView = swapchain->getDepthImageView(),
                                                            .imageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
                                                            .resolveMode = vk::ResolveModeFlagBits::eMin,
@@ -998,10 +1063,10 @@ class Renderer {
                                                            .loadOp = vk::AttachmentLoadOp::eLoad,
                                                            .storeOp = vk::AttachmentStoreOp::eDontCare};
 
-        std::array<vk::RenderingAttachmentInfo, 2> colorAttachments = {colorAttachment, roughnessMetalAttachment};
+        std::array<vk::RenderingAttachmentInfo, 3> colorAttachments = {colorAttachment, roughnessMetalAttachment, normalAttachment};
         vk::RenderingInfo renderingInfo = {.renderArea = {.offset = {0, 0}, .extent = swapchain->getSwapChainExtent()},
                                            .layerCount = 1,
-                                           .colorAttachmentCount = 2,
+                                           .colorAttachmentCount = 3,
                                            .pColorAttachments = colorAttachments.data(),
                                            .pDepthAttachment = &depthAttachmentInfo};
 
@@ -1040,8 +1105,32 @@ class Renderer {
 
         cmd.endRendering();
 
-        // Transition roughness-metal resolve to shader readable for SSR
+        // Blit color resolve to swapchain image
+        resourceManager->transitionImageLayout(&cmd, *colorResolve.image,
+            vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eTransferSrcOptimal);
+        resourceManager->transitionImageLayout(&cmd, swapchain->getSwapChainImages()[imageIndex],
+            vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eTransferDstOptimal);
+
+        vk::ImageBlit blitRegion{
+            .srcSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor, .layerCount = 1},
+            .srcOffsets = std::array<vk::Offset3D, 2>{vk::Offset3D{0, 0, 0}, vk::Offset3D{static_cast<int32_t>(swapchain->getSwapChainExtent().width), static_cast<int32_t>(swapchain->getSwapChainExtent().height), 1}},
+            .dstSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor, .layerCount = 1},
+            .dstOffsets = std::array<vk::Offset3D, 2>{vk::Offset3D{0, 0, 0}, vk::Offset3D{static_cast<int32_t>(swapchain->getSwapChainExtent().width), static_cast<int32_t>(swapchain->getSwapChainExtent().height), 1}}
+        };
+        cmd.blitImage(*colorResolve.image, vk::ImageLayout::eTransferSrcOptimal,
+                      swapchain->getSwapChainImages()[imageIndex], vk::ImageLayout::eTransferDstOptimal,
+                      blitRegion, vk::Filter::eNearest);
+
+        // Transition back: color resolve to shader readable, swapchain to color attachment
+        resourceManager->transitionImageLayout(&cmd, *colorResolve.image,
+            vk::ImageLayout::eTransferSrcOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+        resourceManager->transitionImageLayout(&cmd, swapchain->getSwapChainImages()[imageIndex],
+            vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eColorAttachmentOptimal);
+
+        // Transition roughness-metal and normal resolve to shader readable for SSR
         resourceManager->transitionImageLayout(&cmd, *descriptorSet->getTextureResource(roughnessMetalTextureIndex).image,
+                                               vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+        resourceManager->transitionImageLayout(&cmd, *descriptorSet->getTextureResource(normalTextureIndex).image,
                                                vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
     }
 
@@ -1159,22 +1248,29 @@ class Renderer {
         cmd.beginRendering(ssrRenderInfo);
         setFullscreenViewport(cmd, extent);
         bindPipeline(cmd, *ssrPipeline);
-        SSAOPushConstants ssaoPC{.invProjection = glm::inverse(activeCamera.projectionMatrix),
-                                 .depthIndex = swapchain->getDepthResolveIndex(),
-                                 .depthSamplerIndex = depthSamplerIndex,
-                                 .noiseIndex = ssaoNoiseTextureIndex,
-                                 .noiseSamplerIndex = ssaoNoiseSamplerIndex,
-                                 .resolution = glm::uvec2(extent.width, extent.height),
-                                 .radius = ssaoRadius,
-                                 .bias = ssaoBias,
-                                 .power = ssaoPower,
-                                 .kernelSize = 32};
-        cmd.pushConstants<SSAOPushConstants>(*ssrPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, ssaoPC);
+        SSRPushConstants ssrPC{.invProjection = glm::inverse(activeCamera.projectionMatrix),
+                               .viewMatrix = activeCamera.viewMatrix,
+                               .depthIndex = swapchain->getDepthResolveIndex(),
+                               .depthSamplerIndex = depthSamplerIndex,
+                               .colorIndex = colorResolveTextureIndex,
+                               .colorSamplerIndex = defaultSamplerIndex,
+                               .roughnessMetalIndex = roughnessMetalTextureIndex,
+                               .roughnessMetalSamplerIndex = defaultSamplerIndex,
+                               .normalIndex = normalTextureIndex,
+                               .normalSamplerIndex = defaultSamplerIndex,
+                               .resolution = glm::uvec2(extent.width, extent.height),
+                               .maxDistance = 15.0f,
+                               .marchResolution = 0.3f,
+                               .refinementSteps = 10,
+                               .thickness = 0.5f
+                             };
+        cmd.pushConstants<SSRPushConstants>(*ssrPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, ssrPC);
         cmd.draw(3, 1, 0, 0);
         cmd.endRendering();
 
-        resourceManager->transitionImageLayout(&cmd, *ssrTexture.image,vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
-        // Apply to swapchain via multiplicative blend
+        resourceManager->transitionImageLayout(&cmd, *ssrTexture.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+
+        // Apply to swapchain
         vk::RenderingAttachmentInfo applyAttachment{.imageView = swapchain->getSwapChainImageViews()[imageIndex],
                                                      .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
                                                      .loadOp = vk::AttachmentLoadOp::eLoad,
@@ -1185,7 +1281,7 @@ class Renderer {
         cmd.beginRendering(applyRenderInfo);
         setFullscreenViewport(cmd, extent);
         bindPipeline(cmd, *applyPipeline);
-        SSRApplyPushConstants applyPC{.ssrTextureIndex = ssrTextureIndex, .samplerIndex = defaultSamplerIndex};
+        SSRApplyPushConstants applyPC{.ssrTextureIndex = ssrTextureIndex, .samplerIndex = defaultSamplerIndex, .sceneColorIndex = colorResolveTextureIndex, .sceneSamplerIndex = defaultSamplerIndex};
         cmd.pushConstants<SSRApplyPushConstants>(*applyPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, applyPC);
         cmd.draw(3, 1, 0, 0);
         cmd.endRendering();
@@ -1331,5 +1427,29 @@ class Renderer {
     void bindPipeline(vk::raii::CommandBuffer& cmd, PipelineBase& pipeline) {
         cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline.pipeline);
         cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipeline.layout, 0, {**pipeline.descriptorSet}, {});
+    }
+
+    // Draws a fullscreen triangle to a single color attachment.
+    // Handles begin/end rendering, viewport, pipeline bind, push constants, and draw.
+    template <typename T>
+    void drawFullscreenPass(vk::raii::CommandBuffer& cmd, PipelineBase& pipeline,
+                            vk::ImageView targetView, vk::Extent2D extent, const T& pushConstants,
+                            vk::AttachmentLoadOp loadOp = vk::AttachmentLoadOp::eClear,
+                            std::array<float, 4> clearColor = {0.0f, 0.0f, 0.0f, 0.0f}) {
+
+        vk::ClearValue clear{.color = vk::ClearColorValue(clearColor)};
+        vk::RenderingAttachmentInfo colorAttachment{.imageView = targetView,
+                                                     .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+                                                     .loadOp = loadOp,
+                                                     .storeOp = vk::AttachmentStoreOp::eStore,
+                                                     .clearValue = clear};
+        vk::RenderingInfo renderInfo{.renderArea = {{0, 0}, extent}, .layerCount = 1, .colorAttachmentCount = 1, .pColorAttachments = &colorAttachment};
+
+        cmd.beginRendering(renderInfo);
+        setFullscreenViewport(cmd, extent);
+        bindPipeline(cmd, pipeline);
+        cmd.pushConstants<T>(pipeline.layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pushConstants);
+        cmd.draw(3, 1, 0, 0);
+        cmd.endRendering();
     }
 };

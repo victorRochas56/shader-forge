@@ -1,8 +1,8 @@
 struct SSRApplyPushConstants {
     uint ssrTextureIndex;
     uint samplerIndex;
-    uint padding0;
-    uint padding1;
+    uint sceneColorIndex;
+    uint sceneSamplerIndex;
 };
 
 [[vk::push_constant]] SSRApplyPushConstants pc;
@@ -27,6 +27,7 @@ VSOutput vertMain(uint vertexID : SV_VertexID) {
 
 [shader("fragment")]
 float4 fragMain(VSOutput input) : SV_Target {
-    float ssr = textures[pc.ssrTextureIndex].Sample(samplers[pc.samplerIndex], input.texCoord).r;
-    return float4(ssr, ssr, ssr, 1.0);
+    float4 ssr = textures[pc.ssrTextureIndex].Sample(samplers[pc.samplerIndex], input.texCoord);
+    float3 sceneColor = textures[pc.sceneColorIndex].Sample(samplers[pc.sceneSamplerIndex], float2(input.texCoord.x, 1.0 - input.texCoord.y)).rgb;
+    return float4(sceneColor + ssr.rgb, 1.0);
 }

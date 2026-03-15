@@ -157,8 +157,9 @@ class PipelineManager {
 
         // Format variables must persist beyond the switch scope since pointers to them are used
         vk::Format pcfFormat = vk::Format::eR32Sfloat; // PCF uses R32F for raw depth values
-        vk::Format mrtFormats[2] = {swapchain.getSwapChainImageFormat(), vk::Format::eR8G8B8A8Unorm};
-        vk::PipelineColorBlendAttachmentState mrtBlendAttachments[2] = {
+        vk::Format mrtFormats[3] = {swapchain.getSwapChainImageFormat(), vk::Format::eR8G8B8A8Unorm, vk::Format::eR8G8B8A8Unorm};
+        vk::PipelineColorBlendAttachmentState mrtBlendAttachments[3] = {
+            {.blendEnable = vk::False, .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA},
             {.blendEnable = vk::False, .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA},
             {.blendEnable = vk::False, .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA}
         };
@@ -223,7 +224,7 @@ class PipelineManager {
             break;
         }
         case PipelineCategory::GEOMETRY: {
-            pipelineRenderingCreateInfo = {.colorAttachmentCount = 2, .pColorAttachmentFormats = mrtFormats, .depthAttachmentFormat = depthFormat};
+            pipelineRenderingCreateInfo = {.colorAttachmentCount = 3, .pColorAttachmentFormats = mrtFormats, .depthAttachmentFormat = depthFormat};
             inputAssembly = {.topology = topology};
             rasterizer = {.depthClampEnable = vk::False,
                           .rasterizerDiscardEnable = vk::False,
@@ -239,7 +240,7 @@ class PipelineManager {
                             .depthCompareOp = vk::CompareOp::eLessOrEqual,
                             .depthBoundsTestEnable = vk::False,
                             .stencilTestEnable = vk::False};
-            colorBlending = {.logicOpEnable = vk::False, .logicOp = vk::LogicOp::eCopy, .attachmentCount = 2, .pAttachments = mrtBlendAttachments};
+            colorBlending = {.logicOpEnable = vk::False, .logicOp = vk::LogicOp::eCopy, .attachmentCount = 3, .pAttachments = mrtBlendAttachments};
             pushConstantRange = {.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, .offset = 0, .size = sizeof(T)};
             vk::PipelineLayoutCreateInfo pipelineLayoutInfo{
                 .setLayoutCount = 1, .pSetLayouts = &*setLayout, .pushConstantRangeCount = 1, .pPushConstantRanges = &pushConstantRange};

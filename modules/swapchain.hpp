@@ -33,7 +33,7 @@ class Swapchain {
                                                        .imageColorSpace = vk::ColorSpaceKHR::eSrgbNonlinear,
                                                        .imageExtent = swapChainExtent,
                                                        .imageArrayLayers = 1,
-                                                       .imageUsage = vk::ImageUsageFlagBits::eColorAttachment,
+                                                       .imageUsage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferDst,
                                                        .imageSharingMode = vk::SharingMode::eExclusive,
                                                        .preTransform = surfaceCapabilities.currentTransform,
                                                        .compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque,

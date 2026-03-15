@@ -139,6 +139,25 @@ struct SSAOPushConstants {
     // Total: 100 bytes — fits in 128
 };
 
+struct SSRPushConstants {
+    glm::mat4 invProjection;
+    glm::mat4 viewMatrix;
+    uint32_t depthIndex;
+    uint32_t depthSamplerIndex;
+    uint32_t colorIndex;
+    uint32_t colorSamplerIndex;
+    uint32_t roughnessMetalIndex;
+    uint32_t roughnessMetalSamplerIndex;
+    uint32_t normalIndex;
+    uint32_t normalSamplerIndex;
+    glm::uvec2 resolution;
+    float maxDistance;       // max ray travel distance in view space
+    float marchResolution;  // 0-1, fraction of pixels to sample in coarse pass
+    uint32_t refinementSteps;    // binary search iterations after coarse hit
+    float thickness;        // depth tolerance for hit detection
+};
+
+
 struct SSAOApplyPushConstants {
     uint32_t ssaoTextureIndex;
     uint32_t samplerIndex;
@@ -148,7 +167,8 @@ struct SSAOApplyPushConstants {
 struct SSRApplyPushConstants {
     uint32_t ssrTextureIndex;
     uint32_t samplerIndex;
-    uint32_t padding[2];
+    uint32_t sceneColorIndex;
+    uint32_t sceneSamplerIndex;
 };
 
 struct LitDrawData {

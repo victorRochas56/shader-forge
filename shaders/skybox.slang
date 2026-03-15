@@ -59,9 +59,17 @@ ScreenVertex vertMain(uint vertexID : SV_VertexID)
     return output;
 }
 
-[shader("fragment")]
-float4 fragMain(ScreenVertex input) : SV_Target
+struct SkyboxOutput
 {
+    float4 color : SV_Target0;
+    float4 roughness_metal : SV_Target1;
+    float4 worldNormal : SV_Target2;
+};
+
+[shader("fragment")]
+SkyboxOutput fragMain(ScreenVertex input)
+{
+    SkyboxOutput output;
     // Convert UV to NDC (clip space)
     float2 ndc = input.uv * 2.0 - 1.0;
     
@@ -85,5 +93,8 @@ float4 fragMain(ScreenVertex input) : SV_Target
     cubemaps[pc.skyboxIndex].GetDimensions(0, width, height, mipLevels);
     //float maxMipLevel = float(mipLevels - 1);
     //float lod = pc.blur * maxMipLevel;
-    return cubemaps[pc.skyboxIndex].Sample(samplers[0], rayDirection);
+    output.color = cubemaps[pc.skyboxIndex].Sample(samplers[0], rayDirection);
+    output.roughness_metal = float4(0, 0, 0, 1);
+    output.worldNormal = float4(0.5, 0.5, 1.0, 1.0);
+    return output;
 }
