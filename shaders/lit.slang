@@ -154,7 +154,7 @@ FragmentOutput fragMain(VertexOutput input)
 
     TextureCube envMap = cubemaps[draw.environmentMapIndex];
     SamplerState envSampler = samplers[pc.samplerIndex];
-    float3 specularIBL = calculateSpecularIBL(N, V, roughness.r, F0, envMap, envSampler);
+    //float3 specularIBL = calculateSpecularIBL(N, V, roughness.r, F0, envMap, envSampler);
     float3 diffuseIBL = calculateDiffuseIBL(N, albedo.rgb, envMap, envSampler);
 
     float3 kS = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0, roughness.r);
@@ -162,7 +162,7 @@ FragmentOutput fragMain(VertexOutput input)
     kD *= 1.0 - metallic.r;
 
     float ao = 1.0;
-    float3 ambient = (kD * diffuseIBL + kS * specularIBL) * ao;
+    float3 ambient = (kD * diffuseIBL /*+ kS * specularIBL*/) * ao;
     float3 color = ambient + Lo;
 
     output.color = float4(color, 1.0);
@@ -262,7 +262,11 @@ float calculateShadow(float3 fragWorldPos, float3 cameraPos, float3 cameraForwar
 
     Cascade cascade = light.cascades[cascadeIndex];
 
-    float4 fragPosLightSpace = mul(cascade.lightSpaceMatrix, float4(fragWorldPos, 1.0));
+    float NdotL = abs(dot(geometricNormal, normalize(L)));
+    float normalOffset = cascade.worldTexelSize * (1.0 - NdotL) * 2.0;
+    float3 biasedPos = fragWorldPos + geometricNormal * normalOffset;
+
+    float4 fragPosLightSpace = mul(cascade.lightSpaceMatrix, float4(biasedPos, 1.0));
     float3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
     projCoords.x = projCoords.x * 0.5 + 0.5;
     projCoords.y = projCoords.y * 0.5 + 0.5;
@@ -273,12 +277,10 @@ float calculateShadow(float3 fragWorldPos, float3 cameraPos, float3 cameraForwar
         return 0.0;
     }
 
-    float currentDepth = projCoords.z;
+    float currentDepth = projCoords.z - 0.0001f;
 
-    float baselineBias = max(0.001, cascade.texelSize * 0.5);
-    float normalBias = abs(dot(geometricNormal, normalize(L))) * cascade.texelSize;
-    float bias = baselineBias + normalBias * 2.0;
-    currentDepth -= bias;
+    //float depthBias = max(0.001, cascade.texelSize * 0);
+    //currentDepth -= depthBias;
 
     float shadow = 0.0;
     float texelSize = cascade.texelSize;

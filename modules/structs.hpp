@@ -155,6 +155,8 @@ struct SSRPushConstants {
     float marchResolution;  // 0-1, fraction of pixels to sample in coarse pass
     uint32_t refinementSteps;    // binary search iterations after coarse hit
     float thickness;        // depth tolerance for hit detection
+    float roughnessThreshold; // skip SSR for fragments above this roughness
+    float normalMipLevel;     // mip level for normal pre-filtering
 };
 
 

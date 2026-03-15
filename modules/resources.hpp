@@ -227,6 +227,86 @@ class ResourceManager {
         return std::make_tuple(std::move(image), std::move(memory), std::move(imageView));
     }
 
+    void generateMipmaps(vk::raii::Image& image, vk::Format imageFormat, int32_t texWidth, int32_t texHeight, uint32_t mipLevels, uint32_t layerCount,
+                         vk::raii::CommandBuffer* commandBuffer = nullptr, vk::ImageLayout srcLayout = vk::ImageLayout::eTransferDstOptimal,
+                         vk::ImageLayout dstMipLayout = vk::ImageLayout::eTransferDstOptimal) {
+                            
+        vk::FormatProperties formatProperties = device.getPhysicalDevice().getFormatProperties(imageFormat);
+        if (!(formatProperties.optimalTilingFeatures & vk::FormatFeatureFlagBits::eSampledImageFilterLinear)) {
+            throw std::runtime_error("Texture image format does not support linear blitting!");
+        }
+
+        bool ownCommandBuffer = (commandBuffer == nullptr);
+        vk::raii::CommandBuffer ownedCmd = nullptr;
+        if (ownCommandBuffer) {
+#if DEBUG == 1
+            std::cout << "=== GENERATING MIPMAPS ===" << std::endl;
+            std::cout << "Size: " << texWidth << "x" << texHeight << std::endl;
+            std::cout << "Mip levels: " << mipLevels << std::endl;
+            std::cout << "Layers: " << layerCount << std::endl;
+#endif
+            ownedCmd = beginSingleTimeCommands();
+            commandBuffer = &ownedCmd;
+        }
+
+        vk::raii::CommandBuffer& cmd = *commandBuffer;
+        int32_t mipWidth = texWidth;
+        int32_t mipHeight = texHeight;
+
+        for (uint32_t i = 1; i < mipLevels; i++) {
+            // First iteration transitions from srcLayout, subsequent from eTransferDstOptimal
+            vk::ImageLayout fromLayout = (i == 1) ? srcLayout : vk::ImageLayout::eTransferDstOptimal;
+            transitionImageLayout(&cmd, *image, fromLayout, vk::ImageLayout::eTransferSrcOptimal, i - 1, 1, 0,
+                                  layerCount);
+
+            // Transition destination mip to transfer dst if needed
+            if (dstMipLayout != vk::ImageLayout::eTransferDstOptimal) {
+                transitionImageLayout(&cmd, *image, dstMipLayout, vk::ImageLayout::eTransferDstOptimal, i, 1, 0, layerCount);
+            }
+
+            // Create separate blit for each layer
+            std::vector<vk::ImageBlit> blits;
+            for (uint32_t layer = 0; layer < layerCount; layer++) {
+                vk::ImageBlit blit;
+                blit.srcSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
+                blit.srcSubresource.mipLevel = i - 1;
+                blit.srcSubresource.baseArrayLayer = layer;
+                blit.srcSubresource.layerCount = 1;
+                blit.srcOffsets[0] = vk::Offset3D{0, 0, 0};
+                blit.srcOffsets[1] = vk::Offset3D{mipWidth, mipHeight, 1};
+
+                blit.dstSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
+                blit.dstSubresource.mipLevel = i;
+                blit.dstSubresource.baseArrayLayer = layer;
+                blit.dstSubresource.layerCount = 1;
+                blit.dstOffsets[0] = vk::Offset3D{0, 0, 0};
+                blit.dstOffsets[1] = vk::Offset3D{mipWidth > 1 ? mipWidth / 2 : 1, mipHeight > 1 ? mipHeight / 2 : 1, 1};
+
+                blits.push_back(blit);
+            }
+
+            cmd.blitImage(*image, vk::ImageLayout::eTransferSrcOptimal, *image, vk::ImageLayout::eTransferDstOptimal, blits, vk::Filter::eLinear);
+
+            // Transition previous mip level (all layers) to shader read
+            transitionImageLayout(&cmd, *image, vk::ImageLayout::eTransferSrcOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, i - 1, 1, 0, layerCount);
+
+            if (mipWidth > 1)
+                mipWidth /= 2;
+            if (mipHeight > 1)
+                mipHeight /= 2;
+        }
+        // finally transition the last mip level
+        transitionImageLayout(&cmd, *image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, mipLevels - 1, 1, 0, layerCount);
+
+        if (ownCommandBuffer) {
+            endSingleTimeCommands(ownedCmd);
+            device.getGraphicsQueue().waitIdle();
+#if DEBUG == 1
+            std::cout << "=== MIPMAPS COMPLETE ===" << std::endl;
+#endif
+        }
+    }
+    
   private:
     Device& device;
     const vk::raii::CommandPool& commandPool;
@@ -433,68 +513,6 @@ class ResourceManager {
         return {data, width, height};
     }
 
-    void generateMipmaps(vk::raii::Image& image, vk::Format imageFormat, int32_t texWidth, int32_t texHeight, uint32_t mipLevels, uint32_t layerCount) {
-        vk::FormatProperties formatProperties = device.getPhysicalDevice().getFormatProperties(imageFormat);
-        if (!(formatProperties.optimalTilingFeatures & vk::FormatFeatureFlagBits::eSampledImageFilterLinear)) {
-            throw std::runtime_error("Texture image format does not support linear blitting!");
-        }
-#if DEBUG == 1
-        std::cout << "=== GENERATING MIPMAPS ===" << std::endl;
-        std::cout << "Size: " << texWidth << "x" << texHeight << std::endl;
-        std::cout << "Mip levels: " << mipLevels << std::endl;
-        std::cout << "Layers: " << layerCount << std::endl;
-#endif
-        auto commandBuffer = beginSingleTimeCommands();
-
-        int32_t mipWidth = texWidth;
-        int32_t mipHeight = texHeight;
-
-        for (uint32_t i = 1; i < mipLevels; i++) {
-
-            transitionImageLayout(&commandBuffer, *image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eTransferSrcOptimal, i - 1, 1, 0,
-                                  layerCount); // all layers at once
-
-            // Create separate blit for each layer
-            std::vector<vk::ImageBlit> blits;
-            for (uint32_t layer = 0; layer < layerCount; layer++) {
-                vk::ImageBlit blit;
-                blit.srcSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
-                blit.srcSubresource.mipLevel = i - 1;
-                blit.srcSubresource.baseArrayLayer = layer;
-                blit.srcSubresource.layerCount = 1;
-                blit.srcOffsets[0] = vk::Offset3D{0, 0, 0};
-                blit.srcOffsets[1] = vk::Offset3D{mipWidth, mipHeight, 1};
-
-                blit.dstSubresource.aspectMask = vk::ImageAspectFlagBits::eColor;
-                blit.dstSubresource.mipLevel = i;
-                blit.dstSubresource.baseArrayLayer = layer;
-                blit.dstSubresource.layerCount = 1;
-                blit.dstOffsets[0] = vk::Offset3D{0, 0, 0};
-                blit.dstOffsets[1] = vk::Offset3D{mipWidth > 1 ? mipWidth / 2 : 1, mipHeight > 1 ? mipHeight / 2 : 1, 1};
-
-                blits.push_back(blit);
-            }
-
-            commandBuffer.blitImage(*image, vk::ImageLayout::eTransferSrcOptimal, *image, vk::ImageLayout::eTransferDstOptimal, blits, vk::Filter::eLinear);
-
-            // Transition previous mip level (all layers) to shader read
-            transitionImageLayout(&commandBuffer, *image, vk::ImageLayout::eTransferSrcOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, i - 1, 1, 0, layerCount);
-
-            if (mipWidth > 1)
-                mipWidth /= 2;
-            if (mipHeight > 1)
-                mipHeight /= 2;
-        }
-        // finally transition the last mip level
-        transitionImageLayout(&commandBuffer, *image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, mipLevels - 1, 1, 0, layerCount);
-
-        endSingleTimeCommands(commandBuffer);
-
-        device.getGraphicsQueue().waitIdle();
-#if DEBUG == 1
-        std::cout << "=== MIPMAPS COMPLETE ===" << std::endl;
-#endif
-    }
     //only handles obj for now (TODO expand this)
     MeshData loadMeshFromFileImpl(const std::string& meshPath) {
         tinyobj::attrib_t attrib;

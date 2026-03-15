@@ -16,6 +16,8 @@ struct SSRPushConstants {
     float marchResolution;  // 0-1, fraction of pixels to sample in coarse pass
     int refinementSteps;    // binary search iterations after coarse hit
     float thickness;        // depth tolerance for hit detection
+    float roughnessThreshold; // skip SSR for fragments above this roughness
+    float normalMipLevel;     // mip level for normal pre-filtering
 };
 
 [[vk::push_constant]] SSRPushConstants SSRpc;
@@ -55,12 +57,19 @@ float4 fragMain(VSOutput input) : SV_Target {
     float2 texelSize = 1.0 / texSize;
     float2 uv        = input.texCoord;
 
+    // Early-out for high roughness surfaces (SSR contributes very little)
+    float2 roughnessMetal = textures[SSRpc.roughnessMetalIndex].Sample(
+        samplers[SSRpc.roughnessMetalSamplerIndex], uv).rg;
+    float roughness = roughnessMetal.r;
+    float metallic  = roughnessMetal.g;
+    if (roughness > SSRpc.roughnessThreshold) return float4(0, 0, 0, 0);
+
     // Reconstruct view-space position from depth, sample smooth normal from G-buffer
     float depth = textures[SSRpc.depthIndex].Sample(samplers[SSRpc.depthSamplerIndex], uv).r;
     if (depth >= 1.0) return float4(0, 0, 0, 0);
 
     float3 positionFrom = reconstructViewPos(uv, depth, SSRpc.invProjection);
-    float3 worldNormal = textures[SSRpc.normalIndex].Sample(samplers[SSRpc.normalSamplerIndex], uv).rgb * 2.0 - 1.0;
+    float3 worldNormal = textures[SSRpc.normalIndex].SampleLevel(samplers[SSRpc.normalSamplerIndex], uv, SSRpc.normalMipLevel).rgb * 2.0 - 1.0;
     float3 normal = normalize(mul((float3x3)SSRpc.viewMatrix, worldNormal));
 
     // Reflection vector in view space
@@ -148,12 +157,6 @@ float4 fragMain(VSOutput input) : SV_Target {
             search0 = temp;
         }
     }
-
-    // Sample roughness (.r) and metallic (.g) at the source fragment
-    float2 roughnessMetal = textures[SSRpc.roughnessMetalIndex].Sample(
-        samplers[SSRpc.roughnessMetalSamplerIndex], uv).rg;
-    float roughness = roughnessMetal.r;
-    float metallic  = roughnessMetal.g;
 
     // Fresnel-based reflectivity: even dielectrics reflect strongly at grazing angles
     float3 viewDir = -unitPositionFrom;

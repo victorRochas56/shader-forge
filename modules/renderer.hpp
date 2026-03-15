@@ -152,6 +152,7 @@ class Renderer {
 
     // World-space normals MRT from lit pass
     uint32_t                            normalTextureIndex = 0xFFFFFFFF;
+    uint32_t                            normalMipLevels = 1;
     Image                               normalMSAA;
 
     //SSR
@@ -161,10 +162,19 @@ class Renderer {
     uint32_t                            colorResolveTextureIndex = 0xFFFFFFFF;
 
   public:
-    bool                                enableSSAO = true; 
+    bool                                enableSSAO = true;
     float                               ssaoRadius = 0.3f;
     float                               ssaoBias = 0.1f;
     float                               ssaoPower = 2.0f;
+    float                               ssaoResolutionScale = 0.5f;
+
+    bool                                enableSSR = true;
+    float                               ssrResolutionScale = 0.5f;
+    float                               ssrRoughnessThreshold = 0.6f;
+    float                               ssrMaxDistance = 15.0f;
+    float                               ssrMarchResolution = 0.3f;
+    int                                 ssrRefinementSteps = 10;
+    float                               ssrThickness = 0.5f;
 
   private:
     // Temporary texture for gaussian blur
@@ -237,10 +247,15 @@ class Renderer {
 
         swapchain->create(*window, vSync);
         createShadowDepthBuffer(DEFAULT_SHADOW_RESOLUTION);
-        createSSAOResources(startWidth, startHeight);
+        uint32_t ssaoW = std::max(1u, static_cast<uint32_t>(startWidth * ssaoResolutionScale));
+        uint32_t ssaoH = std::max(1u, static_cast<uint32_t>(startHeight * ssaoResolutionScale));
+        uint32_t ssrW = std::max(1u, static_cast<uint32_t>(startWidth * ssrResolutionScale));
+        uint32_t ssrH = std::max(1u, static_cast<uint32_t>(startHeight * ssrResolutionScale));
+        createSSAOResources(ssaoW, ssaoH);
         createRoughnessMetalResources(startWidth, startHeight);
         createNormalResources(startWidth, startHeight);
-        createSSRResources(startWidth,startHeight);
+        createColorResolveResources(startWidth, startHeight);
+        createSSRResources(ssrW, ssrH);
         createSyncObjects();
 
 #if DEBUG == 1
@@ -340,16 +355,7 @@ class Renderer {
 
         if (result == vk::Result::eErrorOutOfDateKHR) {
             swapchain->recreate(window, vSync);
-            int width = 0, height = 0;
-            glfwGetFramebufferSize(window, &width, &height);
-            if (width > 0 && height > 0) {
-                createSSAOResources(width, height);
-                createRoughnessMetalResources(width, height);
-                createNormalResources(width, height);
-                createSSRResources(width,height);
-            }
-            activeCamera.aspectRatio = static_cast<float>(width) / static_cast<float>(height);
-            activeCamera.calculateViewProjectionMatrix();
+            handleSwapchainResize();
             return;
         }
         if (result != vk::Result::eSuccess && result != vk::Result::eSuboptimalKHR) {
@@ -403,18 +409,7 @@ class Renderer {
         if (result == vk::Result::eErrorOutOfDateKHR || result == vk::Result::eSuboptimalKHR || framebufferResized) {
             framebufferResized = false;
             swapchain->recreate(window, vSync);
-
-            int width = 0, height = 0;
-            glfwGetFramebufferSize(window, &width, &height);
-            if (width > 0 && height > 0) {
-                createSSAOResources(width, height);
-                createRoughnessMetalResources(width, height);
-                createNormalResources(width, height);
-                createSSRResources(width, height);
-            }
-            activeCamera.aspectRatio = static_cast<float>(width) / static_cast<float>(height);
-            activeCamera.calculateViewProjectionMatrix();
-
+            handleSwapchainResize();
         } else if (result != vk::Result::eSuccess) {
             throw std::runtime_error("failed to present swap chain image!");
         }
@@ -473,21 +468,35 @@ class Renderer {
     }
 
 
+    // Recreates all screen-size render targets and updates the camera aspect ratio.
+    // Called after swapchain recreation (resize, vsync toggle, etc.)
+    void handleSwapchainResize() {
+        int width = 0, height = 0;
+        glfwGetFramebufferSize(window, &width, &height);
+        if (width > 0 && height > 0) {
+            uint32_t ssaoW = std::max(1u, static_cast<uint32_t>(width * ssaoResolutionScale));
+            uint32_t ssaoH = std::max(1u, static_cast<uint32_t>(height * ssaoResolutionScale));
+            uint32_t ssrW = std::max(1u, static_cast<uint32_t>(width * ssrResolutionScale));
+            uint32_t ssrH = std::max(1u, static_cast<uint32_t>(height * ssrResolutionScale));
+            createSSAOResources(ssaoW, ssaoH);
+            createRoughnessMetalResources(width, height);
+            createNormalResources(width, height);
+            createColorResolveResources(width, height);
+            createSSRResources(ssrW, ssrH);
+        }
+        activeCamera.aspectRatio = static_cast<float>(width) / static_cast<float>(height);
+        activeCamera.calculateViewProjectionMatrix();
+    }
+
     //toggled by keyboard inputs
     void toggleVsync() {
         vSync = !vSync;
         swapchain->recreate(window, vSync);
-        int width = 0, height = 0;
-        glfwGetFramebufferSize(window, &width, &height);
-        if (width > 0 && height > 0) {
-            createSSAOResources(width, height);
-            createRoughnessMetalResources(width, height);
-            createNormalResources(width, height);
-            createSSRResources(width, height);
-        }
+        handleSwapchainResize();
     }
     
     void toggleSSAO() { enableSSAO = !enableSSAO; }
+    void toggleSSR() { enableSSR = !enableSSR; }
     
     void toggleBBOXes() { showBBOXes = !showBBOXes; }
     
@@ -499,67 +508,22 @@ class Renderer {
     void blurAttachment(vk::raii::CommandBuffer& cmd, uint32_t sourceTextureIndex, uint32_t tempTextureIndex, uint32_t width, uint32_t height, float blurRadius = 1.0f,
                         uint32_t samplerIndex = 0) {
 
-        auto& blurPipeline = pipelineManager->getBeforeGeoPipelines()[blurPipelineIndex];
+        auto& blurPipeline = *pipelineManager->getBeforeGeoPipelines()[blurPipelineIndex];
         auto& sourceTexture = descriptorSet->getTextureResource(sourceTextureIndex);
         auto& tempTexture = descriptorSet->getTextureResource(tempTextureIndex);
+        vk::Extent2D extent{width, height};
 
-        // === Horizontal blur (source -> temp) ===
-        {
-            resourceManager->transitionImageLayout(&cmd, *tempTexture.image, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
+        // Horizontal blur (source -> temp)
+        resourceManager->transitionImageLayout(&cmd, *tempTexture.image, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
+        drawFullscreenPass(cmd, blurPipeline, *tempTexture.imageView, extent,
+            BlurPushConstants{.inputTextureIndex = sourceTextureIndex, .samplerIndex = samplerIndex, .isHorizontal = 1, .blurRadius = blurRadius, .resolution = glm::uvec2(width, height)});
+        resourceManager->transitionImageLayout(&cmd, *tempTexture.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
 
-            vk::ClearValue clearColor{.color = vk::ClearColorValue(std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.0f})};
-            vk::RenderingAttachmentInfo colorAttachment{.imageView = *tempTexture.imageView,
-                                                        .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-                                                        .loadOp = vk::AttachmentLoadOp::eClear,
-                                                        .storeOp = vk::AttachmentStoreOp::eStore,
-                                                        .clearValue = clearColor};
-
-            vk::RenderingInfo renderInfo{.renderArea = {{0, 0}, {width, height}}, .layerCount = 1, .colorAttachmentCount = 1, .pColorAttachments = &colorAttachment};
-
-            cmd.beginRendering(renderInfo);
-            cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, blurPipeline->pipeline);
-            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, blurPipeline->layout, 0, {*blurPipeline->descriptorSet}, {});
-            cmd.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height), 0.0f, 1.0f));
-            cmd.setScissor(0, vk::Rect2D({0, 0}, {width, height}));
-
-            BlurPushConstants pushConstants{
-                .inputTextureIndex = sourceTextureIndex, .samplerIndex = samplerIndex, .isHorizontal = 1, .blurRadius = blurRadius, .resolution = glm::uvec2(width, height)};
-
-            cmd.pushConstants<BlurPushConstants>(*blurPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pushConstants);
-            cmd.draw(3, 1, 0, 0);
-            cmd.endRendering();
-
-            resourceManager->transitionImageLayout(&cmd, *tempTexture.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
-        }
-
-        // === Vertical blur (temp -> source) ===
-        {
-            resourceManager->transitionImageLayout(&cmd, *sourceTexture.image, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
-
-            vk::ClearValue clearColor{.color = vk::ClearColorValue(std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.0f})};
-            vk::RenderingAttachmentInfo colorAttachment{.imageView = *sourceTexture.imageView,
-                                                        .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-                                                        .loadOp = vk::AttachmentLoadOp::eClear,
-                                                        .storeOp = vk::AttachmentStoreOp::eStore,
-                                                        .clearValue = clearColor};
-
-            vk::RenderingInfo renderInfo{.renderArea = {{0, 0}, {width, height}}, .layerCount = 1, .colorAttachmentCount = 1, .pColorAttachments = &colorAttachment};
-
-            cmd.beginRendering(renderInfo);
-            cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, blurPipeline->pipeline);
-            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, blurPipeline->layout, 0, {*blurPipeline->descriptorSet}, {});
-            cmd.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height), 0.0f, 1.0f));
-            cmd.setScissor(0, vk::Rect2D({0, 0}, {width, height}));
-
-            BlurPushConstants pushConstants{
-                .inputTextureIndex = tempTextureIndex, .samplerIndex = samplerIndex, .isHorizontal = 0, .blurRadius = blurRadius, .resolution = glm::uvec2(width, height)};
-
-            cmd.pushConstants<BlurPushConstants>(*blurPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pushConstants);
-            cmd.draw(3, 1, 0, 0);
-            cmd.endRendering();
-
-            resourceManager->transitionImageLayout(&cmd, *sourceTexture.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
-        }
+        // Vertical blur (temp -> source)
+        resourceManager->transitionImageLayout(&cmd, *sourceTexture.image, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
+        drawFullscreenPass(cmd, blurPipeline, *sourceTexture.imageView, extent,
+            BlurPushConstants{.inputTextureIndex = tempTextureIndex, .samplerIndex = samplerIndex, .isHorizontal = 0, .blurRadius = blurRadius, .resolution = glm::uvec2(width, height)});
+        resourceManager->transitionImageLayout(&cmd, *sourceTexture.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
     }
 
 
@@ -663,35 +627,8 @@ class Renderer {
     }
 
     void createSSAOResources(uint32_t width, uint32_t height) {
-        // Free previous SSAO textures if they exist (resize case)
-        if (ssaoTextureIndex != 0xFFFFFFFF) {
-            descriptorSet->freeTexture(ssaoTextureIndex);
-            ssaoTextureIndex = 0xFFFFFFFF;
-        }
-        if (ssaoBlurTextureIndex != 0xFFFFFFFF) {
-            descriptorSet->freeTexture(ssaoBlurTextureIndex);
-            ssaoBlurTextureIndex = 0xFFFFFFFF;
-        }
-
-        // SSAO render target (R8 single-channel)
-        vk::raii::Image ssaoImage = nullptr;
-        vk::raii::DeviceMemory ssaoMemory = nullptr;
-        resourceManager->createImage(width, height, 1, vk::SampleCountFlagBits::e1, vk::Format::eR8Unorm, vk::ImageTiling::eOptimal,
-                                     vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, ssaoImage,
-                                     ssaoMemory, 1);
-        auto ssaoView = resourceManager->createImageView(ssaoImage, vk::Format::eR8Unorm, vk::ImageAspectFlagBits::eColor);
-        resourceManager->transitionImageLayout(nullptr, ssaoImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal);
-        ssaoTextureIndex = descriptorSet->allocateTexture(std::move(ssaoImage), std::move(ssaoMemory), std::move(ssaoView), "internal/ssao");
-
-        // SSAO blur temporary target (same format/size)
-        vk::raii::Image blurImage = nullptr;
-        vk::raii::DeviceMemory blurMemory = nullptr;
-        resourceManager->createImage(width, height, 1, vk::SampleCountFlagBits::e1, vk::Format::eR8Unorm, vk::ImageTiling::eOptimal,
-                                     vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, blurImage,
-                                     blurMemory, 1);
-        auto blurView = resourceManager->createImageView(blurImage, vk::Format::eR8Unorm, vk::ImageAspectFlagBits::eColor);
-        resourceManager->transitionImageLayout(nullptr, blurImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal);
-        ssaoBlurTextureIndex = descriptorSet->allocateTexture(std::move(blurImage), std::move(blurMemory), std::move(blurView), "internal/ssao_blur");
+        createOrResizeRenderTarget(ssaoTextureIndex, width, height, vk::Format::eR8Unorm, "internal/ssao");
+        createOrResizeRenderTarget(ssaoBlurTextureIndex, width, height, vk::Format::eR8Unorm, "internal/ssao_blur");
 
         // 4x4 noise texture (RGBA8, random tangent-space rotation vectors)
         // Only create once — noise doesn't depend on screen size
@@ -735,84 +672,35 @@ class Renderer {
     }
 
     void createRoughnessMetalResources(uint32_t width, uint32_t height) {
-        // Free previous texture if it exists (resize case)
-        if (roughnessMetalTextureIndex != 0xFFFFFFFF) {
-            descriptorSet->freeTexture(roughnessMetalTextureIndex);
-            roughnessMetalTextureIndex = 0xFFFFFFFF;
-        }
-
-        // MSAA roughness-metal render target
-        resourceManager->createImage(width, height, 1, msaaSamples, vk::Format::eR8G8B8A8Unorm, vk::ImageTiling::eOptimal,
-                                     vk::ImageUsageFlagBits::eTransientAttachment | vk::ImageUsageFlagBits::eColorAttachment,
-                                     vk::MemoryPropertyFlagBits::eDeviceLocal, roughnessMetal.image, roughnessMetal.memory);
-        roughnessMetal.view = resourceManager->createImageView(roughnessMetal.image, vk::Format::eR8G8B8A8Unorm, vk::ImageAspectFlagBits::eColor, 1);
-        resourceManager->transitionImageLayout(nullptr, roughnessMetal.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
-
-        // Resolve target (single-sample, sampled by SSR)
-        vk::raii::Image resolveImage = nullptr;
-        vk::raii::DeviceMemory resolveMemory = nullptr;
-        resourceManager->createImage(width, height, 1, vk::SampleCountFlagBits::e1, vk::Format::eR8G8B8A8Unorm, vk::ImageTiling::eOptimal,
-                                     vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
-                                     vk::MemoryPropertyFlagBits::eDeviceLocal, resolveImage, resolveMemory, 1);
-        auto resolveView = resourceManager->createImageView(resolveImage, vk::Format::eR8G8B8A8Unorm, vk::ImageAspectFlagBits::eColor);
-        resourceManager->transitionImageLayout(nullptr, resolveImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal);
-        roughnessMetalTextureIndex = descriptorSet->allocateTexture(std::move(resolveImage), std::move(resolveMemory), std::move(resolveView), "internal/roughness_metal");
+        createOrResizeMSAATarget(roughnessMetal, width, height, vk::Format::eR8G8B8A8Unorm);
+        createOrResizeRenderTarget(roughnessMetalTextureIndex, width, height, vk::Format::eR8G8B8A8Unorm, "internal/roughness_metal");
     }
 
     void createNormalResources(uint32_t width, uint32_t height) {
+        createOrResizeMSAATarget(normalMSAA, width, height, vk::Format::eR8G8B8A8Unorm);
+        // Create with mip levels for SSR normal pre-filtering
+        normalMipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(width, height)))) + 1;
         if (normalTextureIndex != 0xFFFFFFFF) {
             descriptorSet->freeTexture(normalTextureIndex);
-            normalTextureIndex = 0xFFFFFFFF;
         }
+        vk::raii::Image image = nullptr;
+        vk::raii::DeviceMemory memory = nullptr;
+        resourceManager->createImage(width, height, normalMipLevels, vk::SampleCountFlagBits::e1, vk::Format::eR8G8B8A8Unorm, vk::ImageTiling::eOptimal,
+                                     vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled |
+                                     vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst,
+                                     vk::MemoryPropertyFlagBits::eDeviceLocal, image, memory, 1);
+        auto view = resourceManager->createImageView(image, vk::Format::eR8G8B8A8Unorm, vk::ImageAspectFlagBits::eColor, normalMipLevels);
+        resourceManager->transitionImageLayout(nullptr, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal, 0, normalMipLevels);
+        normalTextureIndex = descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(view), "internal/normals", false, width, height);
+    }
 
-        // MSAA normal render target
-        resourceManager->createImage(width, height, 1, msaaSamples, vk::Format::eR8G8B8A8Unorm, vk::ImageTiling::eOptimal,
-                                     vk::ImageUsageFlagBits::eTransientAttachment | vk::ImageUsageFlagBits::eColorAttachment,
-                                     vk::MemoryPropertyFlagBits::eDeviceLocal, normalMSAA.image, normalMSAA.memory);
-        normalMSAA.view = resourceManager->createImageView(normalMSAA.image, vk::Format::eR8G8B8A8Unorm, vk::ImageAspectFlagBits::eColor, 1);
-        resourceManager->transitionImageLayout(nullptr, normalMSAA.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
-
-        // Resolve target (single-sample, sampled by SSR)
-        vk::raii::Image resolveImage = nullptr;
-        vk::raii::DeviceMemory resolveMemory = nullptr;
-        resourceManager->createImage(width, height, 1, vk::SampleCountFlagBits::e1, vk::Format::eR8G8B8A8Unorm, vk::ImageTiling::eOptimal,
-                                     vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
-                                     vk::MemoryPropertyFlagBits::eDeviceLocal, resolveImage, resolveMemory, 1);
-        auto resolveView = resourceManager->createImageView(resolveImage, vk::Format::eR8G8B8A8Unorm, vk::ImageAspectFlagBits::eColor);
-        resourceManager->transitionImageLayout(nullptr, resolveImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal);
-        normalTextureIndex = descriptorSet->allocateTexture(std::move(resolveImage), std::move(resolveMemory), std::move(resolveView), "internal/normals");
+    // Color resolve is the MSAA resolve target for the geometry pass — must always be full resolution
+    void createColorResolveResources(uint32_t width, uint32_t height) {
+        createOrResizeRenderTarget(colorResolveTextureIndex, width, height, swapchain->getSwapChainImageFormat(), "internal/color_resolve", vk::ImageUsageFlagBits::eTransferSrc);
     }
 
     void createSSRResources(uint32_t width, uint32_t height) {
-        // Free previous SSR textures if they exist (resize case)
-        if (ssrTextureIndex != 0xFFFFFFFF) {
-            descriptorSet->freeTexture(ssrTextureIndex);
-            ssrTextureIndex = 0xFFFFFFFF;
-        }
-
-        // Color resolve target (MSAA color resolves here, SSR samples from it)
-        if (colorResolveTextureIndex != 0xFFFFFFFF) {
-            descriptorSet->freeTexture(colorResolveTextureIndex);
-            colorResolveTextureIndex = 0xFFFFFFFF;
-        }
-        vk::raii::Image colorResolveImage = nullptr;
-        vk::raii::DeviceMemory colorResolveMemory = nullptr;
-        resourceManager->createImage(width, height, 1, vk::SampleCountFlagBits::e1, swapchain->getSwapChainImageFormat(), vk::ImageTiling::eOptimal,
-                                     vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferSrc,
-                                     vk::MemoryPropertyFlagBits::eDeviceLocal, colorResolveImage, colorResolveMemory, 1);
-        auto colorResolveView = resourceManager->createImageView(colorResolveImage, swapchain->getSwapChainImageFormat(), vk::ImageAspectFlagBits::eColor);
-        resourceManager->transitionImageLayout(nullptr, colorResolveImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal);
-        colorResolveTextureIndex = descriptorSet->allocateTexture(std::move(colorResolveImage), std::move(colorResolveMemory), std::move(colorResolveView), "internal/color_resolve");
-
-        // SSR render target
-        vk::raii::Image ssrImage = nullptr;
-        vk::raii::DeviceMemory ssrMemory = nullptr;
-        resourceManager->createImage(width, height, 1, vk::SampleCountFlagBits::e1, swapchain->getSwapChainImageFormat(), vk::ImageTiling::eOptimal,
-                                     vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, ssrImage,
-                                     ssrMemory, 1);
-        auto ssrView = resourceManager->createImageView(ssrImage, swapchain->getSwapChainImageFormat(), vk::ImageAspectFlagBits::eColor);
-        resourceManager->transitionImageLayout(nullptr, ssrImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal);
-        ssrTextureIndex = descriptorSet->allocateTexture(std::move(ssrImage), std::move(ssrMemory), std::move(ssrView), "internal/ssr");
+        createOrResizeRenderTarget(ssrTextureIndex, width, height, swapchain->getSwapChainImageFormat(), "internal/ssr");
 
         // SSR pipeline (only created once)
         if (ssrPipelineIndex == 0xFFFFFFFF) {
@@ -863,10 +751,11 @@ class Renderer {
 
         recordGeometryPass(cmd, imageIndex);
 
+        if (enableSSR && ssrPipelineIndex != 0xFFFFFFFF)
+            recordSSRPass(cmd, imageIndex);
+
         if (enableSSAO && ssaoPipelineIndex != 0xFFFFFFFF)
             recordSSAOPass(cmd, imageIndex);
-            
-        recordSSRPass(cmd, imageIndex);
 
         if (imageVisIndex != 0xFFFFFFFF)
             recordImageVisPass(cmd, imageIndex);
@@ -911,7 +800,7 @@ class Renderer {
                             continue;
                         }
 
-                        if(showBBOXes)
+                        if(showBBOXes && doCulling)
                             Gizmos::drawBox(subWorldMin,subWorldMax,glm::vec4(1.0f,1.0f,0.0f,1.0f));
 
                         indirectCommands.push_back({.indexCount    = subMesh.indexCount,
@@ -1127,11 +1016,15 @@ class Renderer {
         resourceManager->transitionImageLayout(&cmd, swapchain->getSwapChainImages()[imageIndex],
             vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eColorAttachmentOptimal);
 
-        // Transition roughness-metal and normal resolve to shader readable for SSR
+        // Transition roughness-metal to shader readable for SSR
         resourceManager->transitionImageLayout(&cmd, *descriptorSet->getTextureResource(roughnessMetalTextureIndex).image,
                                                vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
-        resourceManager->transitionImageLayout(&cmd, *descriptorSet->getTextureResource(normalTextureIndex).image,
-                                               vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+
+        // Generate normal mips inline for SSR pre-filtering
+        auto& normalRes = descriptorSet->getTextureResource(normalTextureIndex);
+        resourceManager->generateMipmaps(*normalRes.image, vk::Format::eR8G8B8A8Unorm,
+            static_cast<int32_t>(normalRes.width), static_cast<int32_t>(normalRes.height),
+            normalMipLevels, 1, &cmd, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
     }
 
     void recordOverlayPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
@@ -1164,8 +1057,9 @@ class Renderer {
     }
 
     void recordSSAOPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
-        auto extent = swapchain->getSwapChainExtent();
+        auto swapExtent = swapchain->getSwapChainExtent();
         auto& ssaoTexture = descriptorSet->getTextureResource(ssaoTextureIndex);
+        vk::Extent2D ssaoExtent{ssaoTexture.width, ssaoTexture.height};
 
         // Transition depth to readable, SSAO target to color attachment
         resourceManager->transitionImageLayout(&cmd, swapchain->getDepthImage(),
@@ -1173,152 +1067,96 @@ class Renderer {
         resourceManager->transitionImageLayout(&cmd, *ssaoTexture.image,
             vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
 
-        // Render SSAO
-        vk::ClearValue ssaoClear{.color = vk::ClearColorValue(std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f})};
-        vk::RenderingAttachmentInfo ssaoAttachment{.imageView = *ssaoTexture.imageView,
-                                                    .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-                                                    .loadOp = vk::AttachmentLoadOp::eClear,
-                                                    .storeOp = vk::AttachmentStoreOp::eStore,
-                                                    .clearValue = ssaoClear};
-        vk::RenderingInfo ssaoRenderInfo{.renderArea = {{0, 0}, extent}, .layerCount = 1, .colorAttachmentCount = 1, .pColorAttachments = &ssaoAttachment};
+        // Render SSAO at (potentially lower) SSAO resolution
+        drawFullscreenPass(cmd, *pipelineManager->getPostProcessPipelines()[ssaoPipelineIndex], *ssaoTexture.imageView, ssaoExtent,
+            SSAOPushConstants{.invProjection = glm::inverse(activeCamera.projectionMatrix),
+                              .depthIndex = swapchain->getDepthResolveIndex(),
+                              .depthSamplerIndex = depthSamplerIndex,
+                              .noiseIndex = ssaoNoiseTextureIndex,
+                              .noiseSamplerIndex = ssaoNoiseSamplerIndex,
+                              .resolution = glm::uvec2(ssaoExtent.width, ssaoExtent.height),
+                              .radius = ssaoRadius,
+                              .bias = ssaoBias,
+                              .power = ssaoPower,
+                              .kernelSize = 32},
+            vk::AttachmentLoadOp::eClear, {1.0f, 1.0f, 1.0f, 1.0f});
 
-        auto& ssaoPipeline = pipelineManager->getPostProcessPipelines()[ssaoPipelineIndex];
-        cmd.beginRendering(ssaoRenderInfo);
-        setFullscreenViewport(cmd, extent);
-        bindPipeline(cmd, *ssaoPipeline);
-        SSAOPushConstants ssaoPC{.invProjection = glm::inverse(activeCamera.projectionMatrix),
-                                 .depthIndex = swapchain->getDepthResolveIndex(),
-                                 .depthSamplerIndex = depthSamplerIndex,
-                                 .noiseIndex = ssaoNoiseTextureIndex,
-                                 .noiseSamplerIndex = ssaoNoiseSamplerIndex,
-                                 .resolution = glm::uvec2(extent.width, extent.height),
-                                 .radius = ssaoRadius,
-                                 .bias = ssaoBias,
-                                 .power = ssaoPower,
-                                 .kernelSize = 32};
-        cmd.pushConstants<SSAOPushConstants>(*ssaoPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, ssaoPC);
-        cmd.draw(3, 1, 0, 0);
-        cmd.endRendering();
-
-        // Blur
+        // Blur at SSAO resolution
         resourceManager->transitionImageLayout(&cmd, *ssaoTexture.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
-        blurAttachment(cmd, ssaoTextureIndex, ssaoBlurTextureIndex, extent.width, extent.height, 2.0f, depthSamplerIndex);
+        blurAttachment(cmd, ssaoTextureIndex, ssaoBlurTextureIndex, ssaoExtent.width, ssaoExtent.height, 2.0f, depthSamplerIndex);
 
-        // Apply to swapchain via multiplicative blend
-        vk::RenderingAttachmentInfo applyAttachment{.imageView = swapchain->getSwapChainImageViews()[imageIndex],
-                                                     .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-                                                     .loadOp = vk::AttachmentLoadOp::eLoad,
-                                                     .storeOp = vk::AttachmentStoreOp::eStore};
-        vk::RenderingInfo applyRenderInfo{.renderArea = {{0, 0}, extent}, .layerCount = 1, .colorAttachmentCount = 1, .pColorAttachments = &applyAttachment};
-
-        auto& applyPipeline = pipelineManager->getPostProcessPipelines()[ssaoApplyPipelineIndex];
-        cmd.beginRendering(applyRenderInfo);
-        setFullscreenViewport(cmd, extent);
-        bindPipeline(cmd, *applyPipeline);
-        SSAOApplyPushConstants applyPC{.ssaoTextureIndex = ssaoTextureIndex, .samplerIndex = depthSamplerIndex};
-        cmd.pushConstants<SSAOApplyPushConstants>(*applyPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, applyPC);
-        cmd.draw(3, 1, 0, 0);
-        cmd.endRendering();
+        // Apply to swapchain at full resolution (sampler handles upscale)
+        drawFullscreenPass(cmd, *pipelineManager->getPostProcessPipelines()[ssaoApplyPipelineIndex], *swapchain->getSwapChainImageViews()[imageIndex], swapExtent,
+            SSAOApplyPushConstants{.ssaoTextureIndex = ssaoTextureIndex, .samplerIndex = depthSamplerIndex},
+            vk::AttachmentLoadOp::eLoad);
 
         // Transition depth back
         resourceManager->transitionImageLayout(&cmd, swapchain->getDepthImage(), vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
     }
 
-    //TODO streamline the process of adding a new post processing pass
     void recordSSRPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
-        auto extent = swapchain->getSwapChainExtent();
+        auto swapExtent = swapchain->getSwapChainExtent();
         auto& ssrTexture = descriptorSet->getTextureResource(ssrTextureIndex);
+        vk::Extent2D ssrExtent{ssrTexture.width, ssrTexture.height};
 
-        // Transition depth to readable, SSAO target to color attachment
+        // Transition depth to readable, SSR target to color attachment
         resourceManager->transitionImageLayout(&cmd, swapchain->getDepthImage(),
             vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
         resourceManager->transitionImageLayout(&cmd, *ssrTexture.image,
             vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
 
-        // Render SSR
-        vk::ClearValue ssrClear{.color = vk::ClearColorValue(std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f})};
-        vk::RenderingAttachmentInfo ssrAttachment{.imageView = *ssrTexture.imageView,
-                                                    .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-                                                    .loadOp = vk::AttachmentLoadOp::eClear,
-                                                    .storeOp = vk::AttachmentStoreOp::eStore,
-                                                    .clearValue = ssrClear};
-        vk::RenderingInfo ssrRenderInfo{.renderArea = {{0, 0}, extent}, .layerCount = 1, .colorAttachmentCount = 1, .pColorAttachments = &ssrAttachment};
-
-        auto& ssrPipeline = pipelineManager->getPostProcessPipelines()[ssrPipelineIndex];
-        cmd.beginRendering(ssrRenderInfo);
-        setFullscreenViewport(cmd, extent);
-        bindPipeline(cmd, *ssrPipeline);
-        SSRPushConstants ssrPC{.invProjection = glm::inverse(activeCamera.projectionMatrix),
-                               .viewMatrix = activeCamera.viewMatrix,
-                               .depthIndex = swapchain->getDepthResolveIndex(),
-                               .depthSamplerIndex = depthSamplerIndex,
-                               .colorIndex = colorResolveTextureIndex,
-                               .colorSamplerIndex = defaultSamplerIndex,
-                               .roughnessMetalIndex = roughnessMetalTextureIndex,
-                               .roughnessMetalSamplerIndex = defaultSamplerIndex,
-                               .normalIndex = normalTextureIndex,
-                               .normalSamplerIndex = defaultSamplerIndex,
-                               .resolution = glm::uvec2(extent.width, extent.height),
-                               .maxDistance = 15.0f,
-                               .marchResolution = 0.3f,
-                               .refinementSteps = 10,
-                               .thickness = 0.5f
-                             };
-        cmd.pushConstants<SSRPushConstants>(*ssrPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, ssrPC);
-        cmd.draw(3, 1, 0, 0);
-        cmd.endRendering();
+        // Render SSR at (potentially lower) SSR resolution
+        drawFullscreenPass(cmd, *pipelineManager->getPostProcessPipelines()[ssrPipelineIndex], *ssrTexture.imageView, ssrExtent,
+            SSRPushConstants{.invProjection = glm::inverse(activeCamera.projectionMatrix),
+                             .viewMatrix = activeCamera.viewMatrix,
+                             .depthIndex = swapchain->getDepthResolveIndex(),
+                             .depthSamplerIndex = depthSamplerIndex,
+                             .colorIndex = colorResolveTextureIndex,
+                             .colorSamplerIndex = defaultSamplerIndex,
+                             .roughnessMetalIndex = roughnessMetalTextureIndex,
+                             .roughnessMetalSamplerIndex = defaultSamplerIndex,
+                             .normalIndex = normalTextureIndex,
+                             .normalSamplerIndex = defaultSamplerIndex,
+                             .resolution = glm::uvec2(ssrExtent.width, ssrExtent.height),
+                             .maxDistance = ssrMaxDistance,
+                             .marchResolution = ssrMarchResolution,
+                             .refinementSteps = static_cast<uint32_t>(ssrRefinementSteps),
+                             .thickness = ssrThickness,
+                             .roughnessThreshold = ssrRoughnessThreshold,
+                             .normalMipLevel = std::clamp(std::log2(1.0f / ssrResolutionScale), 0.0f, static_cast<float>(normalMipLevels - 1))},
+            vk::AttachmentLoadOp::eClear, {1.0f, 1.0f, 1.0f, 1.0f});
 
         resourceManager->transitionImageLayout(&cmd, *ssrTexture.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
 
-        // Apply to swapchain
-        vk::RenderingAttachmentInfo applyAttachment{.imageView = swapchain->getSwapChainImageViews()[imageIndex],
-                                                     .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-                                                     .loadOp = vk::AttachmentLoadOp::eLoad,
-                                                     .storeOp = vk::AttachmentStoreOp::eStore};
-        vk::RenderingInfo applyRenderInfo{.renderArea = {{0, 0}, extent}, .layerCount = 1, .colorAttachmentCount = 1, .pColorAttachments = &applyAttachment};
-
-        auto& applyPipeline = pipelineManager->getPostProcessPipelines()[ssrApplyPipelineIndex];
-        cmd.beginRendering(applyRenderInfo);
-        setFullscreenViewport(cmd, extent);
-        bindPipeline(cmd, *applyPipeline);
-        SSRApplyPushConstants applyPC{.ssrTextureIndex = ssrTextureIndex, .samplerIndex = defaultSamplerIndex, .sceneColorIndex = colorResolveTextureIndex, .sceneSamplerIndex = defaultSamplerIndex};
-        cmd.pushConstants<SSRApplyPushConstants>(*applyPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, applyPC);
-        cmd.draw(3, 1, 0, 0);
-        cmd.endRendering();
+        // Apply to swapchain at full resolution (sampler handles upscale)
+        drawFullscreenPass(cmd, *pipelineManager->getPostProcessPipelines()[ssrApplyPipelineIndex], *swapchain->getSwapChainImageViews()[imageIndex], swapExtent,
+            SSRApplyPushConstants{.ssrTextureIndex = ssrTextureIndex, .samplerIndex = defaultSamplerIndex, .sceneColorIndex = colorResolveTextureIndex, .sceneSamplerIndex = defaultSamplerIndex},
+            vk::AttachmentLoadOp::eLoad);
 
         // Transition depth back
         resourceManager->transitionImageLayout(&cmd, swapchain->getDepthImage(), vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
     }
 
     void recordImageVisPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
-        if (imageVisIndex == 0xFFFFFFFF) return;
+        if (imageVisIndex == 0xFFFFFFFF)
+            return;
 
         auto extent = swapchain->getSwapChainExtent();
-        vk::RenderingAttachmentInfo swapchainAttachment{.imageView = swapchain->getSwapChainImageViews()[imageIndex],
-                                                        .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-                                                        .loadOp = vk::AttachmentLoadOp::eLoad,
-                                                        .storeOp = vk::AttachmentStoreOp::eStore};
-        vk::RenderingInfo renderInfo{.renderArea = {{0, 0}, extent}, .layerCount = 1, .colorAttachmentCount = 1, .pColorAttachments = &swapchainAttachment};
-
-        auto& depthPipeline = pipelineManager->getPostProcessPipelines()[imageViewPipelineIndex];
-        cmd.beginRendering(renderInfo);
-        setFullscreenViewport(cmd, extent);
-        bindPipeline(cmd, *depthPipeline);
         auto& visTexture = descriptorSet->getTextureResource(imageVisIndex);
         float imgAspect = (visTexture.width > 0 && visTexture.height > 0)
-            ? static_cast<float>(visTexture.width) / static_cast<float>(visTexture.height)
-            : static_cast<float>(extent.width) / static_cast<float>(extent.height);
-        ImageVisPushConstants depthConstants = {.imageIndex = imageVisIndex,
-                                                .samplerIndex = defaultSamplerIndex,
-                                                .flags = imageVisFlags,
-                                                .nearPlane = activeCamera.nearPlane,
-                                                .farPlane = activeCamera.farPlane,
-                                                .imageAspect = imgAspect,
-                                                .screenAspect = static_cast<float>(extent.width) / static_cast<float>(extent.height)
-                                                };
-        cmd.pushConstants<ImageVisPushConstants>(*depthPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, depthConstants);
-        cmd.draw(3, 1, 0, 0);
-        cmd.endRendering();
+                              ? static_cast<float>(visTexture.width) / static_cast<float>(visTexture.height)
+                              : static_cast<float>(extent.width) / static_cast<float>(extent.height);
+
+        drawFullscreenPass(cmd, *pipelineManager->getPostProcessPipelines()[imageViewPipelineIndex], *swapchain->getSwapChainImageViews()[imageIndex],
+                           extent,
+                           ImageVisPushConstants{.imageIndex = imageVisIndex,
+                                                 .samplerIndex = defaultSamplerIndex,
+                                                 .flags = imageVisFlags,
+                                                 .nearPlane = activeCamera.nearPlane,
+                                                 .farPlane = activeCamera.farPlane,
+                                                 .imageAspect = imgAspect,
+                                                 .screenAspect = static_cast<float>(extent.width) / static_cast<float>(extent.height)},
+                           vk::AttachmentLoadOp::eLoad);
     }
 
     void recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light) {
@@ -1417,6 +1255,34 @@ class Renderer {
             // Transition shadow map back to shader read-only for fragment shader sampling
             resourceManager->transitionImageLayout(&cmd, *shadowMap->image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
         }
+    }
+
+    // Creates (or frees and recreates) a single-sample render target registered in the descriptor set.
+    // Handles free-if-exists, image creation, view, layout transition, and descriptor set allocation.
+    void createOrResizeRenderTarget(uint32_t& index, uint32_t width, uint32_t height,
+                                     vk::Format format, const char* debugName,
+                                     vk::ImageUsageFlags extraUsage = {}) {
+        if (index != 0xFFFFFFFF) {
+            descriptorSet->freeTexture(index);
+        }
+        vk::raii::Image image = nullptr;
+        vk::raii::DeviceMemory memory = nullptr;
+        resourceManager->createImage(width, height, 1, vk::SampleCountFlagBits::e1, format, vk::ImageTiling::eOptimal,
+                                     vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled | extraUsage,
+                                     vk::MemoryPropertyFlagBits::eDeviceLocal, image, memory, 1);
+        auto view = resourceManager->createImageView(image, format, vk::ImageAspectFlagBits::eColor);
+        resourceManager->transitionImageLayout(nullptr, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal);
+        index = descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(view), debugName, false, width, height);
+    }
+
+    // Creates (or recreates) an MSAA intermediate render target not registered in the descriptor set.
+    void createOrResizeMSAATarget(Image& target, uint32_t width, uint32_t height, vk::Format format) {
+        target.view = nullptr; // destroy view before image
+        resourceManager->createImage(width, height, 1, msaaSamples, format, vk::ImageTiling::eOptimal,
+                                     vk::ImageUsageFlagBits::eTransientAttachment | vk::ImageUsageFlagBits::eColorAttachment,
+                                     vk::MemoryPropertyFlagBits::eDeviceLocal, target.image, target.memory);
+        target.view = resourceManager->createImageView(target.image, format, vk::ImageAspectFlagBits::eColor, 1);
+        resourceManager->transitionImageLayout(nullptr, target.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
     }
 
     void setFullscreenViewport(vk::raii::CommandBuffer& cmd, vk::Extent2D extent) {

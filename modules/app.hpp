@@ -153,9 +153,19 @@ class App {
             renderer.toggleSSAO();
         }
         if(renderer.enableSSAO){
-            ImGui::SliderFloat("radius",&renderer.ssaoRadius,0.01f,10.0f);
-            ImGui::SliderFloat("bias",&renderer.ssaoBias,0.01f,0.1f);
-            ImGui::SliderFloat("power",&renderer.ssaoPower,0.01f,5.0f);
+            ImGui::SliderFloat("AO Radius",&renderer.ssaoRadius,0.01f,10.0f);
+            ImGui::SliderFloat("AO Bias",&renderer.ssaoBias,0.01f,0.1f);
+            ImGui::SliderFloat("AO Power",&renderer.ssaoPower,0.01f,5.0f);
+        }
+        if(ImGui::Button("SSR")){
+            renderer.toggleSSR();
+        }
+        if(renderer.enableSSR){
+            ImGui::SliderFloat("Max Distance",&renderer.ssrMaxDistance,1.0f,100.0f);
+            ImGui::SliderFloat("March Resolution",&renderer.ssrMarchResolution,0.05f,1.0f);
+            ImGui::SliderInt("Refinement Steps",&renderer.ssrRefinementSteps,0,32);
+            ImGui::SliderFloat("Thickness",&renderer.ssrThickness,0.01f,5.0f);
+            ImGui::SliderFloat("Roughness Threshold",&renderer.ssrRoughnessThreshold,0.0f,1.0f);
         }
         if(ImGui::Button("Show BBOXes")){
             renderer.toggleBBOXes();
