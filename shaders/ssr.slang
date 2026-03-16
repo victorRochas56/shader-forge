@@ -36,6 +36,15 @@ float2 viewToUV(float3 viewPos) {
     return uv;
 }
 
+// Linearize depth to view-space Z without a full matrix multiply.
+// Extracts projection matrix coefficients from the inverse projection matrix.
+float linearizeDepth(float depth) {
+    // invProj[2][3] = -1/P[3][2], invProj[3][3] = P[2][2]/P[3][2]
+    // viewZ = invProj[2][3] / (depth + invProj[3][3])
+    // For a standard Vulkan [0,1] depth projection this recovers the negative view-space Z.
+    return SSRpc.invProjection[2][3] / (SSRpc.invProjection[3][2] * depth + SSRpc.invProjection[3][3]);
+}
+
 [shader("vertex")]
 VSOutput vertMain(uint vertexID : SV_VertexID) {
     VSOutput output;
@@ -100,6 +109,7 @@ float4 fragMain(VSOutput input) : SV_Target {
     float depthDiff = 0.0;
 
     // ---- Coarse pass: march along the ray in screen space ----
+    // Pre-compute view-space thickness for comparison (thickness is in view units)
     for (int i = 0; i < int(delta); ++i) {
         frag += increment;
         float2 sampleUV = frag / texSize;
@@ -111,7 +121,7 @@ float4 fragMain(VSOutput input) : SV_Target {
             samplers[SSRpc.depthSamplerIndex], sampleUV).r;
         if (sampleDepth >= 1.0) continue;
 
-        float3 positionTo = reconstructViewPos(sampleUV, sampleDepth, SSRpc.invProjection);
+        float sampleViewZ = linearizeDepth(sampleDepth);
 
         search1 = lerp(
             (frag.y - startFrag.y) / deltaY,
@@ -122,7 +132,7 @@ float4 fragMain(VSOutput input) : SV_Target {
 
         // Perspective-correct interpolation of view-space Z
         viewDistance = (startView.z * endView.z) / lerp(endView.z, startView.z, search1);
-        depthDiff = positionTo.z - viewDistance;
+        depthDiff = sampleViewZ - viewDistance;
 
         if (depthDiff > 0.0 && depthDiff < thickness) {
             hit0 = 1;
@@ -143,10 +153,10 @@ float4 fragMain(VSOutput input) : SV_Target {
 
         float sampleDepth = textures[SSRpc.depthIndex].Sample(
             samplers[SSRpc.depthSamplerIndex], finalUV).r;
-        float3 positionTo = reconstructViewPos(finalUV, sampleDepth, SSRpc.invProjection);
+        float sampleViewZ = linearizeDepth(sampleDepth);
 
         viewDistance = (startView.z * endView.z) / lerp(endView.z, startView.z, search1);
-        depthDiff = positionTo.z - viewDistance;
+        depthDiff = sampleViewZ - viewDistance;
 
         if (depthDiff > 0.0 && depthDiff < thickness) {
             hit1 = 1;

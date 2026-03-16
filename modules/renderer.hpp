@@ -169,11 +169,11 @@ class Renderer {
     float                               ssaoResolutionScale = 0.5f;
 
     bool                                enableSSR = true;
-    float                               ssrResolutionScale = 0.5f;
+    float                               ssrResolutionScale = 1.0f;
     float                               ssrRoughnessThreshold = 0.6f;
-    float                               ssrMaxDistance = 15.0f;
+    float                               ssrMaxDistance = 10.0f;
     float                               ssrMarchResolution = 0.3f;
-    int                                 ssrRefinementSteps = 10;
+    int                                 ssrRefinementSteps = 5;
     float                               ssrThickness = 0.5f;
 
   private:

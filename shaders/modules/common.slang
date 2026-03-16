@@ -58,7 +58,7 @@ struct Light {
     uint padding3;
     uint padding4;
     uint numCascades;
-    Cascade cascades[4];
+    Cascade cascades[3];
 }
 
 struct Vertex

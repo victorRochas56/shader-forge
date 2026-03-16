@@ -398,6 +398,7 @@ class SceneManager {
                     if (parts.size() >= 7) {
                         auto cascadeParts = split(parts[6], ',');
                         for (size_t i = 0; i < cascadeParts.size(); i++) {
+                            if(i >= light.numCascades) break;
                             light.cascades[i].splitDistance = std::stof(cascadeParts[i]);
                         }
                     }

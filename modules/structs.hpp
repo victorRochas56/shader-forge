@@ -356,8 +356,8 @@ struct Light {
     int showCascades = 0;
     uint32_t padding3;
     uint32_t padding4;
-    uint32_t numCascades = 4;
-    std::array<Cascade, 4> cascades;
+    uint32_t numCascades = 3;
+    std::array<Cascade, 3> cascades;
 
     bool operator==(const Light& other) const {
         return type == other.type && modelMatrixIndex == other.modelMatrixIndex && range == other.range && intensity == other.intensity && shadowMapIndex == other.shadowMapIndex &&
