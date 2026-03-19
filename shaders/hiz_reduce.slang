@@ -37,9 +37,9 @@ float4 fragMain(VSOutput input) : SV_Target {
             samplers[hizPC.samplerIndex], uv).r;
         return float4(depth, 0, 0, 1);
     } else {
-        // 2x2 min reduction: sample 4 texels from previous mip
+        // 2x2 min reduction: sample 4 texel centers from previous mip
         float2 texelSize = 1.0 / float2(hizPC.inputResolution);
-        float2 offset = texelSize * 0.25;
+        float2 offset = texelSize * 0.5;
 
         float d0 = textures[hizPC.inputTextureIndex].SampleLevel(
             samplers[hizPC.samplerIndex], uv + float2(-offset.x, -offset.y), hizPC.inputMipLevel).r;

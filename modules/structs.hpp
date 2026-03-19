@@ -152,8 +152,8 @@ struct SSRPushConstants {
     uint32_t normalSamplerIndex;
     glm::uvec2 resolution;
     float maxDistance;       // max ray travel distance in view space
-    float marchResolution;  // 0-1, fraction of pixels to sample in coarse pass
-    uint32_t refinementSteps;    // binary search iterations after coarse hit
+    uint32_t hiZIndex;      // Hi-Z pyramid texture index
+    uint32_t hiZMipLevels;  // number of mip levels in Hi-Z pyramid
     float thickness;        // depth tolerance for hit detection
     float roughnessThreshold; // skip SSR for fragments above this roughness
     float normalMipLevel;     // mip level for normal pre-filtering

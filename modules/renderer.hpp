@@ -179,8 +179,7 @@ class Renderer {
     float                               ssrResolutionScale = 1.0f;
     float                               ssrRoughnessThreshold = 0.6f;
     float                               ssrMaxDistance = 10.0f;
-    float                               ssrMarchResolution = 0.3f;
-    int                                 ssrRefinementSteps = 5;
+    int                                 ssrMaxSteps = 64;
     float                               ssrThickness = 0.5f;
 
   private:
@@ -1006,29 +1005,7 @@ class Renderer {
 
             cmd.endRendering();
 
-            HiZPushConstants hiZConstants = {.inputTextureIndex = hiZTextureIndex,
-                                            .samplerIndex = depthSamplerIndex,
-                                            .inputMipLevel = 0,
-                                            .reduceMode = 0,
-                                            .inputResolution = glm::uvec2(swapchain->getSwapChainExtent().width,
-                                                                          swapchain->getSwapChainExtent().height)
-                                            };
-
-            vk::RenderingInfo hiZRenderingInfo = {.renderArea = {.offset = {0, 0}, .extent = swapchain->getSwapChainExtent()},
-                                                .layerCount = 1,
-                                                .colorAttachmentCount = 0,
-                                                .pColorAttachments = nullptr,
-                                                .pDepthAttachment = &depthPrepassAttachment
-                                                };
-
-            cmd.beginRendering(hiZRenderingInfo);
-            setFullscreenViewport(cmd, swapchain->getSwapChainExtent());
-
-            auto& hiZPipeline = pipelineManager->getBeforeGeoPipelines()[hiZPipelineIndex];
-            bindPipeline(cmd, *hiZPipeline);
-            cmd.pushConstants<HiZPushConstants>(hiZPipeline->layout,vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, hiZConstants);
-            cmd.draw(3,1,0,0);
-            cmd.endRendering();
+            recordHiZPass(cmd);
         }
 
         // --- Lit geometry pass (2 color attachments: color + roughness/metallic) ---
@@ -1243,8 +1220,8 @@ class Renderer {
                              .normalSamplerIndex = defaultSamplerIndex,
                              .resolution = glm::uvec2(ssrExtent.width, ssrExtent.height),
                              .maxDistance = ssrMaxDistance,
-                             .marchResolution = ssrMarchResolution,
-                             .refinementSteps = static_cast<uint32_t>(ssrRefinementSteps),
+                             .hiZIndex = hiZTextureIndex,
+                             .hiZMipLevels = hiZMipLevels,
                              .thickness = ssrThickness,
                              .roughnessThreshold = ssrRoughnessThreshold,
                              .normalMipLevel = std::clamp(std::log2(1.0f / ssrResolutionScale), 0.0f, static_cast<float>(normalMipLevels - 1))},

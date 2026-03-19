@@ -12,12 +12,12 @@ struct SSRPushConstants {
     uint normalIndex;
     uint normalSamplerIndex;
     uint2 resolution;
-    float maxDistance;       // max ray travel distance in view space
-    float marchResolution;  // 0-1, fraction of pixels to sample in coarse pass
-    int refinementSteps;    // binary search iterations after coarse hit
-    float thickness;        // depth tolerance for hit detection
-    float roughnessThreshold; // skip SSR for fragments above this roughness
-    float normalMipLevel;     // mip level for normal pre-filtering
+    float maxDistance;
+    uint hiZIndex;
+    uint hiZMipLevels;
+    float thickness;
+    float roughnessThreshold;
+    float normalMipLevel;
 };
 
 [[vk::push_constant]] SSRPushConstants SSRpc;
@@ -28,7 +28,6 @@ struct VSOutput {
 };
 
 // Project view-space position to UV coordinates
-// Derives projection parameters from inverse projection matrix (same approach as SSAO)
 float2 viewToUV(float3 viewPos) {
     float2 uv;
     uv.x = (viewPos.x / (-viewPos.z) * (1.0 / SSRpc.invProjection[0][0])) * 0.5 + 0.5;
@@ -36,13 +35,14 @@ float2 viewToUV(float3 viewPos) {
     return uv;
 }
 
-// Linearize depth to view-space Z without a full matrix multiply.
-// Extracts projection matrix coefficients from the inverse projection matrix.
+// Linearize depth to view-space Z
 float linearizeDepth(float depth) {
-    // invProj[2][3] = -1/P[3][2], invProj[3][3] = P[2][2]/P[3][2]
-    // viewZ = invProj[2][3] / (depth + invProj[3][3])
-    // For a standard Vulkan [0,1] depth projection this recovers the negative view-space Z.
     return SSRpc.invProjection[2][3] / (SSRpc.invProjection[3][2] * depth + SSRpc.invProjection[3][3]);
+}
+
+// Convert view-space Z back to raw depth value (inverse of linearizeDepth)
+float viewZToDepth(float viewZ) {
+    return (SSRpc.invProjection[2][3] / viewZ - SSRpc.invProjection[3][3]) / SSRpc.invProjection[3][2];
 }
 
 [shader("vertex")]
@@ -55,25 +55,94 @@ VSOutput vertMain(uint vertexID : SV_VertexID) {
     return output;
 }
 
+// Hi-Z ray march: traces a ray through the hierarchical depth buffer.
+// Starts at a coarse mip and refines down to mip 0 when a potential hit is found.
+// Returns: hit UV in .xy, parametric t in .z, hit flag in .w (1.0 = hit)
+float4 traceHiZ(float2 startUV, float2 endUV, float startViewZ, float endViewZ) {
+    float2 rayDir = endUV - startUV;
+    float2 texSize = float2(SSRpc.resolution);
+
+    int maxMip = min(int(SSRpc.hiZMipLevels) - 1, 5);
+    int mip = 0;
+
+    // Minimum step size: one pixel in the dominant ray direction
+    float minStep = 1.0 / max(abs(rayDir.x * texSize.x), abs(rayDir.y * texSize.y));
+    // Nudge the start past the origin pixel to avoid self-intersection
+    float t = minStep * 2.0;
+
+    const int MAX_STEPS = 128;
+
+    for (int i = 0; i < MAX_STEPS; i++) {
+        float2 uv = startUV + rayDir * t;
+
+        if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || t > 1.0)
+            break;
+
+        // Perspective-correct view-space Z at current t
+        float viewZ = (startViewZ * endViewZ) / lerp(endViewZ, startViewZ, t);
+        float rawDepth = viewZToDepth(viewZ);
+
+        // Sample Hi-Z at current mip level
+        float hiZDepth = textures[SSRpc.hiZIndex].SampleLevel(
+            samplers[SSRpc.depthSamplerIndex], uv, float(mip)).r;
+
+        if (rawDepth > hiZDepth && hiZDepth < 1.0) {
+            // Ray is behind the closest surface at this mip level
+            if (mip == 0) {
+                float hitViewZ = linearizeDepth(hiZDepth);
+                float depthDiff = hitViewZ - viewZ;
+                if (depthDiff > 0.0 && depthDiff < SSRpc.thickness) {
+                    return float4(uv, t, 1.0);
+                }
+                // Behind surface but too thick — advance past this pixel
+                t += minStep;
+                mip = min(2, maxMip);
+            } else {
+                mip--;
+            }
+        } else {
+            // Ray is in front of everything in this cell — advance to next cell boundary
+            float cellPixelSize = float(1 << mip);
+            float2 cellCount = texSize / cellPixelSize;
+            float2 cellCoord = uv * cellCount;
+
+            // Next cell boundary in the ray direction
+            // For positive: next boundary ahead is floor(coord) + 1
+            // For negative: next boundary behind is ceil(coord) - 1
+            float2 nextBoundary;
+            nextBoundary.x = rayDir.x > 0 ? floor(cellCoord.x) + 1.0 : ceil(cellCoord.x) - 1.0;
+            nextBoundary.y = rayDir.y > 0 ? floor(cellCoord.y) + 1.0 : ceil(cellCoord.y) - 1.0;
+            float2 boundaryUV = nextBoundary / cellCount;
+
+            // Parametric t at each cell boundary
+            float tX = abs(rayDir.x) > 1e-7 ? (boundaryUV.x - startUV.x) / rayDir.x : 1e30;
+            float tY = abs(rayDir.y) > 1e-7 ? (boundaryUV.y - startUV.y) / rayDir.y : 1e30;
+            float tNext = min(tX, tY);
+
+            // Ensure we always advance forward
+            t = max(tNext + minStep * 0.1, t + minStep);
+
+            // Only go coarser after successfully advancing
+            mip = min(mip + 1, maxMip);
+        }
+    }
+
+    return float4(0, 0, 0, 0);
+}
+
 [shader("fragment")]
 float4 fragMain(VSOutput input) : SV_Target {
-    float maxDistance    = SSRpc.maxDistance;
-    float rayResolution = SSRpc.marchResolution;
-    int   steps         = SSRpc.refinementSteps;
-    float thickness     = SSRpc.thickness;
+    float2 texSize = float2(SSRpc.resolution);
+    float2 uv      = input.texCoord;
 
-    float2 texSize   = float2(SSRpc.resolution);
-    float2 texelSize = 1.0 / texSize;
-    float2 uv        = input.texCoord;
-
-    // Early-out for high roughness surfaces (SSR contributes very little)
+    // Early-out for high roughness surfaces
     float2 roughnessMetal = textures[SSRpc.roughnessMetalIndex].Sample(
         samplers[SSRpc.roughnessMetalSamplerIndex], uv).rg;
     float roughness = roughnessMetal.r;
     float metallic  = roughnessMetal.g;
     if (roughness > SSRpc.roughnessThreshold) return float4(0, 0, 0, 0);
 
-    // Reconstruct view-space position from depth, sample smooth normal from G-buffer
+    // Reconstruct view-space position, sample smooth normal from G-buffer
     float depth = textures[SSRpc.depthIndex].Sample(samplers[SSRpc.depthSamplerIndex], uv).r;
     if (depth >= 1.0) return float4(0, 0, 0, 0);
 
@@ -87,88 +156,33 @@ float4 fragMain(VSOutput input) : SV_Target {
 
     // Ray endpoints in view space
     float3 startView = positionFrom;
-    float3 endView   = positionFrom + pivot * maxDistance;
+    float3 endView   = positionFrom + pivot * SSRpc.maxDistance;
 
-    // Project ray endpoints to screen-space pixel coordinates
-    float2 startFrag = viewToUV(startView) * texSize;
-    float2 endFrag   = viewToUV(endView)   * texSize;
-
-    // Determine march direction along dominant screen axis
-    float2 frag   = startFrag;
-    float deltaX  = endFrag.x - startFrag.x;
-    float deltaY  = endFrag.y - startFrag.y;
-    float useX    = abs(deltaX) >= abs(deltaY) ? 1.0 : 0.0;
-    float delta   = lerp(abs(deltaY), abs(deltaX), useX) * clamp(rayResolution, 0.0, 1.0);
-    float2 increment = float2(deltaX, deltaY) / max(delta, 0.001);
-
-    float search0  = 0.0;
-    float search1  = 0.0;
-    int   hit0     = 0;
-    int   hit1     = 0;
-    float viewDistance;
-    float depthDiff = 0.0;
-
-    // ---- Coarse pass: march along the ray in screen space ----
-    // Pre-compute view-space thickness for comparison (thickness is in view units)
-    for (int i = 0; i < int(delta); ++i) {
-        frag += increment;
-        float2 sampleUV = frag / texSize;
-
-        if (sampleUV.x < 0.0 || sampleUV.x > 1.0 ||
-            sampleUV.y < 0.0 || sampleUV.y > 1.0) break;
-
-        float sampleDepth = textures[SSRpc.depthIndex].Sample(
-            samplers[SSRpc.depthSamplerIndex], sampleUV).r;
-        if (sampleDepth >= 1.0) continue;
-
-        float sampleViewZ = linearizeDepth(sampleDepth);
-
-        search1 = lerp(
-            (frag.y - startFrag.y) / deltaY,
-            (frag.x - startFrag.x) / deltaX,
-            useX
-        );
-        search1 = clamp(search1, 0.0, 1.0);
-
-        // Perspective-correct interpolation of view-space Z
-        viewDistance = (startView.z * endView.z) / lerp(endView.z, startView.z, search1);
-        depthDiff = sampleViewZ - viewDistance;
-
-        if (depthDiff > 0.0 && depthDiff < thickness) {
-            hit0 = 1;
-            break;
-        } else {
-            search0 = search1;
-        }
+    // Clip ray endpoint to stay in front of camera (avoids mirrored UV projection)
+    if (endView.z > -0.01) {
+        float clipT = (-0.01 - startView.z) / (endView.z - startView.z);
+        endView = startView + (endView - startView) * clipT;
     }
 
-    // ---- Refinement pass: binary search around coarse hit ----
-    search1 = search0 + ((search1 - search0) / 2.0);
-    int refinementSteps = steps * hit0;
-    float2 finalUV = frag / texSize;
+    // Project to UV space
+    float2 startUV = viewToUV(startView);
+    float2 endUV   = viewToUV(endView);
 
-    for (int j = 0; j < refinementSteps; ++j) {
-        frag    = lerp(startFrag, endFrag, search1);
-        finalUV = frag / texSize;
+    // Hi-Z trace
+    float4 traceResult = traceHiZ(startUV, endUV, startView.z, endView.z);
+    float2 finalUV = traceResult.xy;
+    float  search1 = traceResult.z;
+    bool   hit     = traceResult.w > 0.5;
 
-        float sampleDepth = textures[SSRpc.depthIndex].Sample(
-            samplers[SSRpc.depthSamplerIndex], finalUV).r;
-        float sampleViewZ = linearizeDepth(sampleDepth);
+    if (!hit) return float4(0, 0, 0, 0);
 
-        viewDistance = (startView.z * endView.z) / lerp(endView.z, startView.z, search1);
-        depthDiff = sampleViewZ - viewDistance;
+    // Compute depth difference at hit for fade
+    float hitDepth = textures[SSRpc.depthIndex].Sample(samplers[SSRpc.depthSamplerIndex], finalUV).r;
+    float hitViewZ = linearizeDepth(hitDepth);
+    float viewZ = (startView.z * endView.z) / lerp(endView.z, startView.z, search1);
+    float depthDiff = hitViewZ - viewZ;
 
-        if (depthDiff > 0.0 && depthDiff < thickness) {
-            hit1 = 1;
-            search1 = search0 + ((search1 - search0) / 2.0);
-        } else {
-            float temp = search1;
-            search1 = search1 + ((search1 - search0) / 2.0);
-            search0 = temp;
-        }
-    }
-
-    // Fresnel-based reflectivity: even dielectrics reflect strongly at grazing angles
+    // Fresnel-based reflectivity
     float3 viewDir = -unitPositionFrom;
     float NdotV = max(dot(normal, viewDir), 0.0);
     float F0 = lerp(0.04, 1.0, metallic);
@@ -176,10 +190,9 @@ float4 fragMain(VSOutput input) : SV_Target {
     float reflectivity = fresnel * (1.0 - roughness);
 
     // Visibility with multiple fade factors
-    float visibility = float(hit1)
-        * reflectivity
+    float visibility = reflectivity
         * (1.0 - max(dot(-unitPositionFrom, pivot), 0.0))    // fade reflections pointing toward camera
-        * (1.0 - clamp(depthDiff / thickness, 0.0, 1.0))     // fade at depth boundary
+        * (1.0 - clamp(depthDiff / SSRpc.thickness, 0.0, 1.0)) // fade at depth boundary
         * (1.0 - clamp(search1, 0.0, 1.0))                   // distance fade along ray
         * (finalUV.x < 0.0 || finalUV.x > 1.0 ? 0.0 : 1.0)  // screen edge cull
         * (finalUV.y < 0.0 || finalUV.y > 1.0 ? 0.0 : 1.0);
