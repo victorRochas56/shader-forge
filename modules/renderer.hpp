@@ -49,6 +49,7 @@ main rendering engine holds the state of the scene, nodes, meshes, lights, mater
 handles vulkan initialization and the main render loop
 */
 
+// TODO if an image has mips, allow them to be viewed in the image viewer
 // TODO gpu side material data
 // with a vis-buffer
 const std::vector validationLayers = {"VK_LAYER_KHRONOS_validation"};
@@ -161,6 +162,12 @@ class Renderer {
     uint32_t                            ssrApplyPipelineIndex = 0xFFFFFFFF;
     uint32_t                            colorResolveTextureIndex = 0xFFFFFFFF;
 
+    // Hi-Z (hierarchical depth pyramid)
+    uint32_t                            hiZTextureIndex = 0xFFFFFFFF;
+    uint32_t                            hiZMipLevels = 0;
+    uint32_t                            hiZPipelineIndex = 0xFFFFFFFF;
+    std::vector<vk::raii::ImageView>    hiZMipViews;
+
   public:
     bool                                enableSSAO = true;
     float                               ssaoRadius = 0.3f;
@@ -256,6 +263,7 @@ class Renderer {
         createNormalResources(startWidth, startHeight);
         createColorResolveResources(startWidth, startHeight);
         createSSRResources(ssrW, ssrH);
+        createHiZResources(startWidth, startHeight);
         createSyncObjects();
 
 #if DEBUG == 1
@@ -483,6 +491,7 @@ class Renderer {
             createNormalResources(width, height);
             createColorResolveResources(width, height);
             createSSRResources(ssrW, ssrH);
+            createHiZResources(width, height);
         }
         activeCamera.aspectRatio = static_cast<float>(width) / static_cast<float>(height);
         activeCamera.calculateViewProjectionMatrix();
@@ -717,6 +726,96 @@ class Renderer {
         }
     }
 
+    void createHiZResources(uint32_t width, uint32_t height) {
+        hiZMipViews.clear();
+
+        // Calculate mip levels for the Hi-Z pyramid
+        hiZMipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(width, height)))) + 1;
+
+        // Free previous Hi-Z texture if it exists
+        if (hiZTextureIndex != 0xFFFFFFFF) {
+            descriptorSet->freeTexture(hiZTextureIndex);
+        }
+
+        // Create mipmapped R32Sfloat image
+        vk::raii::Image image = nullptr;
+        vk::raii::DeviceMemory memory = nullptr;
+        resourceManager->createImage(width, height, hiZMipLevels, vk::SampleCountFlagBits::e1, vk::Format::eR32Sfloat, vk::ImageTiling::eOptimal,
+                                     vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
+                                     vk::MemoryPropertyFlagBits::eDeviceLocal, image, memory);
+
+        // Create per-mip image views for rendering to individual levels
+        for (uint32_t mip = 0; mip < hiZMipLevels; ++mip) {
+            vk::ImageViewCreateInfo viewInfo{.image = image,
+                                             .viewType = vk::ImageViewType::e2D,
+                                             .format = vk::Format::eR32Sfloat,
+                                             .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor, .baseMipLevel = mip, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1}};
+            hiZMipViews.emplace_back(device->getDevice(), viewInfo);
+        }
+
+        // Create a full-chain view for sampling
+        auto fullView = resourceManager->createImageView(image, vk::Format::eR32Sfloat, vk::ImageAspectFlagBits::eColor, hiZMipLevels);
+        resourceManager->transitionImageLayout(nullptr, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal, 0, hiZMipLevels);
+        hiZTextureIndex = descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(fullView), "internal/hiZ", false, width, height);
+
+        // Hi-Z pipeline (only created once)
+        if (hiZPipelineIndex == 0xFFFFFFFF) {
+            hiZPipelineIndex = pipelineManager->createPipeline<HiZPushConstants>(
+                PipelineCategory::BEFORE_GEOMETRY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone,
+                vk::False, vk::False, "shaders/hiz_reduce.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
+        }
+    }
+
+    void recordHiZPass(vk::raii::CommandBuffer& cmd) {
+        if (hiZTextureIndex == 0xFFFFFFFF || hiZPipelineIndex == 0xFFFFFFFF) return;
+
+        auto& hiZRes = descriptorSet->getTextureResource(hiZTextureIndex);
+        auto& pipeline = *pipelineManager->getBeforeGeoPipelines()[hiZPipelineIndex];
+        uint32_t w = hiZRes.width;
+        uint32_t h = hiZRes.height;
+
+        // Transition depth resolve to shader read for sampling
+        resourceManager->transitionImageLayout(&cmd, *descriptorSet->getTextureResource(swapchain->getDepthResolveIndex()).image,
+            vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+
+        for (uint32_t mip = 0; mip < hiZMipLevels; ++mip) {
+            uint32_t mipW = std::max(1u, w >> mip);
+            uint32_t mipH = std::max(1u, h >> mip);
+
+            // Transition this mip to color attachment
+            resourceManager->transitionImageLayout(&cmd, *hiZRes.image,
+                vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal, mip, 1);
+
+            HiZPushConstants hizPC;
+            if (mip == 0) {
+                // Mip 0: copy from depth resolve
+                hizPC = {.inputTextureIndex = swapchain->getDepthResolveIndex(),
+                         .samplerIndex = depthSamplerIndex,
+                         .inputMipLevel = 0,
+                         .reduceMode = 0,
+                         .inputResolution = glm::uvec2(mipW, mipH)};
+            } else {
+                // Mip N: min-reduce from mip N-1 of the Hi-Z texture itself
+                hizPC = {.inputTextureIndex = hiZTextureIndex,
+                         .samplerIndex = depthSamplerIndex,
+                         .inputMipLevel = mip - 1,
+                         .reduceMode = 1,
+                         .inputResolution = glm::uvec2(std::max(1u, w >> (mip - 1)), std::max(1u, h >> (mip - 1)))};
+            }
+
+            vk::Extent2D mipExtent{mipW, mipH};
+            drawFullscreenPass(cmd, pipeline, *hiZMipViews[mip], mipExtent, hizPC);
+
+            // Transition this mip back to shader read
+            resourceManager->transitionImageLayout(&cmd, *hiZRes.image,
+                vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, mip, 1);
+        }
+
+        // Transition depth resolve back to depth attachment
+        resourceManager->transitionImageLayout(&cmd, *descriptorSet->getTextureResource(swapchain->getDepthResolveIndex()).image,
+            vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
+    }
+
     void createSyncObjects() {
         presentCompleteSemaphores.clear();
         renderFinishedSemaphores.clear();
@@ -905,6 +1004,30 @@ class Renderer {
             cmd.pushConstants<LitPushConstants>(depthPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pushConstants);
             cmd.drawIndexedIndirect(*litIndirectDrawBuffer, frameByteOffset, static_cast<uint32_t>(indirectCommands.size()), sizeof(DrawIndexedIndirectCommand));
 
+            cmd.endRendering();
+
+            HiZPushConstants hiZConstants = {.inputTextureIndex = hiZTextureIndex,
+                                            .samplerIndex = depthSamplerIndex,
+                                            .inputMipLevel = 0,
+                                            .reduceMode = 0,
+                                            .inputResolution = glm::uvec2(swapchain->getSwapChainExtent().width,
+                                                                          swapchain->getSwapChainExtent().height)
+                                            };
+
+            vk::RenderingInfo hiZRenderingInfo = {.renderArea = {.offset = {0, 0}, .extent = swapchain->getSwapChainExtent()},
+                                                .layerCount = 1,
+                                                .colorAttachmentCount = 0,
+                                                .pColorAttachments = nullptr,
+                                                .pDepthAttachment = &depthPrepassAttachment
+                                                };
+
+            cmd.beginRendering(hiZRenderingInfo);
+            setFullscreenViewport(cmd, swapchain->getSwapChainExtent());
+
+            auto& hiZPipeline = pipelineManager->getBeforeGeoPipelines()[hiZPipelineIndex];
+            bindPipeline(cmd, *hiZPipeline);
+            cmd.pushConstants<HiZPushConstants>(hiZPipeline->layout,vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, hiZConstants);
+            cmd.draw(3,1,0,0);
             cmd.endRendering();
         }
 
@@ -1099,13 +1222,14 @@ class Renderer {
         auto& ssrTexture = descriptorSet->getTextureResource(ssrTextureIndex);
         vk::Extent2D ssrExtent{ssrTexture.width, ssrTexture.height};
 
-        // Transition depth to readable, SSR target to color attachment
+        // transition depth to readable
         resourceManager->transitionImageLayout(&cmd, swapchain->getDepthImage(),
             vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+        // transition SSR target to color attachment
         resourceManager->transitionImageLayout(&cmd, *ssrTexture.image,
             vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
 
-        // Render SSR at (potentially lower) SSR resolution
+        // Render SSR at SSR resolution
         drawFullscreenPass(cmd, *pipelineManager->getPostProcessPipelines()[ssrPipelineIndex], *ssrTexture.imageView, ssrExtent,
             SSRPushConstants{.invProjection = glm::inverse(activeCamera.projectionMatrix),
                              .viewMatrix = activeCamera.viewMatrix,
@@ -1128,12 +1252,12 @@ class Renderer {
 
         resourceManager->transitionImageLayout(&cmd, *ssrTexture.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
 
-        // Apply to swapchain at full resolution (sampler handles upscale)
+        // apply to swapchain at full resolution
         drawFullscreenPass(cmd, *pipelineManager->getPostProcessPipelines()[ssrApplyPipelineIndex], *swapchain->getSwapChainImageViews()[imageIndex], swapExtent,
             SSRApplyPushConstants{.ssrTextureIndex = ssrTextureIndex, .samplerIndex = defaultSamplerIndex, .sceneColorIndex = colorResolveTextureIndex, .sceneSamplerIndex = defaultSamplerIndex},
             vk::AttachmentLoadOp::eLoad);
 
-        // Transition depth back
+        // transition depth back
         resourceManager->transitionImageLayout(&cmd, swapchain->getDepthImage(), vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
     }
 

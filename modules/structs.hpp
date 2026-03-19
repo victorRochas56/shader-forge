@@ -159,6 +159,15 @@ struct SSRPushConstants {
     float normalMipLevel;     // mip level for normal pre-filtering
 };
 
+struct HiZPushConstants {
+    uint32_t    inputTextureIndex;
+    uint32_t    samplerIndex;
+    uint32_t    inputMipLevel;
+    uint32_t    reduceMode; // 0 = copy from depth, 1 = 2x2 min reduction
+    glm::uvec2  inputResolution;
+    uint32_t padding0;
+    uint32_t padding1;
+};
 
 struct SSAOApplyPushConstants {
     uint32_t ssaoTextureIndex;
