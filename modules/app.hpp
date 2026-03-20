@@ -29,7 +29,7 @@
 
 class App {
   public:
-    uint32_t start_width = 800, start_height = 600;
+    uint32_t start_width = 640, start_height = 360;
 
     void run() {
         initWindow();

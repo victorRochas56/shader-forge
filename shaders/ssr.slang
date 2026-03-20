@@ -3,6 +3,7 @@ import modules.common;
 struct SSRPushConstants {
     float4x4 invProjection;
     float4x4 viewMatrix;
+    float4x4 projection;
     uint depthIndex;
     uint depthSamplerIndex;
     uint colorIndex;
@@ -18,6 +19,10 @@ struct SSRPushConstants {
     float thickness;
     float roughnessThreshold;
     float normalMipLevel;
+    int maxSteps;
+    int padding0;
+    int padding1;
+    int padding2;
 };
 
 [[vk::push_constant]] SSRPushConstants SSRpc;
@@ -58,71 +63,86 @@ VSOutput vertMain(uint vertexID : SV_VertexID) {
 // Hi-Z ray march: traces a ray through the hierarchical depth buffer.
 // Starts at a coarse mip and refines down to mip 0 when a potential hit is found.
 // Returns: hit UV in .xy, parametric t in .z, hit flag in .w (1.0 = hit)
-float4 traceHiZ(float2 startUV, float2 endUV, float startViewZ, float endViewZ) {
-    float2 rayDir = endUV - startUV;
+float4 traceHiZ(float3 startView, float3 endView)
+{
+    float4x4 projection = SSRpc.projection;
+    
     float2 texSize = float2(SSRpc.resolution);
 
-    int maxMip = min(int(SSRpc.hiZMipLevels) - 1, 5);
-    int mip = 0;
+    // Project endpoints to UV
+    float4 clipStart = mul(projection, float4(startView, 1.0));
+    float4 clipEnd   = mul(projection, float4(endView,   1.0));
 
-    // Minimum step size: one pixel in the dominant ray direction
+    float2 startUV = clipStart.xy / clipStart.w * 0.5 + 0.5;
+    float2 endUV   = clipEnd.xy   / clipEnd.w   * 0.5 + 0.5;
+
+    float2 rayDir = endUV - startUV;
+
+    int maxMip = min(int(SSRpc.hiZMipLevels) - 1, 5);
+    int mip = min(2, maxMip);
+
     float minStep = 1.0 / max(abs(rayDir.x * texSize.x), abs(rayDir.y * texSize.y));
-    // Nudge the start past the origin pixel to avoid self-intersection
     float t = minStep * 2.0;
 
-    const int MAX_STEPS = 128;
-
-    for (int i = 0; i < MAX_STEPS; i++) {
+    for (int i = 0; i < SSRpc.maxSteps; i++)
+    {
         float2 uv = startUV + rayDir * t;
 
         if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || t > 1.0)
             break;
 
-        // Perspective-correct view-space Z at current t
-        float viewZ = (startViewZ * endViewZ) / lerp(endViewZ, startViewZ, t);
-        float rawDepth = viewZToDepth(viewZ);
+        // Perspective-correct interpolation of view-space position
+        float viewZ = (startView.z * endView.z) / lerp(endView.z, startView.z, t);
+        float3 rayPos = lerp(startView, endView, t);
+        rayPos.z = viewZ;
 
-        // Sample Hi-Z at current mip level
-        float hiZDepth = textures[SSRpc.hiZIndex].SampleLevel(
-            samplers[SSRpc.depthSamplerIndex], uv, float(mip)).r;
+        // Sample Hi-Z depth
+        float hiZDepth = textures[SSRpc.hiZIndex]
+            .SampleLevel(samplers[SSRpc.depthSamplerIndex], uv, float(mip)).r;
 
-        if (rawDepth > hiZDepth && hiZDepth < 1.0) {
-            // Ray is behind the closest surface at this mip level
-            if (mip == 0) {
-                float hitViewZ = linearizeDepth(hiZDepth);
-                float depthDiff = hitViewZ - viewZ;
-                if (depthDiff > 0.0 && depthDiff < SSRpc.thickness) {
+        // Reconstruct view-space position at sampled depth
+        float3 samplePos = reconstructViewPos(uv, hiZDepth, SSRpc.invProjection);
+
+        float depthDiff = samplePos.z - rayPos.z;
+
+        if (depthDiff > 0.0 && hiZDepth < 1.0)
+        {
+            // Potential hit
+            if (mip == 0)
+            {
+                if (depthDiff < SSRpc.thickness)
+                {
                     return float4(uv, t, 1.0);
                 }
-                // Behind surface but too thick — advance past this pixel
+
+                // Too far behind surface → advance
                 t += minStep;
                 mip = min(2, maxMip);
-            } else {
+            }
+            else
+            {
                 mip--;
             }
-        } else {
-            // Ray is in front of everything in this cell — advance to next cell boundary
-            float cellPixelSize = float(1 << mip);
-            float2 cellCount = texSize / cellPixelSize;
+        }
+        else
+        {
+            // Advance to next cell boundary
+            float cellSize = float(1 << mip);
+            float2 cellCount = texSize / cellSize;
             float2 cellCoord = uv * cellCount;
 
-            // Next cell boundary in the ray direction
-            // For positive: next boundary ahead is floor(coord) + 1
-            // For negative: next boundary behind is ceil(coord) - 1
             float2 nextBoundary;
             nextBoundary.x = rayDir.x > 0 ? floor(cellCoord.x) + 1.0 : ceil(cellCoord.x) - 1.0;
             nextBoundary.y = rayDir.y > 0 ? floor(cellCoord.y) + 1.0 : ceil(cellCoord.y) - 1.0;
+
             float2 boundaryUV = nextBoundary / cellCount;
 
-            // Parametric t at each cell boundary
-            float tX = abs(rayDir.x) > 1e-7 ? (boundaryUV.x - startUV.x) / rayDir.x : 1e30;
-            float tY = abs(rayDir.y) > 1e-7 ? (boundaryUV.y - startUV.y) / rayDir.y : 1e30;
+            float tX = abs(rayDir.x) > 1e-6 ? (boundaryUV.x - startUV.x) / rayDir.x : 1e30;
+            float tY = abs(rayDir.y) > 1e-6 ? (boundaryUV.y - startUV.y) / rayDir.y : 1e30;
+
             float tNext = min(tX, tY);
 
-            // Ensure we always advance forward
             t = max(tNext + minStep * 0.1, t + minStep);
-
-            // Only go coarser after successfully advancing
             mip = min(mip + 1, maxMip);
         }
     }
@@ -169,7 +189,7 @@ float4 fragMain(VSOutput input) : SV_Target {
     float2 endUV   = viewToUV(endView);
 
     // Hi-Z trace
-    float4 traceResult = traceHiZ(startUV, endUV, startView.z, endView.z);
+    float4 traceResult = traceHiZ(startView, endView);
     float2 finalUV = traceResult.xy;
     float  search1 = traceResult.z;
     bool   hit     = traceResult.w > 0.5;

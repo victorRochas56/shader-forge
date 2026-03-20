@@ -1210,6 +1210,7 @@ class Renderer {
         drawFullscreenPass(cmd, *pipelineManager->getPostProcessPipelines()[ssrPipelineIndex], *ssrTexture.imageView, ssrExtent,
             SSRPushConstants{.invProjection = glm::inverse(activeCamera.projectionMatrix),
                              .viewMatrix = activeCamera.viewMatrix,
+                             .projection = activeCamera.projectionMatrix,
                              .depthIndex = swapchain->getDepthResolveIndex(),
                              .depthSamplerIndex = depthSamplerIndex,
                              .colorIndex = colorResolveTextureIndex,
@@ -1224,7 +1225,8 @@ class Renderer {
                              .hiZMipLevels = hiZMipLevels,
                              .thickness = ssrThickness,
                              .roughnessThreshold = ssrRoughnessThreshold,
-                             .normalMipLevel = std::clamp(std::log2(1.0f / ssrResolutionScale), 0.0f, static_cast<float>(normalMipLevels - 1))},
+                             .normalMipLevel = std::clamp(std::log2(1.0f / ssrResolutionScale), 0.0f, static_cast<float>(normalMipLevels - 1)),
+                             .maxSteps = ssrMaxSteps},
             vk::AttachmentLoadOp::eClear, {1.0f, 1.0f, 1.0f, 1.0f});
 
         resourceManager->transitionImageLayout(&cmd, *ssrTexture.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);

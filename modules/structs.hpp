@@ -142,6 +142,7 @@ struct SSAOPushConstants {
 struct SSRPushConstants {
     glm::mat4 invProjection;
     glm::mat4 viewMatrix;
+    glm::mat4 projection;
     uint32_t depthIndex;
     uint32_t depthSamplerIndex;
     uint32_t colorIndex;
@@ -157,6 +158,10 @@ struct SSRPushConstants {
     float thickness;        // depth tolerance for hit detection
     float roughnessThreshold; // skip SSR for fragments above this roughness
     float normalMipLevel;     // mip level for normal pre-filtering
+    int maxSteps;             // max ray march iterations*
+    int padding0;
+    int padding1;
+    int padding2;
 };
 
 struct HiZPushConstants {
