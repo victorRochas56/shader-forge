@@ -214,7 +214,7 @@ class Renderer {
                               .fov = 45.0,
                               .aspectRatio = static_cast<float>(startWidth) / static_cast<float>(startHeight),
                               .nearPlane = 0.1,
-                              .farPlane = 100.0};
+                              .farPlane = 500.0};
         activeCamera.calculateViewProjectionMatrix();
 
         /////=====================================DESCRIPTOR SET BUFFERS=================================================/////
@@ -357,6 +357,18 @@ class Renderer {
     // main render loop
     void drawFrame() {
         device->getDevice().waitForFences(*inFlightFences[currentFrame], vk::True, UINT64_MAX);
+
+        if (ssrResolutionDirty) {
+            ssrResolutionDirty = false;
+            device->getDevice().waitIdle();
+            int w = 0, h = 0;
+            glfwGetFramebufferSize(window, &w, &h);
+            if (w > 0 && h > 0) {
+                uint32_t ssrW = std::max(1u, static_cast<uint32_t>(w * ssrResolutionScale));
+                uint32_t ssrH = std::max(1u, static_cast<uint32_t>(h * ssrResolutionScale));
+                createSSRResources(ssrW, ssrH);
+            }
+        }
 
         auto [result, imageIndex] = swapchain->getSwapChain().acquireNextImage(UINT64_MAX, *presentCompleteSemaphores[currentFrame], nullptr);
 
@@ -505,6 +517,8 @@ class Renderer {
     
     void toggleSSAO() { enableSSAO = !enableSSAO; }
     void toggleSSR() { enableSSR = !enableSSR; }
+
+    bool ssrResolutionDirty = false;
     
     void toggleBBOXes() { showBBOXes = !showBBOXes; }
     
@@ -1208,9 +1222,9 @@ class Renderer {
 
         // Render SSR at SSR resolution
         drawFullscreenPass(cmd, *pipelineManager->getPostProcessPipelines()[ssrPipelineIndex], *ssrTexture.imageView, ssrExtent,
-            SSRPushConstants{.invProjection = glm::inverse(activeCamera.projectionMatrix),
-                             .viewMatrix = activeCamera.viewMatrix,
-                             .projection = activeCamera.projectionMatrix,
+            SSRPushConstants{.invViewProj = glm::inverse(activeCamera.viewProjection),
+                             .viewProj = activeCamera.viewProjection,
+                             .cameraPos = activeCamera.position,
                              .depthIndex = swapchain->getDepthResolveIndex(),
                              .depthSamplerIndex = depthSamplerIndex,
                              .colorIndex = colorResolveTextureIndex,
@@ -1219,13 +1233,13 @@ class Renderer {
                              .roughnessMetalSamplerIndex = defaultSamplerIndex,
                              .normalIndex = normalTextureIndex,
                              .normalSamplerIndex = defaultSamplerIndex,
-                             .resolution = glm::uvec2(ssrExtent.width, ssrExtent.height),
+                             .resolution = glm::uvec2(descriptorSet->getTextureResource(hiZTextureIndex).width,
+                                              descriptorSet->getTextureResource(hiZTextureIndex).height),
                              .maxDistance = ssrMaxDistance,
                              .hiZIndex = hiZTextureIndex,
                              .hiZMipLevels = hiZMipLevels,
                              .thickness = ssrThickness,
                              .roughnessThreshold = ssrRoughnessThreshold,
-                             .normalMipLevel = std::clamp(std::log2(1.0f / ssrResolutionScale), 0.0f, static_cast<float>(normalMipLevels - 1)),
                              .maxSteps = ssrMaxSteps},
             vk::AttachmentLoadOp::eClear, {1.0f, 1.0f, 1.0f, 1.0f});
 

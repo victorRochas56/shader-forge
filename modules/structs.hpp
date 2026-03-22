@@ -140,9 +140,9 @@ struct SSAOPushConstants {
 };
 
 struct SSRPushConstants {
-    glm::mat4 invProjection;
-    glm::mat4 viewMatrix;
-    glm::mat4 projection;
+    glm::mat4 invViewProj;
+    glm::mat4 viewProj;
+    glm::vec3 cameraPos;
     uint32_t depthIndex;
     uint32_t depthSamplerIndex;
     uint32_t colorIndex;
@@ -151,17 +151,14 @@ struct SSRPushConstants {
     uint32_t roughnessMetalSamplerIndex;
     uint32_t normalIndex;
     uint32_t normalSamplerIndex;
+    uint32_t _pad_resolution;   // align uvec2 to 8 bytes (std430)
     glm::uvec2 resolution;
     float maxDistance;       // max ray travel distance in view space
     uint32_t hiZIndex;      // Hi-Z pyramid texture index
     uint32_t hiZMipLevels;  // number of mip levels in Hi-Z pyramid
     float thickness;        // depth tolerance for hit detection
     float roughnessThreshold; // skip SSR for fragments above this roughness
-    float normalMipLevel;     // mip level for normal pre-filtering
-    int maxSteps;             // max ray march iterations*
-    int padding0;
-    int padding1;
-    int padding2;
+    int maxSteps;             // max ray march iterations
 };
 
 struct HiZPushConstants {

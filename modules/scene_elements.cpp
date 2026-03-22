@@ -527,6 +527,17 @@ void calculateCascadedLightSpaceMatrices(Light& light, Camera& camera, Renderer*
             lsMax = glm::max(lsMax, ls);
         }
 
+        float extentX = lsMax.x - lsMin.x;
+        float extentY = lsMax.y - lsMin.y;
+        float maxExtent = glm::max(extentX, extentY);
+
+        // Expand AABB for cascade overlap
+        float overlapMargin = maxExtent * 0.1f;
+        lsMin.x -= overlapMargin;
+        lsMin.y -= overlapMargin;
+        lsMax.x += overlapMargin;
+        lsMax.y += overlapMargin;
+
         // Near=0.1 captures shadow casters between the light eye and the frustum.
         // Far extends just past the farthest frustum corner in light space.
         float orthoNear = 0.1f;
@@ -537,10 +548,6 @@ void calculateCascadedLightSpaceMatrices(Light& light, Camera& camera, Renderer*
             lsMin.y, lsMax.y,
             orthoNear, orthoFar
         );
-
-        float extentX = lsMax.x - lsMin.x;
-        float extentY = lsMax.y - lsMin.y;
-        float maxExtent = glm::max(extentX, extentY);
 
         light.cascades[i].lightSpaceMatrix = lightProj * lightView;
         light.cascades[i].texelSize = 1.0f / static_cast<float>(light.shadowResolution);

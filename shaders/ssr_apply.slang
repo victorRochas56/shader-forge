@@ -20,7 +20,6 @@ VSOutput vertMain(uint vertexID : SV_VertexID) {
     VSOutput output;
     float2 uv = float2((vertexID << 1) & 2, vertexID & 2);
     output.texCoord = uv;
-    output.texCoord.y = 1.0 - output.texCoord.y;
     output.position = float4(uv * 2.0 - 1.0, 0.0, 1.0);
     return output;
 }
@@ -28,6 +27,7 @@ VSOutput vertMain(uint vertexID : SV_VertexID) {
 [shader("fragment")]
 float4 fragMain(VSOutput input) : SV_Target {
     float4 ssr = textures[pc.ssrTextureIndex].Sample(samplers[pc.samplerIndex], input.texCoord);
-    float3 sceneColor = textures[pc.sceneColorIndex].Sample(samplers[pc.sceneSamplerIndex], float2(input.texCoord.x, 1.0 - input.texCoord.y)).rgb;
-    return float4(sceneColor + ssr.rgb, 1.0);
+    float3 sceneColor = textures[pc.sceneColorIndex].Sample(samplers[pc.sceneSamplerIndex], input.texCoord).rgb;
+    float3 result = lerp(sceneColor, ssr.rgb, ssr.a);
+    return float4(result, 1.0);
 }
