@@ -1,3 +1,5 @@
+#pragma once
+#include "gui.hpp"
 #include "scene_elements.hpp"
 #include "input.hpp"
 #include "renderer.hpp"
@@ -421,6 +423,7 @@ void Node::showMeshInfo() {
         InputManager::getInstance().canMove = false;
         ImGui::SetNextItemWidth(160);
         ImGui::InputText("mesh source", textBuffer, sizeof(textBuffer));
+        browseButton("mesh",textBuffer,sizeof(textBuffer));
 
         if (ImGui::Button("Confirm")) {
             // remove old mesh from render queue for shader
