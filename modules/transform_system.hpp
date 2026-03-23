@@ -1,0 +1,74 @@
+#pragma once
+#include "scene_elements.hpp"
+#include "descriptor_sets.hpp"
+#include "structs.hpp"
+#include <map>
+
+class AssetManager;
+
+namespace TransformSystem {
+
+    // Recompute world transforms for a node and all descendants (pure math, no GPU)
+    inline void recomputeTransforms(Node& node) {
+        node.localTransform = makeTransform(node.relativePosition, node.relativeRotation, node.relativeScale);
+        if (node.parent != nullptr) {
+            node.worldTransform = node.parent->worldTransform * node.localTransform;
+            glm::quat worldRotation = node.parent->getWorldRotation() * node.relativeRotation;
+            node.worldRotationEuler = glm::eulerAngles(worldRotation);
+        } else {
+            node.worldTransform = node.localTransform;
+            node.worldRotationEuler = glm::eulerAngles(node.relativeRotation);
+        }
+
+        for (Node* child : node.children) {
+            recomputeTransforms(*child);
+        }
+    }
+
+    // Sync a node's world transform to GPU buffers, update light direction, and recompute bounding box
+    template<typename MeshArray>
+    void syncToGPU(Node& node, DescriptorSet& ds, uint32_t modelMatrixBufferIndex,
+                   const MeshArray& meshes, std::map<uint32_t, Light>& lights) {
+        // Update model matrix for all frames
+        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            ds.updateFixedBufferWithOffset(modelMatrixBufferIndex, node.modelMatrixIndices[i], node.worldTransform, i);
+        }
+
+        // Update light direction if node has a light
+        if (node.lightIndex != MAX_LIGHTS && lights.contains(node.lightIndex)) {
+            lights[node.lightIndex].direction = glm::normalize(node.worldTransform[0]);
+        }
+
+        // Update world-space bounding box if node has a mesh
+        if (node.meshIndex < meshes.size() && node.boundingBoxValid) {
+            const auto& mesh = meshes[node.meshIndex];
+            glm::vec3 corners[8] = {
+                glm::vec3(mesh.boundingBoxMin.x, mesh.boundingBoxMin.y, mesh.boundingBoxMin.z), glm::vec3(mesh.boundingBoxMax.x, mesh.boundingBoxMin.y, mesh.boundingBoxMin.z),
+                glm::vec3(mesh.boundingBoxMin.x, mesh.boundingBoxMax.y, mesh.boundingBoxMin.z), glm::vec3(mesh.boundingBoxMax.x, mesh.boundingBoxMax.y, mesh.boundingBoxMin.z),
+                glm::vec3(mesh.boundingBoxMin.x, mesh.boundingBoxMin.y, mesh.boundingBoxMax.z), glm::vec3(mesh.boundingBoxMax.x, mesh.boundingBoxMin.y, mesh.boundingBoxMax.z),
+                glm::vec3(mesh.boundingBoxMin.x, mesh.boundingBoxMax.y, mesh.boundingBoxMax.z), glm::vec3(mesh.boundingBoxMax.x, mesh.boundingBoxMax.y, mesh.boundingBoxMax.z)};
+
+            node.boundingBoxMin = glm::vec3(std::numeric_limits<float>::max());
+            node.boundingBoxMax = glm::vec3(std::numeric_limits<float>::lowest());
+
+            for (const auto& corner : corners) {
+                glm::vec3 worldCorner = glm::vec3(node.worldTransform * glm::vec4(corner, 1.0f));
+                node.boundingBoxMin = glm::min(node.boundingBoxMin, worldCorner);
+                node.boundingBoxMax = glm::max(node.boundingBoxMax, worldCorner);
+            }
+        }
+
+        for (Node* child : node.children) {
+            syncToGPU(*child, ds, modelMatrixBufferIndex, meshes, lights);
+        }
+    }
+
+    // Full update: recompute transforms then sync to GPU (replaces Node::update())
+    template<typename MeshArray>
+    void updateAll(Node& node, DescriptorSet& ds, uint32_t modelMatrixBufferIndex,
+                   const MeshArray& meshes, std::map<uint32_t, Light>& lights) {
+        recomputeTransforms(node);
+        syncToGPU(node, ds, modelMatrixBufferIndex, meshes, lights);
+    }
+
+}

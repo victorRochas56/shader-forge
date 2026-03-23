@@ -43,6 +43,7 @@
 #include "raycast.hpp"
 #include "scene_graph.hpp"
 #include "utils.hpp"
+#include "node_ops.hpp"
 
 /*
 main rendering engine holds the state of the scene, nodes, meshes, lights, materials etc...
@@ -393,7 +394,7 @@ class Renderer {
         for (auto& [id, light] : lights) {
             if (light.castsShadows == 1) {
                 if (light.type == LightType::Directional) {
-                    calculateCascadedLightSpaceMatrices(light, activeCamera, this);
+                    NodeOps::calculateCascadedLightSpaceMatrices(light, activeCamera, this);
                     descriptorSet->updateFixedBufferWithOffset<Light>(lightBufferIndex, id, light, currentFrame);
                 }
             }
@@ -479,6 +480,7 @@ class Renderer {
     void clearRenderList() { shaders.clear(); }
 
     const std::map<uint32_t, Light>& getLights() { return lights; }
+    std::map<uint32_t, Light>& getLightsMutable() { return lights; }
     void addLight(uint32_t index, Light light) { lights[index] = light; }
     Light& getLight(uint32_t index) { return lights[index]; }
     void clearLights() {

@@ -8,6 +8,7 @@
 
 #include "constants.hpp"
 #include "scene_elements.hpp"
+#include "transform_system.hpp"
 
 class Renderer;
 
@@ -18,23 +19,14 @@ class SceneGraph {
     SceneGraph() : nodes(new std::array<std::optional<Node>, MAX_NODES>()) {}
     ~SceneGraph() { delete nodes; }
 
-    void init(Renderer* renderer) {
-        this->renderer = renderer;
-        (*nodes)[0] = Node(renderer, 0, nullptr, glm::vec3(0.0), glm::quat(1.0, 0, 0, 0), glm::vec3(1, 1, 1));
-        (*nodes)[0]->name = "root";
-        rootNode = &*(*nodes)[0];
-    }
+    void init(Renderer* renderer);
 
     Node* getRootNode() { return rootNode; }
 
     std::array<std::optional<Node>, MAX_NODES>& getNodes() { return *nodes; }
 
     uint32_t addNode(uint32_t parentIndex = 0, glm::vec3 position = glm::vec3(0.0f), glm::quat rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
-                     glm::vec3 scale = glm::vec3(1.0f), bool keepWorldTransform = false) {
-        (*nodes)[lastNode + 1].emplace(renderer, lastNode + 1, &*(*nodes)[parentIndex], position, rotation, scale, keepWorldTransform);
-        lastNode++;
-        return lastNode;
-    }
+                     glm::vec3 scale = glm::vec3(1.0f), bool keepWorldTransform = false);
 
     void removeNode(uint32_t index) { throw std::runtime_error("remove node not implemented!"); }
 
@@ -59,4 +51,7 @@ class SceneGraph {
     Node* rootNode = nullptr;
     std::array<std::optional<Node>, MAX_NODES>* nodes;
     uint32_t lastNode = 0;
+
+    // Allocate GPU model matrix buffer for a node
+    void allocateNodeGPU(Node& node);
 };

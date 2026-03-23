@@ -6,7 +6,6 @@
 #define VULKAN_HPP_NO_CONSTRUCTORS 1 // for structs constructors
 #endif
 
-#include <imgui.h>
 #include <string>
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_raii.hpp>
@@ -22,39 +21,16 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/hash.hpp>
 
-class Renderer;
+class Renderer; // forward declaration for free functions below
 
 class Node {
   public:
     std::string name = "empty";
-    bool changingMaterials = false;
 
-////implemented in the .cpp
-    Node(Renderer* pRenderer, uint32_t arrayIndex, Node* parent = nullptr, glm::vec3 position = glm::vec3(0.0f), glm::quat rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
+    Node(uint32_t arrayIndex, Node* parent = nullptr, glm::vec3 position = glm::vec3(0.0f), glm::quat rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
          glm::vec3 scale = glm::vec3(1.0f), bool keepWorldTransform = false);
-    void update();
+
     void setParent(Node* newParent) { parent = newParent; }
-    void addMaterial(uint32_t index, uint32_t materialIndex);
-    void addLight(Light light);
-    void showMeshInfo();
-    void showMaterialDialog();
-    void showLightInfo();
-    void showTransformInfo();
-/////
-
-    void showInfo() { // gui, shows info of this node in a window
-        ImGui::Begin("selected node");
-        ImGui::Text(name.c_str());
-
-        showMeshInfo();
-        if (changingMaterials) {
-            showMaterialDialog();
-        }
-        showLightInfo();
-        showTransformInfo();
-        update();
-        ImGui::End();
-    }
 
     void addChild(Node* child, bool keepRelativeTransform = false) {
         children.push_back(child);
@@ -77,7 +53,6 @@ class Node {
 
             child->relativeRotationEuler = glm::eulerAngles(child->relativeRotation);
         }
-        child->update();
     }
 
     void removeChild(Node* child) {
@@ -118,8 +93,6 @@ class Node {
 
     std::vector<Node*>& getChildren() { return children; }
 
-    void addMesh(uint32_t meshIndex);
-
     uint32_t getMeshIndex() { return meshIndex; }
     uint32_t getLightIndex() { return lightIndex; }
     std::vector<uint32_t>& getMaterialIndices() {return materialIndices; }
@@ -129,9 +102,6 @@ class Node {
     glm::vec3 getBoundingBoxMax() const { return boundingBoxMax; }
     bool isBoundingBoxValid() const { return boundingBoxValid; }
 
-  private:
-    Renderer* renderer;
-    ResourceManager* resourceManager;
     uint32_t nodeIndex;
 
     std::vector<Node*> children;
@@ -145,7 +115,7 @@ class Node {
     glm::mat4 worldTransform; // aka model matrix
     std::array<uint32_t, MAX_FRAMES_IN_FLIGHT> modelMatrixIndices;
     glm::mat4 localTransform; // relative to parent
-    
+
     uint32_t meshIndex = MAX_MESHES;
     std::vector<uint32_t> materialIndices;
     uint32_t lightIndex = MAX_LIGHTS;
@@ -154,13 +124,6 @@ class Node {
     glm::vec3 boundingBoxMin = glm::vec3(0.0f);
     glm::vec3 boundingBoxMax = glm::vec3(0.0f);
     bool boundingBoxValid = false;
-
-    //gui variables
-    bool changingMesh = false;
-    char textBuffer[256];
-    std::vector<std::string> materialList;
-    std::vector<uint32_t> selectedMaterials;
-    bool lightShadow = false;
 };
 
 struct Camera { 
@@ -252,44 +215,26 @@ struct Camera {
         projectionMatrix[1][1] *= -1.0f; // Flip Y axis for vulkan
         viewProjection = projectionMatrix * viewMatrix;
     }
+    
+    std::vector<glm::vec4> getFrustumCorners(Camera& camera) {
+        glm::mat4 invViewProj = glm::inverse(camera.viewProjection);
 
-};
+        std::vector<glm::vec4> corners;
+        corners.reserve(8);
 
-std::vector<glm::vec4> getCameraFrustumCorners(Camera& camera);
-glm::mat4 calculateLightSpaceMatrix(Light& light, Camera& camera);
-void calculateCascadedLightSpaceMatrices(Light& light, Camera& camera, Renderer* renderer);
+        // NDC corners of the frustum
+        for (int x = 0; x < 2; ++x) {
+            for (int y = 0; y < 2; ++y) {
+                for (int z = 0; z < 2; ++z) {
+                    glm::vec4 corner = invViewProj * glm::vec4(2.0f * x - 1.0f, 2.0f * y - 1.0f, static_cast<float>(z), 1.0f);
+                    corners.push_back(corner / corner.w);
+                }
+            }
+        }
 
-// Frustum culling structures and functions
-struct Plane {
-    glm::vec3 normal;
-    float distance;
-};
-
-std::array<Plane, 6> extractFrustumPlanes(const glm::mat4& lightSpaceMatrix);
-bool isAABBInFrustum(const glm::vec3& aabbMin, const glm::vec3& aabbMax, const std::array<Plane, 6>& planes, float epsilon = 0.0f);
-
-// Helper function to transform a local-space AABB to world space
-inline void transformAABBToWorldSpace(const glm::vec3& localMin, const glm::vec3& localMax,
-                                      const glm::mat4& worldTransform,
-                                      glm::vec3& worldMin, glm::vec3& worldMax) {
-    // Transform all 8 corners and find new AABB in world space
-    glm::vec3 corners[8] = {
-        glm::vec3(localMin.x, localMin.y, localMin.z),
-        glm::vec3(localMax.x, localMin.y, localMin.z),
-        glm::vec3(localMin.x, localMax.y, localMin.z),
-        glm::vec3(localMax.x, localMax.y, localMin.z),
-        glm::vec3(localMin.x, localMin.y, localMax.z),
-        glm::vec3(localMax.x, localMin.y, localMax.z),
-        glm::vec3(localMin.x, localMax.y, localMax.z),
-        glm::vec3(localMax.x, localMax.y, localMax.z)
-    };
-
-    worldMin = glm::vec3(std::numeric_limits<float>::max());
-    worldMax = glm::vec3(std::numeric_limits<float>::lowest());
-
-    for (const auto& corner : corners) {
-        glm::vec3 worldCorner = glm::vec3(worldTransform * glm::vec4(corner, 1.0f));
-        worldMin = glm::min(worldMin, worldCorner);
-        worldMax = glm::max(worldMax, worldCorner);
+        return corners;
     }
-}
+
+};
+
+

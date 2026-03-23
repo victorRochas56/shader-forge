@@ -6,6 +6,7 @@
 #define VULKAN_HPP_NO_CONSTRUCTORS 1 // for structs constructors
 #endif
 
+#include <array>
 #include <vector>
 #include <fstream>
 #include <vulkan/vulkan.hpp>
@@ -147,3 +148,89 @@ static glm::mat4 makeTransform( glm::vec3 translation, glm::quat rotation, glm::
     return T * R * S;
 }
 
+// Frustum culling structures and functions
+struct Plane {
+    glm::vec3 normal;
+    float distance;
+};
+
+// Extracts the 6 frustum planes from a light space matrix
+inline std::array<Plane, 6> extractFrustumPlanes(const glm::mat4& lightSpaceMatrix) {
+    std::array<Plane, 6> planes;
+
+    // Left plane
+    planes[0].normal = glm::vec3(lightSpaceMatrix[0][3] + lightSpaceMatrix[0][0], lightSpaceMatrix[1][3] + lightSpaceMatrix[1][0], lightSpaceMatrix[2][3] + lightSpaceMatrix[2][0]);
+    planes[0].distance = lightSpaceMatrix[3][3] + lightSpaceMatrix[3][0];
+
+    // Right plane
+    planes[1].normal = glm::vec3(lightSpaceMatrix[0][3] - lightSpaceMatrix[0][0], lightSpaceMatrix[1][3] - lightSpaceMatrix[1][0], lightSpaceMatrix[2][3] - lightSpaceMatrix[2][0]);
+    planes[1].distance = lightSpaceMatrix[3][3] - lightSpaceMatrix[3][0];
+
+    // Bottom plane
+    planes[2].normal = glm::vec3(lightSpaceMatrix[0][3] + lightSpaceMatrix[0][1], lightSpaceMatrix[1][3] + lightSpaceMatrix[1][1], lightSpaceMatrix[2][3] + lightSpaceMatrix[2][1]);
+    planes[2].distance = lightSpaceMatrix[3][3] + lightSpaceMatrix[3][1];
+
+    // Top plane
+    planes[3].normal = glm::vec3(lightSpaceMatrix[0][3] - lightSpaceMatrix[0][1], lightSpaceMatrix[1][3] - lightSpaceMatrix[1][1], lightSpaceMatrix[2][3] - lightSpaceMatrix[2][1]);
+    planes[3].distance = lightSpaceMatrix[3][3] - lightSpaceMatrix[3][1];
+
+    // Near plane (Vulkan/GLM_DEPTH_ZERO_TO_ONE: depth range [0,1], near at z_ndc=0, so just row2)
+    planes[4].normal = glm::vec3(lightSpaceMatrix[0][2], lightSpaceMatrix[1][2], lightSpaceMatrix[2][2]);
+    planes[4].distance = lightSpaceMatrix[3][2];
+
+    // Far plane
+    planes[5].normal = glm::vec3(lightSpaceMatrix[0][3] - lightSpaceMatrix[0][2], lightSpaceMatrix[1][3] - lightSpaceMatrix[1][2], lightSpaceMatrix[2][3] - lightSpaceMatrix[2][2]);
+    planes[5].distance = lightSpaceMatrix[3][3] - lightSpaceMatrix[3][2];
+
+    // Normalize all planes
+    for (auto& plane : planes) {
+        float length = glm::length(plane.normal);
+        plane.normal /= length;
+        plane.distance /= length;
+    }
+
+    return planes;
+}
+
+inline bool isAABBInFrustum(const glm::vec3& aabbMin, const glm::vec3& aabbMax, const std::array<Plane, 6>& planes, float epsilon = 0.01f) {
+    // Test the AABB against each plane
+    for (const auto& plane : planes) {
+        glm::vec3 positiveVertex;
+        positiveVertex.x = (plane.normal.x >= 0.0f) ? aabbMax.x : aabbMin.x;
+        positiveVertex.y = (plane.normal.y >= 0.0f) ? aabbMax.y : aabbMin.y;
+        positiveVertex.z = (plane.normal.z >= 0.0f) ? aabbMax.z : aabbMin.z;
+
+        // Negative epsilon makes the frustum "bigger" (more conservative culling)
+        if (glm::dot(plane.normal, positiveVertex) + plane.distance < -epsilon) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// Helper function to transform a local-space AABB to world space
+inline void transformAABBToWorldSpace(const glm::vec3& localMin, const glm::vec3& localMax,
+                                      const glm::mat4& worldTransform,
+                                      glm::vec3& worldMin, glm::vec3& worldMax) {
+    // Transform all 8 corners and find new AABB in world space
+    glm::vec3 corners[8] = {
+        glm::vec3(localMin.x, localMin.y, localMin.z),
+        glm::vec3(localMax.x, localMin.y, localMin.z),
+        glm::vec3(localMin.x, localMax.y, localMin.z),
+        glm::vec3(localMax.x, localMax.y, localMin.z),
+        glm::vec3(localMin.x, localMin.y, localMax.z),
+        glm::vec3(localMax.x, localMin.y, localMax.z),
+        glm::vec3(localMin.x, localMax.y, localMax.z),
+        glm::vec3(localMax.x, localMax.y, localMax.z)
+    };
+
+    worldMin = glm::vec3(std::numeric_limits<float>::max());
+    worldMax = glm::vec3(std::numeric_limits<float>::lowest());
+
+    for (const auto& corner : corners) {
+        glm::vec3 worldCorner = glm::vec3(worldTransform * glm::vec4(corner, 1.0f));
+        worldMin = glm::min(worldMin, worldCorner);
+        worldMax = glm::max(worldMax, worldCorner);
+    }
+}

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "renderer.hpp"
+#include "node_ops.hpp"
 #include "utils.hpp"
 
 /*
@@ -425,18 +426,18 @@ class SceneManager {
                     loadedMeshes[meshPath] = meshIndex;
                     std::cout << "Loaded mesh: " << meshPath << std::endl;
                 }
-                newNode->addMesh(meshIndex);
+                NodeOps::assignMesh(*newNode, meshIndex, renderer);
 
                 // Add materials to submeshes
                 for (size_t i = 0; i < materialIDs.size(); i++) {
                     uint32_t materialID = materialIDs[i];
                     if (materialIDToIndex.find(materialID) != materialIDToIndex.end()) {
                         uint32_t materialIndex = materialIDToIndex[materialID];
-                        newNode->addMaterial(i, materialIndex);
+                        NodeOps::assignMaterial(*newNode, i, materialIndex, renderer);
                         std::cout << "  Added material " << materialID << " to submesh " << i << std::endl;
                     } else {
                         std::cerr << "Material ID " << materialID << " not found, using fallback" << std::endl;
-                        newNode->addMaterial(i, renderer.getFallBackMaterial());
+                        NodeOps::assignMaterial(*newNode, i, renderer.getFallBackMaterial(), renderer);
                     }
                 }
             } catch (const std::exception& e) {
@@ -446,7 +447,7 @@ class SceneManager {
 
         // Add light if specified
         if (hasLight) {
-            newNode->addLight(light);
+            NodeOps::assignLight(*newNode, light, renderer);
             std::cout << "Added light to node: " << name << std::endl;
         }
     }

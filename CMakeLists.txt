@@ -173,6 +173,9 @@ add_executable(shader-forge
     main.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/modules/scene_elements.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/modules/gui.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/node_gui.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/node_ops.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/scene_graph.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/modules/stb_implementations.cpp
     ${IMGUI_SOURCES}
 )

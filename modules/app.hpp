@@ -17,6 +17,7 @@
 #include <chrono>
 
 #include "gui.hpp"
+#include "node_gui.hpp"
 #include "input.hpp"
 #include "renderer.hpp"
 #include "scenes.hpp"
@@ -135,7 +136,7 @@ class App {
         traverseNodeTree(renderer.sceneGraph.getRootNode(), 0, renderer.sceneGraph.selectedNode, &renderer);
         ImGui::End();
         if (renderer.sceneGraph.selectedNode != MAX_NODES) {
-            renderer.sceneGraph.getNodes()[renderer.sceneGraph.selectedNode]->showInfo();
+            showNodeInfo(*renderer.sceneGraph.getNodes()[renderer.sceneGraph.selectedNode], renderer);
         }
         if (InputManager::getInstance().contextMenuShown) {
             showActionMenu(0, &renderer, InputManager::getInstance().contextMenuPinX, InputManager::getInstance().contextMenuPinY);
