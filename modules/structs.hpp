@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <string>
 
 #include "constants.hpp"
@@ -178,10 +179,10 @@ struct SSAOApplyPushConstants {
 };
 
 struct SSRApplyPushConstants {
-    uint32_t ssrTextureIndex;
     uint32_t samplerIndex;
     uint32_t sceneColorIndex;
     uint32_t sceneSamplerIndex;
+    std::array<uint32_t, 8> ssrTextureIndices;
 };
 
 struct LitDrawData {

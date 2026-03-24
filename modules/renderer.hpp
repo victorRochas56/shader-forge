@@ -158,7 +158,8 @@ class Renderer {
     Image                               normalMSAA;
 
     //SSR
-    uint32_t                            ssrTextureIndex = 0xFFFFFFFF;
+    std::vector<uint32_t>               ssrTextureIndices;
+    uint32_t                            ssrIndex = 0;
     uint32_t                            ssrPipelineIndex = 0xFFFFFFFF;
     uint32_t                            ssrApplyPipelineIndex = 0xFFFFFFFF;
     uint32_t                            colorResolveTextureIndex = 0xFFFFFFFF;
@@ -723,8 +724,14 @@ class Renderer {
         createOrResizeRenderTarget(colorResolveTextureIndex, width, height, swapchain->getSwapChainImageFormat(), "internal/color_resolve", vk::ImageUsageFlagBits::eTransferSrc);
     }
 
-    void createSSRResources(uint32_t width, uint32_t height) {
-        createOrResizeRenderTarget(ssrTextureIndex, width, height, swapchain->getSwapChainImageFormat(), "internal/ssr");
+    void createSSRResources(uint32_t width, uint32_t height, uint32_t numTemporalFrames = 5) {
+
+        int i = 0;
+        for(i = 0; i < numTemporalFrames; i++){
+            if(ssrTextureIndices.size() <= i)
+                ssrTextureIndices.push_back(0xFFFFFFFF);
+            createOrResizeRenderTarget(ssrTextureIndices[i], width, height, swapchain->getSwapChainImageFormat(), (std::string("internal/ssr") + std::to_string(i)).c_str());
+        }
 
         // SSR pipeline (only created once)
         if (ssrPipelineIndex == 0xFFFFFFFF) {
@@ -1212,7 +1219,7 @@ class Renderer {
 
     void recordSSRPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
         auto swapExtent = swapchain->getSwapChainExtent();
-        auto& ssrTexture = descriptorSet->getTextureResource(ssrTextureIndex);
+        auto& ssrTexture = descriptorSet->getTextureResource(ssrTextureIndices[ssrIndex]);
         vk::Extent2D ssrExtent{ssrTexture.width, ssrTexture.height};
 
         // transition depth to readable
@@ -1248,12 +1255,19 @@ class Renderer {
         resourceManager->transitionImageLayout(&cmd, *ssrTexture.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
 
         // apply to swapchain at full resolution
+        std::array<uint32_t, 8> ssrIndices;
+        ssrIndices.fill(0xFFFFFFFF);
+        std::copy(ssrTextureIndices.begin(), ssrTextureIndices.end(), ssrIndices.begin());
         drawFullscreenPass(cmd, *pipelineManager->getPostProcessPipelines()[ssrApplyPipelineIndex], *swapchain->getSwapChainImageViews()[imageIndex], swapExtent,
-            SSRApplyPushConstants{.ssrTextureIndex = ssrTextureIndex, .samplerIndex = defaultSamplerIndex, .sceneColorIndex = colorResolveTextureIndex, .sceneSamplerIndex = defaultSamplerIndex},
+            SSRApplyPushConstants{.samplerIndex = defaultSamplerIndex, .sceneColorIndex = colorResolveTextureIndex, .sceneSamplerIndex = defaultSamplerIndex, .ssrTextureIndices = ssrIndices},
             vk::AttachmentLoadOp::eLoad);
 
         // transition depth back
         resourceManager->transitionImageLayout(&cmd, swapchain->getDepthImage(), vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
+
+        ssrIndex++;
+        if(ssrIndex >= ssrTextureIndices.size())
+            ssrIndex = 0;
     }
 
     void recordImageVisPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
