@@ -223,32 +223,7 @@ class DescriptorSet {
         samplerBindingIndex = bindingIndex;
         bindingIndex++;
 
-        // variable buffers
-        for (size_t i = 0; i < variableBuffers.size(); i++) {
-            if (variableBuffers[i] && i != 1) { // 1 is the index buffer
-                layoutBindings.push_back(vk::DescriptorSetLayoutBinding{.binding = bindingIndex,
-                                                                        .descriptorType = vk::DescriptorType::eStorageBuffer,
-                                                                        .descriptorCount = 1,
-                                                                        .stageFlags = vk::ShaderStageFlagBits::eFragment | vk::ShaderStageFlagBits::eVertex});
-                poolSizes.push_back(vk::DescriptorPoolSize(vk::DescriptorType::eStorageBuffer, 1));
-                bindingFlags.push_back(vk::DescriptorBindingFlagBits::ePartiallyBound);
-                // variableCounts.push_back(1);
-                variableBuffers[i]->bindingIndex = bindingIndex;
-                bindingIndex++;
-            }
-        }
-        // fixed buffers
-        for (auto& fixedBuffer : fixedBuffers) {
-            layoutBindings.push_back(vk::DescriptorSetLayoutBinding{.binding = bindingIndex,
-                                                                    .descriptorType = vk::DescriptorType::eStorageBuffer,
-                                                                    .descriptorCount = 1,
-                                                                    .stageFlags = vk::ShaderStageFlagBits::eFragment | vk::ShaderStageFlagBits::eVertex});
-            poolSizes.push_back(vk::DescriptorPoolSize(vk::DescriptorType::eStorageBuffer, 1));
-            bindingFlags.push_back(vk::DescriptorBindingFlagBits::ePartiallyBound);
-            // variableCounts.push_back(1);
-            fixedBuffer->bindingIndex = bindingIndex;
-            bindingIndex++;
-        }
+        // Storage buffers are now accessed via Buffer Device Address (BDA) — no descriptor bindings needed
 
         vk::DescriptorPoolCreateInfo poolInfo{};
         poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
@@ -270,35 +245,7 @@ class DescriptorSet {
         debugDescriptorSetState("after_descriptor_set_creation");
 #endif
 
-        // Bind all variable buffers (skip index buffer at slot 1, it has no descriptor binding)
-        for (size_t i = 0; i < variableBuffers.size(); i++) {
-            auto& varBuffer = variableBuffers[i];
-            if (varBuffer && i != 1) {
-                vk::DescriptorBufferInfo bufferInfo{.buffer = *varBuffer->buffer, .offset = 0, .range = VK_WHOLE_SIZE};
-
-                vk::WriteDescriptorSet write{.dstSet = *descriptorSet,
-                                             .dstBinding = varBuffer->bindingIndex,
-                                             .descriptorCount = 1,
-                                             .descriptorType = vk::DescriptorType::eStorageBuffer,
-                                             .pBufferInfo = &bufferInfo};
-
-                device.getDevice().updateDescriptorSets(write, {});
-            }
-        }
-
-        // Bind fixed buffers
-        for (size_t i = 0; i < fixedBuffers.size(); i++) {
-            std::cout << "Binding buffer with handle: " << (void*)*fixedBuffers[i]->buffer << " to binding " << fixedBuffers[i]->bindingIndex << std::endl;
-            vk::DescriptorBufferInfo bufferInfo{.buffer = *fixedBuffers[i]->buffer, .offset = 0, .range = VK_WHOLE_SIZE};
-
-            vk::WriteDescriptorSet write{.dstSet = *descriptorSet,
-                                         .dstBinding = fixedBuffers[i]->bindingIndex,
-                                         .descriptorCount = 1,
-                                         .descriptorType = vk::DescriptorType::eStorageBuffer,
-                                         .pBufferInfo = &bufferInfo};
-
-            device.getDevice().updateDescriptorSets(write, {});
-        }
+        // Storage buffers are accessed via BDA — no descriptor writes needed
     }
 
     vk::DeviceAddress getBufferAddress(const vk::raii::Device& device, const vk::raii::Buffer& buffer) {

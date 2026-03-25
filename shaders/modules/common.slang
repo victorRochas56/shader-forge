@@ -17,15 +17,16 @@ struct LitDrawData {
 };
 
 // Frame-level push constants (same for all draws in a drawIndexedIndirect call)
+// Pointer fields map to 64-bit PhysicalStorageBuffer addresses (binary-compatible with uint64_t on CPU)
 struct LitPushConstants {
+    float*        vertexBuffer;
+    float4x4*     modelMatrices;
+    Light*        lights;
+    LitDrawData*  litDrawData;
     uint samplerIndex;
     uint lightCount;
     uint shadowSamplerIndex;
-    uint elementOffsetModel;
-    uint elementOffsetLight;
-    uint elementOffsetLit;
     uint padding0;
-    uint padding1;
     float3 cameraPos;
     uint padding2;
     float3 cameraForward;
@@ -93,17 +94,6 @@ TextureCube cubemaps[];
 [[vk::binding(2,0)]]
 SamplerState samplers[];
 
-[[vk::binding(3,0)]]
-ByteAddressBuffer vertexBuffer[];
-
-[[vk::binding(4, 0)]]
-StructuredBuffer<float4x4> modelMatrices[];
-
-[[vk::binding(5,0)]]
-StructuredBuffer<Light> lights[];
-
-[[vk::binding(8,0)]]
-StructuredBuffer<LitDrawData> litDrawData[];
 
 
 float3 reconstructViewPos(float2 uv, float depth, float4x4 invProjection) {
@@ -128,55 +118,35 @@ float3 calculateViewSpaceNormal(uint depthIndex,uint depthSamplerIndex, float4x4
     return normalize(cross(dx, dy));
 }
 
-Vertex loadVertex(uint vertexIndex, uint stride, uint offset)
+Vertex loadVertex(float* buffer, uint vertexIndex, uint stride, uint offset)
 {
     Vertex vert;
 
-    uint byteOffset = offset + vertexIndex * stride;
+    // stride is in bytes; float* arithmetic is in units of 4 bytes
+    uint floatOffset = (offset + vertexIndex * stride) / 4;
+    float* v = buffer + floatOffset;
 
-    uint posX_uint = vertexBuffer[0].Load(byteOffset);
-    uint posY_uint = vertexBuffer[0].Load(byteOffset + 4);
-    uint posZ_uint = vertexBuffer[0].Load(byteOffset + 8);
-
-    vert.position = float3(asfloat(posX_uint), asfloat(posY_uint), asfloat(posZ_uint));
-
-    uint normX_uint = vertexBuffer[0].Load(byteOffset + 12);
-    uint normY_uint = vertexBuffer[0].Load(byteOffset + 16);
-    uint normZ_uint = vertexBuffer[0].Load(byteOffset + 20);
-
-    vert.normal = float3(asfloat(normX_uint), asfloat(normY_uint), asfloat(normZ_uint));
-
-    uint tangX_uint = vertexBuffer[0].Load(byteOffset + 24);
-    uint tangY_uint = vertexBuffer[0].Load(byteOffset + 28);
-    uint tangZ_uint = vertexBuffer[0].Load(byteOffset + 32);
-
-    vert.tangent = float3(asfloat(tangX_uint), asfloat(tangY_uint), asfloat(tangZ_uint));
-
-    // Skip materialIndex at offset 36-39
-
-    uint texU_uint = vertexBuffer[0].Load(byteOffset + 40);
-    uint texV_uint = vertexBuffer[0].Load(byteOffset + 44);
-
-    vert.texCoord = float2(asfloat(texU_uint), asfloat(texV_uint));
+    vert.position = float3(v[0], v[1], v[2]);
+    vert.normal   = float3(v[3], v[4], v[5]);
+    vert.tangent  = float3(v[6], v[7], v[8]);
+    // v[9] = materialIndex — skip
+    vert.texCoord = float2(v[10], v[11]);
 
     return vert;
 }
 
 float3 getPosFromMM(int index){
-    float3 ret;
-    ret.x = modelMatrices[0][pc.elementOffsetModel + index][0].w;
-    ret.y = modelMatrices[0][pc.elementOffsetModel + index][1].w;
-    ret.z = modelMatrices[0][pc.elementOffsetModel + index][2].w;
-    return ret;
+    float4x4 mat = pc.modelMatrices[index];
+    return float3(mat[0].w, mat[1].w, mat[2].w);
 }
 
 VertexOutput litVertMain(uint vertexID, uint drawID)
 {
-    LitDrawData draw = litDrawData[0][pc.elementOffsetLit + drawID];
+    LitDrawData draw = pc.litDrawData[drawID];
 
-    Vertex vertex = loadVertex(vertexID, draw.vertexStride, draw.vertexOffset);
+    Vertex vertex = loadVertex(pc.vertexBuffer, vertexID, draw.vertexStride, draw.vertexOffset);
 
-    float4x4 modelMatrix = modelMatrices[0][pc.elementOffsetModel + draw.modelMatrixIndex];
+    float4x4 modelMatrix = pc.modelMatrices[draw.modelMatrixIndex];
     VertexOutput output;
     float4 worldPos = mul(modelMatrix, float4(vertex.position, 1.0));
     output.worldPos = worldPos.xyz;

@@ -18,7 +18,7 @@ FragmentOutput fragMain(VertexOutput input)
 {
     FragmentOutput output;
 
-    LitDrawData draw = litDrawData[0][pc.elementOffsetLit + input.drawID];
+    LitDrawData draw = pc.litDrawData[input.drawID];
 
     bool flipNormal  = (draw.materialFlags & (1u << 0)) != 0;
     bool hasAlbedo   = (draw.materialFlags & (1u << 1)) != 0;
@@ -69,7 +69,7 @@ FragmentOutput fragMain(VertexOutput input)
     float3 Lo = float3(0.0);
 
     for(int i = 0; i < pc.lightCount; i++){
-        Light currentLight = lights[0][pc.elementOffsetLight + i];
+        Light currentLight = pc.lights[i];
 
         if(currentLight.type != 1) {
             float distance = length(getPosFromMM(currentLight.modelMatrixIndex) - input.worldPos);
@@ -83,11 +83,8 @@ FragmentOutput fragMain(VertexOutput input)
         float3 radiance;
 
         if(currentLight.type == 1) {
-            float3 lightDir = float3(
-                modelMatrices[0][pc.elementOffsetModel + currentLight.modelMatrixIndex][0].x,
-                modelMatrices[0][pc.elementOffsetModel + currentLight.modelMatrixIndex][1].x,
-                modelMatrices[0][pc.elementOffsetModel + currentLight.modelMatrixIndex][2].x
-            );
+            float4x4 lightMM = pc.modelMatrices[currentLight.modelMatrixIndex];
+            float3 lightDir = float3(lightMM[0].x, lightMM[1].x, lightMM[2].x);
             lightDir = normalize(lightDir);
             L = -lightDir;
             attenuation = 1.0;

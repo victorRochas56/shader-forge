@@ -7,6 +7,7 @@ struct PushConstants
     float farPlane;
     float imageAspect;
     float screenAspect;
+    uint mipLevel;
 };
 
 struct Light {
@@ -30,15 +31,6 @@ TextureCube cubemaps[];
 
 [[vk::binding(2,0)]]
 SamplerState samplers[];
-
-[[vk::binding(3,0)]]
-ByteAddressBuffer vertexBuffer[];
-
-[[vk::binding(4, 0)]]
-StructuredBuffer<float4x4> modelMatrices[];
-
-[[vk::binding(5,0)]]
-StructuredBuffer<Light> lights[];
 
 struct VertexOutput
 {
@@ -83,9 +75,14 @@ float4 fragMain(VertexOutput input) : SV_Target0
         return float4(0.0, 0.0, 0.0, 1.0);
     }
 
-    float4 color = textures[pc.imageIndex].Sample(samplers[pc.samplerIndex], uv);
+    float4 color = textures[pc.imageIndex].SampleLevel(samplers[pc.samplerIndex], uv, pc.mipLevel);
 
-    if(pc.flags & 1) { // LINEARIZE_DEPTH
+    if(pc.flags & 1<<2) { // LINEARIZE_DEPTH
+        float z = color.r;
+        float linearDepth = pc.nearPlane / (1.0 - z * (1.0 - pc.nearPlane / pc.farPlane));
+        return float4(linearDepth,linearDepth,linearDepth, 1.0);
+    }
+    if(pc.flags & 1) { //BW
         return float4(color.r,color.r,color.r, 1.0);
     }
 

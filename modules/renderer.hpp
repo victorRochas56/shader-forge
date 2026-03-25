@@ -64,6 +64,7 @@ class Renderer {
     uint32_t                            imageVisIndex = 0xFFFFFFFF;
     uint32_t                            imageVisSamplerIndex = 0xFFFFFFFF;
     ImageVisFlags                       imageVisFlags = ImageVisFlags::IMAGE_VIS_NONE;
+    int                                 imageVisMipLevel = 0;
     float                               cullFovScale = 1.0f;
     uint32_t                            culledCount = 0;
 
@@ -241,11 +242,8 @@ class Renderer {
             descriptorSet->setBufferFrameOffset(shadowDrawDataBufferIndex, i, MAX_FIXED_BUFFER * i);
         }
 
-        // Gizmos registers its vertex buffer (fixed buffer) here — must come before litDrawData
-        // so the binding order matches what line.slang expects (lineVerts at binding 7)
         Gizmos::init(MAX_GIZMO_LINES, &*descriptorSet);
 
-        // litDrawData comes after gizmos, so it lands at binding 8
         litDrawDataBufferIndex = descriptorSet->createFixedBuffer<LitDrawData>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
             descriptorSet->setBufferFrameOffset(litDrawDataBufferIndex, i, MAX_FIXED_BUFFER * i);
@@ -372,6 +370,7 @@ class Renderer {
     void drawFrame() {
         device->getDevice().waitForFences(*inFlightFences[currentFrame], vk::True, UINT64_MAX);
 
+        //TODO make all full screen passes have a resolution scale that can be set dirty when changed/ needs to recreate
         if (ssrResolutionDirty) {
             ssrResolutionDirty = false;
             device->getDevice().waitIdle();
@@ -1020,15 +1019,16 @@ class Renderer {
                 memcpy(&litDataPtr[frameOffset], litDrawDataList.data(), litDrawDataList.size() * sizeof(LitDrawData));
             }
 
-            LitPushConstants pushConstants = {.samplerIndex      = defaultSamplerIndex,
-                                              .lightCount        = static_cast<uint32_t>(lights.size()),
-                                              .shadowSamplerIndex= shadowSamplerIndex,
-                                              .elementOffsetModel= currentFrame * MAX_FIXED_BUFFER,
-                                              .elementOffsetLight= currentFrame * MAX_FIXED_BUFFER,
-                                              .elementOffsetLit  = currentFrame * MAX_FIXED_BUFFER,
-                                              .cameraPosition    = activeCamera.position,
-                                              .cameraForward     = cameraForward,
-                                              .viewProjection    = activeCamera.viewProjection};
+            LitPushConstants pushConstants = {.vertexBufferAddress  = descriptorSet->getVariableBuffers()[vertexBufferIndex]->address,
+                                              .modelMatricesAddress = descriptorSet->getFixedBuffers()[modelMatrixBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(glm::mat4),
+                                              .lightsAddress        = descriptorSet->getFixedBuffers()[lightBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(Light),
+                                              .litDrawDataAddress   = descriptorSet->getFixedBuffers()[litDrawDataBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(LitDrawData),
+                                              .samplerIndex         = defaultSamplerIndex,
+                                              .lightCount           = static_cast<uint32_t>(lights.size()),
+                                              .shadowSamplerIndex   = shadowSamplerIndex,
+                                              .cameraPosition       = activeCamera.position,
+                                              .cameraForward        = cameraForward,
+                                              .viewProjection       = activeCamera.viewProjection};
 
             // --- Depth prepass (depth-only, no color attachment) ---
             vk::RenderingAttachmentInfo depthPrepassAttachment = {.imageView = swapchain->getDepthImageView(),
@@ -1126,15 +1126,16 @@ class Renderer {
             cmd.bindIndexBuffer(indexBufferHandle, 0, vk::IndexType::eUint32);
             auto& geoPipelines = pipelineManager->getGeoPipelines();
 
-            LitPushConstants pushConstants = {.samplerIndex      = defaultSamplerIndex,
-                                              .lightCount        = static_cast<uint32_t>(lights.size()),
-                                              .shadowSamplerIndex= shadowSamplerIndex,
-                                              .elementOffsetModel= currentFrame * MAX_FIXED_BUFFER,
-                                              .elementOffsetLight= currentFrame * MAX_FIXED_BUFFER,
-                                              .elementOffsetLit  = currentFrame * MAX_FIXED_BUFFER,
-                                              .cameraPosition    = activeCamera.position,
-                                              .cameraForward     = cameraForward,
-                                              .viewProjection    = activeCamera.viewProjection};
+            LitPushConstants pushConstants = {.vertexBufferAddress  = descriptorSet->getVariableBuffers()[vertexBufferIndex]->address,
+                                              .modelMatricesAddress = descriptorSet->getFixedBuffers()[modelMatrixBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(glm::mat4),
+                                              .lightsAddress        = descriptorSet->getFixedBuffers()[lightBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(Light),
+                                              .litDrawDataAddress   = descriptorSet->getFixedBuffers()[litDrawDataBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(LitDrawData),
+                                              .samplerIndex         = defaultSamplerIndex,
+                                              .lightCount           = static_cast<uint32_t>(lights.size()),
+                                              .shadowSamplerIndex   = shadowSamplerIndex,
+                                              .cameraPosition       = activeCamera.position,
+                                              .cameraForward        = cameraForward,
+                                              .viewProjection       = activeCamera.viewProjection};
 
             for (const auto& [shader, materials] : shaders) {
                 auto currentPipeline = &(geoPipelines[shader.pipelineIndex]);
@@ -1199,7 +1200,7 @@ class Renderer {
         }
         auto& gizmoPipeline = pipelineManager->getPostProcessPipelines()[gizmoPipelineIndex];
         bindPipeline(cmd, *gizmoPipeline);
-        LinePushConstants lineConstants = {.viewProjection = activeCamera.viewProjection};
+        LinePushConstants lineConstants = {.lineVertsAddress = Gizmos::getLineBufferAddress(), .viewProjection = activeCamera.viewProjection};
         cmd.pushConstants<LinePushConstants>(*gizmoPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, lineConstants);
         cmd.draw(Gizmos::getVertexCount(), 1, 0, 0);
 
@@ -1317,7 +1318,8 @@ class Renderer {
                                                  .nearPlane = activeCamera.nearPlane,
                                                  .farPlane = activeCamera.farPlane,
                                                  .imageAspect = imgAspect,
-                                                 .screenAspect = static_cast<float>(extent.width) / static_cast<float>(extent.height)},
+                                                 .screenAspect = static_cast<float>(extent.width) / static_cast<float>(extent.height),
+                                                 .mipLevel = imageVisMipLevel},
                            vk::AttachmentLoadOp::eLoad);
     }
 
@@ -1406,7 +1408,10 @@ class Renderer {
 
                 // Set push constants (same for all draws in this cascade)
                 ShadowPushConstants pushConstants = {
-                    .lightSpaceMatrix = lightSpaceMatrix, .elementOffsetModel = currentFrame * MAX_FIXED_BUFFER, .elementOffsetShadow = currentFrame * MAX_FIXED_BUFFER};
+                    .vertexBufferAddress   = descriptorSet->getVariableBuffers()[vertexBufferIndex]->address,
+                    .modelMatricesAddress  = descriptorSet->getFixedBuffers()[modelMatrixBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(glm::mat4),
+                    .shadowDrawDataAddress = descriptorSet->getFixedBuffers()[shadowDrawDataBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(ShadowDrawData),
+                    .lightSpaceMatrix      = lightSpaceMatrix};
                 cmd.pushConstants<ShadowPushConstants>(*currentPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pushConstants);
 
                 cmd.bindIndexBuffer(indexBufferHandle, 0, vk::IndexType::eUint32);

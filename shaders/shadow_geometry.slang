@@ -6,24 +6,17 @@ struct ShadowDrawData {
     uint modelMatrixIndex;
 };
 
-// Push constants now only contain light space matrix (same for all draws in a cascade)
+// Push constants with BDA pointers (pre-offset to current frame)
 struct ShadowPushConstants {
+    float*          vertexBuffer;
+    float4x4*       modelMatrices;
+    ShadowDrawData* shadowDrawData;
+    uint64_t        _pad;              // align lightSpaceMatrix to 16
     float4x4 lightSpaceMatrix;
-    uint elementOffsetModel;  // Element offset for this frame's model matrices
-    uint elementOffsetShadow; // Element offset for this frame's shadow draw data
 };
 
 [[vk::push_constant]]
 ConstantBuffer<ShadowPushConstants> pc;
-
-[[vk::binding(3,0)]]
-ByteAddressBuffer vertexBuffer[];
-
-[[vk::binding(4, 0)]]
-StructuredBuffer<float4x4> modelMatrices[];
-
-[[vk::binding(6, 0)]]
-StructuredBuffer<ShadowDrawData> shadowDrawData[];
 
 struct Vertex
 {
@@ -39,18 +32,14 @@ struct VertexOutput
     float depth : DEPTH;
 };
 
-Vertex loadVertex(uint vertexIndex, uint stride, uint offset)
+Vertex loadVertex(float* buffer, uint vertexIndex, uint stride, uint offset)
 {
     Vertex vert;
-    uint byteOffset = offset + vertexIndex * stride;
-   
-    uint posX_uint = vertexBuffer[0].Load(byteOffset);
-    uint posY_uint = vertexBuffer[0].Load(byteOffset + 4);
-    uint posZ_uint = vertexBuffer[0].Load(byteOffset + 8);
-   
-    vert.position = float3(asfloat(posX_uint), asfloat(posY_uint), asfloat(posZ_uint));
-   
-   
+    uint floatOffset = (offset + vertexIndex * stride) / 4;
+    float* v = buffer + floatOffset;
+
+    vert.position = float3(v[0], v[1], v[2]);
+
     return vert;
 }
 
@@ -58,11 +47,11 @@ Vertex loadVertex(uint vertexIndex, uint stride, uint offset)
 VertexOutput vertMain(uint vertexID : SV_VertexID, uint drawID : SV_DrawIndex)
 {
     // Fetch per-draw data using gl_DrawID (SV_DrawIndex in SLANG)
-    ShadowDrawData drawData = shadowDrawData[0][pc.elementOffsetShadow + drawID];
+    ShadowDrawData drawData = pc.shadowDrawData[drawID];
 
-    Vertex vertex = loadVertex(vertexID, drawData.vertexStride, drawData.vertexOffset);
+    Vertex vertex = loadVertex(pc.vertexBuffer, vertexID, drawData.vertexStride, drawData.vertexOffset);
 
-    float4x4 modelMatrix = modelMatrices[0][pc.elementOffsetModel + drawData.modelMatrixIndex];
+    float4x4 modelMatrix = pc.modelMatrices[drawData.modelMatrixIndex];
     float4 worldPos = mul(modelMatrix, float4(vertex.position, 1.0));
 
     VertexOutput output;

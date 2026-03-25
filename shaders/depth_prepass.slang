@@ -9,7 +9,7 @@ VertexOutput vertMain(uint vertexID : SV_VertexID, uint drawID : SV_DrawIndex)
 [shader("fragment")]
 void fragMain(VertexOutput input)
 {
-    LitDrawData draw = litDrawData[0][pc.elementOffsetLit + input.drawID];
+    LitDrawData draw = pc.litDrawData[input.drawID];
 
     // Alpha clipping
     if (draw.materialFlags & (1u << 5)) {

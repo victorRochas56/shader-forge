@@ -150,6 +150,10 @@ class App {
         showDebugWindow(&renderer);
 
         ImGui::Begin("Toggles");
+        ImGui::SliderInt("ImageMip",&renderer.imageVisMipLevel,0,6);
+        if(ImGui::Button("Depth Buffer")){
+            renderer.imageVisFlags ^= ImageVisFlags::LINEARIZE;
+        }
         if(ImGui::Button("SSAO")){
             renderer.toggleSSAO();
         }
