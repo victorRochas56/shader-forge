@@ -55,6 +55,8 @@ struct PushConstants {
 };
 
 struct LinePushConstants {
+    uint64_t lineVertsAddress;
+    uint64_t padding0;
     glm::mat4 viewProjection;
 };
 
@@ -104,10 +106,12 @@ struct ImageVisPushConstants {
 };
 
 struct ShadowPushConstants {
-    glm::mat4 lightSpaceMatrix;
-    uint32_t elementOffsetModel;  // Element offset for this frame's model matrices
-    uint32_t elementOffsetShadow; // Element offset for this frame's shadow draw data
-};
+    uint64_t vertexBufferAddress;      // 8
+    uint64_t modelMatricesAddress;     // 8  (pre-offset)
+    uint64_t shadowDrawDataAddress;    // 8  (pre-offset)
+    uint64_t padding;                  // 8  (align lightSpaceMatrix to 16)
+    glm::mat4 lightSpaceMatrix;        // 64
+};  // Total: 96 bytes
 
 struct ShadowDrawData {
     uint32_t vertexAllocationIndex;
@@ -204,18 +208,18 @@ struct LitDrawData {
 
 // Frame-level push constants for the lit indirect pass (per-draw data moved to LitDrawData buffer)
 struct LitPushConstants {
-    uint32_t  samplerIndex;
-    uint32_t  lightCount;
-    uint32_t  shadowSamplerIndex;
-    uint32_t  elementOffsetModel;
-    uint32_t  elementOffsetLight;
-    uint32_t  elementOffsetLit;  // frame offset into the LitDrawData buffer
-    uint32_t  padding0;
-    uint32_t  padding1;
+    uint64_t vertexBufferAddress;
+    uint64_t modelMatricesAddress;
+    uint64_t lightsAddress;
+    uint64_t litDrawDataAddress;
+    uint32_t samplerIndex;
+    uint32_t lightCount;
+    uint32_t shadowSamplerIndex;
+    uint32_t padding0;
     glm::vec3 cameraPosition;
-    uint32_t  padding2;
+    uint32_t padding1;
     glm::vec3 cameraForward;
-    uint32_t  padding3;
+    uint32_t padding2;
     glm::mat4 viewProjection;
 };
 

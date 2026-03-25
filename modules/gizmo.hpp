@@ -39,6 +39,7 @@ class Gizmos {
     }
 
     static uint32_t getVertexCount() { return instance().activeVertexCount; }
+    static vk::DeviceAddress getLineBufferAddress() { return instance().descriptorSet->getFixedBuffers()[instance().lineBufferIndex]->address; }
 
     static void drawLine(glm::vec3 start, glm::vec3 end, glm::vec4 color, bool noDiscard = false) {
         auto& g = instance();

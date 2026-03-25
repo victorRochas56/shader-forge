@@ -1,12 +1,13 @@
-struct LinePushConstants {
-    float4x4 viewProjection;
-};
-
 struct LineVertex{
     float4 color;
     float4 position;
 };
 
+struct LinePushConstants {
+    LineVertex* lineVerts;
+    uint64_t padding0;
+    float4x4 viewProjection;
+};
 
 [[vk::push_constant]]
 ConstantBuffer<LinePushConstants> pc;
@@ -20,15 +21,6 @@ TextureCube cubemaps[];
 [[vk::binding(2,0)]]
 SamplerState samplers[];
 
-[[vk::binding(3,0)]]
-ByteAddressBuffer vertexBuffer[];
-
-[[vk::binding(4, 0)]]
-StructuredBuffer<float4x4> modelMatrices[];
-
-[[vk::binding(7,0)]]
-StructuredBuffer<LineVertex> lineVerts;
-
 struct VertexOutput {
     float4 position : SV_Position;
     float4 color : COLOR0;
@@ -38,16 +30,15 @@ struct VertexOutput {
 VertexOutput vertMain(uint vertexID : SV_VertexID)
 {
     VertexOutput output;
-    
-    // Get the line vertex data from the buffer
-    LineVertex lineVert = lineVerts[vertexID];
-    
+
+    LineVertex lineVert = pc.lineVerts[vertexID];
+
     // Transform position to clip space
     output.position = mul(pc.viewProjection, lineVert.position);
-    
+
     // Pass through color
     output.color = lineVert.color;
-    
+
     return output;
 }
 

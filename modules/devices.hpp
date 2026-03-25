@@ -6,6 +6,7 @@
 #define VULKAN_HPP_NO_CONSTRUCTORS 1 // for structs constructors
 #endif
 
+#include <cassert>
 #include <iostream>
 #include <vector>
 #include <vulkan/vulkan.hpp>
@@ -160,6 +161,7 @@ class Device {
                                               .ppEnabledExtensionNames = requiredDeviceExtension.data()};
 
         logicalDevice = vk::raii::Device(physicalDevice, deviceCreateInfo);
+        assert(physicalDevice.getProperties().limits.maxPushConstantsSize >= 256 && "GPU must support at least 256 bytes of push constants for BDA");
         graphicsQueue = vk::raii::Queue(logicalDevice, graphicsIndex, 0);
         presentQueue = vk::raii::Queue(logicalDevice, presentIndex, 0);
     }
