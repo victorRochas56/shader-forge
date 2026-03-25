@@ -56,6 +56,7 @@ handles vulkan initialization and the main render loop
 const std::vector validationLayers = {"VK_LAYER_KHRONOS_validation"};
 
 class Renderer {
+#pragma region VARS
   public:
     Camera                              activeCamera;
     AssetManager                        assetManager;
@@ -190,9 +191,13 @@ class Renderer {
 
     bool                                vSync = true;
     bool                                showBBOXes = false;
+#pragma endregion
+
+
 
   public:
-
+  
+#pragma region INIT
     Renderer() = default;
 
     void initVulkan(uint32_t startWidth, uint32_t startHeight) {
@@ -355,7 +360,14 @@ class Renderer {
         // create the root node - end of initialization
         sceneGraph.init(this);
     }
+    #pragma endregion
 
+
+
+
+
+
+#pragma region DRAWFRAME
     // main render loop
     void drawFrame() {
         device->getDevice().waitForFences(*inFlightFences[currentFrame], vk::True, UINT64_MAX);
@@ -438,7 +450,14 @@ class Renderer {
         currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
         //pipelineManager->checkForShaderUpdates(); // TODO enable this
     }
+    #pragma endregion
 
+
+
+
+
+#pragma region GET/SET
+    
     GLFWwindow* getWindow() { return window; }
     void setWindow(GLFWwindow* pWindow) { window = pWindow; }
 
@@ -489,7 +508,24 @@ class Renderer {
         lights.clear();
     }
 
+    //toggled by keyboard inputs
+    void toggleVsync() {
+        vSync = !vSync;
+        swapchain->recreate(window, vSync);
+        handleSwapchainResize();
+    }
+    
+    void toggleSSAO() { enableSSAO = !enableSSAO; }
+    void toggleSSR() { enableSSR = !enableSSR; }
 
+    bool ssrResolutionDirty = false;
+    
+    void toggleBBOXes() { showBBOXes = !showBBOXes; }
+    
+    void setSkyBox(uint32_t skyboxIndex) { this->skyboxIndex = skyboxIndex; }
+    #pragma endregion
+
+    
     // Recreates all screen-size render targets and updates the camera aspect ratio.
     // Called after swapchain recreation (resize, vsync toggle, etc.)
     void handleSwapchainResize() {
@@ -511,21 +547,7 @@ class Renderer {
         activeCamera.calculateViewProjectionMatrix();
     }
 
-    //toggled by keyboard inputs
-    void toggleVsync() {
-        vSync = !vSync;
-        swapchain->recreate(window, vSync);
-        handleSwapchainResize();
-    }
-    
-    void toggleSSAO() { enableSSAO = !enableSSAO; }
-    void toggleSSR() { enableSSR = !enableSSR; }
 
-    bool ssrResolutionDirty = false;
-    
-    void toggleBBOXes() { showBBOXes = !showBBOXes; }
-    
-    void setSkyBox(uint32_t skyboxIndex) { this->skyboxIndex = skyboxIndex; }
 
     // Generic blur pass that can blur any attachment
     // Performs two-pass separable Gaussian blur (horizontal + vertical)
@@ -553,6 +575,7 @@ class Renderer {
 
 
   private:
+#pragma region CREATE RESOURCES
 /////=================================================INITIALIZATION HELPER FUNCTIONS=================================================/////
     void createInstance() {
         constexpr vk::ApplicationInfo appInfo{.pApplicationName = "Shader Forge",
@@ -788,56 +811,6 @@ class Renderer {
         }
     }
 
-    void recordHiZPass(vk::raii::CommandBuffer& cmd) {
-        if (hiZTextureIndex == 0xFFFFFFFF || hiZPipelineIndex == 0xFFFFFFFF) return;
-
-        auto& hiZRes = descriptorSet->getTextureResource(hiZTextureIndex);
-        auto& pipeline = *pipelineManager->getBeforeGeoPipelines()[hiZPipelineIndex];
-        uint32_t w = hiZRes.width;
-        uint32_t h = hiZRes.height;
-
-        // Transition depth resolve to shader read for sampling
-        resourceManager->transitionImageLayout(&cmd, *descriptorSet->getTextureResource(swapchain->getDepthResolveIndex()).image,
-            vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
-
-        for (uint32_t mip = 0; mip < hiZMipLevels; ++mip) {
-            uint32_t mipW = std::max(1u, w >> mip);
-            uint32_t mipH = std::max(1u, h >> mip);
-
-            // Transition this mip to color attachment
-            resourceManager->transitionImageLayout(&cmd, *hiZRes.image,
-                vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal, mip, 1);
-
-            HiZPushConstants hizPC;
-            if (mip == 0) {
-                // Mip 0: copy from depth resolve
-                hizPC = {.inputTextureIndex = swapchain->getDepthResolveIndex(),
-                         .samplerIndex = depthSamplerIndex,
-                         .inputMipLevel = 0,
-                         .reduceMode = 0,
-                         .inputResolution = glm::uvec2(mipW, mipH)};
-            } else {
-                // Mip N: min-reduce from mip N-1 of the Hi-Z texture itself
-                hizPC = {.inputTextureIndex = hiZTextureIndex,
-                         .samplerIndex = depthSamplerIndex,
-                         .inputMipLevel = mip - 1,
-                         .reduceMode = 1,
-                         .inputResolution = glm::uvec2(std::max(1u, w >> (mip - 1)), std::max(1u, h >> (mip - 1)))};
-            }
-
-            vk::Extent2D mipExtent{mipW, mipH};
-            drawFullscreenPass(cmd, pipeline, *hiZMipViews[mip], mipExtent, hizPC);
-
-            // Transition this mip back to shader read
-            resourceManager->transitionImageLayout(&cmd, *hiZRes.image,
-                vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, mip, 1);
-        }
-
-        // Transition depth resolve back to depth attachment
-        resourceManager->transitionImageLayout(&cmd, *descriptorSet->getTextureResource(swapchain->getDepthResolveIndex()).image,
-            vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
-    }
-
     void createSyncObjects() {
         presentCompleteSemaphores.clear();
         renderFinishedSemaphores.clear();
@@ -857,10 +830,16 @@ class Renderer {
 
         imagesInFlight.resize(swapchain->getSwapImageSize(), VK_NULL_HANDLE);
     }
+    #pragma endregion
 
-/////=================================================MAIN RENDERING LOGIC=================================================/////
 
 
+
+
+
+    /////=================================================MAIN RENDERING LOGIC=================================================/////
+
+#pragma region RENDERING
     void recordCommandBuffer(uint32_t imageIndex) {
         auto& cmd = commandBuffers[currentFrame];
         cmd.begin({});
@@ -935,6 +914,56 @@ class Renderer {
                 }
             }
         }
+    }
+
+    void recordHiZPass(vk::raii::CommandBuffer& cmd) {
+        if (hiZTextureIndex == 0xFFFFFFFF || hiZPipelineIndex == 0xFFFFFFFF) return;
+
+        auto& hiZRes = descriptorSet->getTextureResource(hiZTextureIndex);
+        auto& pipeline = *pipelineManager->getBeforeGeoPipelines()[hiZPipelineIndex];
+        uint32_t w = hiZRes.width;
+        uint32_t h = hiZRes.height;
+
+        // Transition depth resolve to shader read for sampling
+        resourceManager->transitionImageLayout(&cmd, *descriptorSet->getTextureResource(swapchain->getDepthResolveIndex()).image,
+            vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+
+        for (uint32_t mip = 0; mip < hiZMipLevels; ++mip) {
+            uint32_t mipW = std::max(1u, w >> mip);
+            uint32_t mipH = std::max(1u, h >> mip);
+
+            // Transition this mip to color attachment
+            resourceManager->transitionImageLayout(&cmd, *hiZRes.image,
+                vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal, mip, 1);
+
+            HiZPushConstants hizPC;
+            if (mip == 0) {
+                // Mip 0: copy from depth resolve
+                hizPC = {.inputTextureIndex = swapchain->getDepthResolveIndex(),
+                         .samplerIndex = depthSamplerIndex,
+                         .inputMipLevel = 0,
+                         .reduceMode = 0,
+                         .inputResolution = glm::uvec2(mipW, mipH)};
+            } else {
+                // Mip N: min-reduce from mip N-1 of the Hi-Z texture itself
+                hizPC = {.inputTextureIndex = hiZTextureIndex,
+                         .samplerIndex = depthSamplerIndex,
+                         .inputMipLevel = mip - 1,
+                         .reduceMode = 1,
+                         .inputResolution = glm::uvec2(std::max(1u, w >> (mip - 1)), std::max(1u, h >> (mip - 1)))};
+            }
+
+            vk::Extent2D mipExtent{mipW, mipH};
+            drawFullscreenPass(cmd, pipeline, *hiZMipViews[mip], mipExtent, hizPC);
+
+            // Transition this mip back to shader read
+            resourceManager->transitionImageLayout(&cmd, *hiZRes.image,
+                vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, mip, 1);
+        }
+
+        // Transition depth resolve back to depth attachment
+        resourceManager->transitionImageLayout(&cmd, *descriptorSet->getTextureResource(swapchain->getDepthResolveIndex()).image,
+            vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
     }
 
     void recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
@@ -1451,4 +1480,6 @@ class Renderer {
         cmd.draw(3, 1, 0, 0);
         cmd.endRendering();
     }
+
+    #pragma endregion
 };

@@ -51,7 +51,8 @@ class ResourceManager {
         vk::MemoryRequirements indirectMemReqs = indirectDrawBuffer.getMemoryRequirements();
         uint32_t indirectMemType = findMemoryType(indirectMemReqs.memoryTypeBits, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, device);
 
-        vk::MemoryAllocateInfo indirectAllocInfo{.allocationSize = indirectMemReqs.size, .memoryTypeIndex = indirectMemType};
+        vk::MemoryAllocateFlagsInfo allocFlags{.flags = vk::MemoryAllocateFlagBits::eDeviceAddress };
+        vk::MemoryAllocateInfo indirectAllocInfo{.pNext = allocFlags, .allocationSize = indirectMemReqs.size, .memoryTypeIndex = indirectMemType};
 
         indirectDrawBufferMemory = vk::raii::DeviceMemory(device.getDevice(), indirectAllocInfo);
         indirectDrawBuffer.bindMemory(*indirectDrawBufferMemory, 0);

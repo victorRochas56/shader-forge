@@ -60,6 +60,7 @@ struct VariableBufferAllocation {
 };
 
 struct VariableBufferResource {
+    vk::DeviceAddress address;
     vk::raii::Buffer buffer;
     vk::raii::DeviceMemory memory;
     void* mappedData = nullptr;
@@ -68,8 +69,8 @@ struct VariableBufferResource {
     uint32_t bindingIndex = 0;
     uint32_t maxSize = MAX_VARIABLE_BUFFER;
 
-    VariableBufferResource(vk::raii::Buffer&& buf, vk::raii::DeviceMemory&& mem, void* mapped, vk::DeviceSize size, uint32_t max)
-        : buffer(std::move(buf)), memory(std::move(mem)), mappedData(mapped), bufferSize(size), maxSize(max) {}
+    VariableBufferResource(vk::DeviceAddress add, vk::raii::Buffer&& buf, vk::raii::DeviceMemory&& mem, void* mapped, vk::DeviceSize size, uint32_t max)
+        : address(add), buffer(std::move(buf)), memory(std::move(mem)), mappedData(mapped), bufferSize(size), maxSize(max) {}
 };
 
 struct FixedBufferAllocation {
@@ -78,6 +79,7 @@ struct FixedBufferAllocation {
 };
 
 struct FixedBufferResourceBase {
+    vk::DeviceAddress address;
     uint32_t bindingIndex = 0;
     vk::raii::Buffer buffer;
     vk::raii::DeviceMemory memory;
@@ -299,6 +301,10 @@ class DescriptorSet {
         }
     }
 
+    vk::DeviceAddress getBufferAddress(const vk::raii::Device& device, const vk::raii::Buffer& buffer) {
+        return device.getBufferAddress(vk::BufferDeviceAddressInfo{.buffer = *buffer});
+    }
+
     //allocates a texture on the gpu in the bindless set, returns its index
     uint32_t allocateTexture(vk::raii::Image image, vk::raii::DeviceMemory memory, vk::raii::ImageView imageView, std::string source = "", bool isCubeMap = false, uint32_t texWidth = 0, uint32_t texHeight = 0) {
 #if DEBUG == 1
@@ -426,13 +432,15 @@ class DescriptorSet {
         vk::MemoryRequirements memRequirements = buffer.getMemoryRequirements();
         uint32_t memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, device);
 
-        vk::MemoryAllocateInfo allocInfo{.allocationSize = memRequirements.size, .memoryTypeIndex = memoryTypeIndex};
+        vk::MemoryAllocateFlagsInfo allocFlags{ .flags = vk::MemoryAllocateFlagBits::eDeviceAddress };
+        vk::MemoryAllocateInfo allocInfo{.pNext = allocFlags, .allocationSize = memRequirements.size, .memoryTypeIndex = memoryTypeIndex};
 
         vk::raii::DeviceMemory memory(device.getDevice(), allocInfo);
         buffer.bindMemory(*memory, 0);
         void* mappedData = memory.mapMemory(0, bufferSize);
 
         auto fixedBuffer = std::make_unique<FixedBufferResource<T>>(std::move(buffer), std::move(memory));
+        fixedBuffer->address = getBufferAddress(device.getDevice(), fixedBuffer->buffer);
         fixedBuffer->mappedData = mappedData;
         fixedBuffer->bufferSize = bufferSize;
         fixedBuffer->maxSize = maxElements;
@@ -516,20 +524,21 @@ class DescriptorSet {
         basePtr->frameOffsets[frameIndex] = offsetInElements * basePtr->elementSize;
     }
 
-    uint32_t createVariableBuffer(uint32_t maxSizeBytes = 1024 * 1024, vk::BufferUsageFlags usage = vk::BufferUsageFlagBits::eStorageBuffer, bool perFrame = false) {
+    uint32_t createVariableBuffer(uint32_t maxSizeBytes = 1024 * 1024, vk::BufferUsageFlags usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress, bool perFrame = false) {
         vk::BufferCreateInfo bufferInfo{.size = maxSizeBytes, .usage = usage, .sharingMode = vk::SharingMode::eExclusive};
 
         vk::raii::Buffer buffer(device.getDevice(), bufferInfo);
         vk::MemoryRequirements memRequirements = buffer.getMemoryRequirements();
         uint32_t memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, device);
 
-        vk::MemoryAllocateInfo allocInfo{.allocationSize = memRequirements.size, .memoryTypeIndex = memoryTypeIndex};
+        vk::MemoryAllocateFlagsInfo allocFlags{.flags = vk::MemoryAllocateFlagBits::eDeviceAddress};
+        vk::MemoryAllocateInfo allocInfo{.pNext = allocFlags, .allocationSize = memRequirements.size, .memoryTypeIndex = memoryTypeIndex};
 
         vk::raii::DeviceMemory memory(device.getDevice(), allocInfo);
         buffer.bindMemory(*memory, 0);
         void* mappedData = memory.mapMemory(0, maxSizeBytes);
 
-        variableBuffers.push_back(VariableBufferResource{std::move(buffer), std::move(memory), mappedData, maxSizeBytes, maxSizeBytes});
+        variableBuffers.push_back(VariableBufferResource{getBufferAddress(device.getDevice(),buffer),std::move(buffer), std::move(memory), mappedData, maxSizeBytes, maxSizeBytes});
         return variableBuffers.size() - 1;
     }
 

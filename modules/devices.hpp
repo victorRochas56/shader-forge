@@ -145,7 +145,8 @@ class Device {
                  .descriptorBindingUpdateUnusedWhilePending = true,
                  .descriptorBindingPartiallyBound = true,
                  .descriptorBindingVariableDescriptorCount = true,
-                 .runtimeDescriptorArray = true},
+                 .runtimeDescriptorArray = true,
+                 .bufferDeviceAddress = true},
                 {.synchronization2 = true, .dynamicRendering = true}, // vk::PhysicalDeviceVulkan13Features
                 {.extendedDynamicState = true}};                      // vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
 
