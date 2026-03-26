@@ -746,7 +746,7 @@ class Renderer {
         createOrResizeRenderTarget(colorResolveTextureIndex, width, height, swapchain->getSwapChainImageFormat(), "internal/color_resolve", vk::ImageUsageFlagBits::eTransferSrc);
     }
 
-    void createSSRResources(uint32_t width, uint32_t height, uint32_t numTemporalFrames = 5) {
+    void createSSRResources(uint32_t width, uint32_t height, uint32_t numTemporalFrames = 1) {
 
         int i = 0;
         for(i = 0; i < numTemporalFrames; i++){
