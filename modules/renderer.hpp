@@ -159,6 +159,9 @@ class Renderer {
     uint32_t                            normalMipLevels = 1;
     Image                               normalMSAA;
 
+    uint32_t                            motionVectorTextureIndex = 0xFFFFFFFF;
+    Image                               motionVectors;
+
     //SSR
     std::vector<uint32_t>               ssrTextureIndices;
     uint32_t                            ssrIndex = 0;
@@ -265,6 +268,7 @@ class Renderer {
         createSSAOResources(ssaoW, ssaoH);
         createRoughnessMetalResources(startWidth, startHeight);
         createNormalResources(startWidth, startHeight);
+        createMotionVectorResources(startWidth,startHeight);
         createColorResolveResources(startWidth, startHeight);
         createSSRResources(ssrW, ssrH);
         createHiZResources(startWidth, startHeight);
@@ -538,6 +542,7 @@ class Renderer {
             createSSAOResources(ssaoW, ssaoH);
             createRoughnessMetalResources(width, height);
             createNormalResources(width, height);
+            createMotionVectorResources(width,height);
             createColorResolveResources(width, height);
             createSSRResources(ssrW, ssrH);
             createHiZResources(width, height);
@@ -744,6 +749,11 @@ class Renderer {
     // Color resolve is the MSAA resolve target for the geometry pass — must always be full resolution
     void createColorResolveResources(uint32_t width, uint32_t height) {
         createOrResizeRenderTarget(colorResolveTextureIndex, width, height, swapchain->getSwapChainImageFormat(), "internal/color_resolve", vk::ImageUsageFlagBits::eTransferSrc);
+    }
+
+    void createMotionVectorResources(uint32_t width, uint32_t height) {
+        createOrResizeMSAATarget(motionVectors,width,height, vk::Format::eR8G8B8A8Unorm);
+        createOrResizeRenderTarget(motionVectorTextureIndex, width, height, vk::Format::eR8G8B8A8Unorm,"internal/motion_vectors");
     }
 
     void createSSRResources(uint32_t width, uint32_t height, uint32_t numTemporalFrames = 1) {
@@ -975,6 +985,9 @@ class Renderer {
         resourceManager->transitionImageLayout(&cmd, normalMSAA.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
         resourceManager->transitionImageLayout(&cmd, *descriptorSet->getTextureResource(normalTextureIndex).image,
                                                vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
+        resourceManager->transitionImageLayout(&cmd, motionVectors.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
+        resourceManager->transitionImageLayout(&cmd, *descriptorSet->getTextureResource(motionVectorTextureIndex).image,
+                                               vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
 
         vk::ClearValue clearColor{.color = vk::ClearColorValue(std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f})};
         vk::ClearValue clearDepth{.depthStencil = vk::ClearDepthStencilValue{1.0f, 0}};
@@ -1007,6 +1020,7 @@ class Renderer {
 
         glm::vec3 cameraForward = glm::normalize(activeCamera.target - activeCamera.position);
 
+#pragma region DEPTH & HIZ
         if (!indirectCommands.empty()) {
             // Upload indirect commands and per-draw data (shared between depth prepass and lit pass)
             void* data = litIndirectDrawBufferMemory.mapMemory(frameByteOffset, indirectCommands.size() * sizeof(DrawIndexedIndirectCommand));
@@ -1040,10 +1054,22 @@ class Renderer {
                                                                   .storeOp = vk::AttachmentStoreOp::eStore,
                                                                   .clearValue = clearDepth};
 
+            auto& motionVectorResolve = descriptorSet->getTextureResource(motionVectorTextureIndex);
+            vk::ClearValue clearMotionVectors{.color = vk::ClearColorValue(std::array<float, 4>{0.0f,0.0f,0.0f,1.0f})};
+            vk::RenderingAttachmentInfo motionVectorAttachment = {  .imageView = motionVectors.view,
+                                                                    .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+                                                                    .resolveMode = vk::ResolveModeFlagBits::eAverage,
+                                                                    .resolveImageView = *motionVectorResolve.imageView,
+                                                                    .resolveImageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+                                                                    .loadOp = vk::AttachmentLoadOp::eClear,
+                                                                    .storeOp = vk::AttachmentStoreOp::eStore,
+                                                                    .clearValue = clearMotionVectors};
+
+                                                                    
             vk::RenderingInfo depthRenderingInfo = {.renderArea = {.offset = {0, 0}, .extent = swapchain->getSwapChainExtent()},
                                                     .layerCount = 1,
-                                                    .colorAttachmentCount = 0,
-                                                    .pColorAttachments = nullptr,
+                                                    .colorAttachmentCount = 1,
+                                                    .pColorAttachments = &motionVectorAttachment,
                                                     .pDepthAttachment = &depthPrepassAttachment};
 
             cmd.beginRendering(depthRenderingInfo);
@@ -1059,7 +1085,7 @@ class Renderer {
 
             recordHiZPass(cmd);
         }
-
+#pragma endregion
         // --- Lit geometry pass (2 color attachments: color + roughness/metallic) ---
         auto& colorResolve = descriptorSet->getTextureResource(colorResolveTextureIndex);
         resourceManager->transitionImageLayout(&cmd, *colorResolve.image,
@@ -1104,10 +1130,10 @@ class Renderer {
                                                            .loadOp = vk::AttachmentLoadOp::eLoad,
                                                            .storeOp = vk::AttachmentStoreOp::eDontCare};
 
-        std::array<vk::RenderingAttachmentInfo, 3> colorAttachments = {colorAttachment, roughnessMetalAttachment, normalAttachment};
+        std::array<vk::RenderingAttachmentInfo, 4> colorAttachments = {colorAttachment, roughnessMetalAttachment, normalAttachment};
         vk::RenderingInfo renderingInfo = {.renderArea = {.offset = {0, 0}, .extent = swapchain->getSwapChainExtent()},
                                            .layerCount = 1,
-                                           .colorAttachmentCount = 3,
+                                           .colorAttachmentCount = 4,
                                            .pColorAttachments = colorAttachments.data(),
                                            .pDepthAttachment = &depthAttachmentInfo};
 
@@ -1178,6 +1204,10 @@ class Renderer {
         resourceManager->generateMipmaps(*normalRes.image, vk::Format::eR8G8B8A8Unorm,
             static_cast<int32_t>(normalRes.width), static_cast<int32_t>(normalRes.height),
             normalMipLevels, 1, &cmd, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+
+        // Transition motion vecs to shader read only
+        resourceManager->transitionImageLayout(&cmd, *descriptorSet->getTextureResource(motionVectorTextureIndex).image,
+                                               vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
     }
 
     void recordOverlayPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
