@@ -209,13 +209,16 @@ struct Camera {
     }
 
     void calculateViewProjectionMatrix() {
-        prevViewProjection = viewProjection;
         glm::vec3 upVector = glm::vec3(0.0f, 1.0f, 0.0f); // World up direction
         // Create view matrix using lookAt
         viewMatrix = glm::lookAt(position, target, upVector);
         projectionMatrix = glm::perspective(glm::radians(fov), aspectRatio, nearPlane, farPlane);
         projectionMatrix[1][1] *= -1.0f; // Flip Y axis for vulkan
         viewProjection = projectionMatrix * viewMatrix;
+    }
+
+    void updatePrevVPM() {
+        prevViewProjection = viewProjection;
     }
     
     std::vector<glm::vec4> getFrustumCorners(Camera& camera) {

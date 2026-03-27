@@ -445,6 +445,7 @@ void showBufferAllocs(Renderer* renderer){
 
     ImGui::Separator();
     float grandTotalMB = grandTotal / (1024.0f * 1024.0f);
+    grandTotal += totalVertexBytes + totalIndexBytes;
     ImGui::Text("Total GPU Memory: ~%.2f MB", grandTotalMB);
 
     ImGui::End();

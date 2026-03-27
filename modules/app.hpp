@@ -111,6 +111,7 @@ class App {
             frameTimeIndex = (frameTimeIndex + 1) % FRAME_HISTORY_COUNT;
             if (frameTimeCount < FRAME_HISTORY_COUNT) frameTimeCount++;
 
+            renderer.activeCamera.updatePrevVPM(); // kinda ulgy to put here .. TODO: find a place for it
             InputManager::tickInputState();
         }
         renderer.getDevice().getDevice().waitIdle();

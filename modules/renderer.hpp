@@ -50,7 +50,6 @@ main rendering engine holds the state of the scene, nodes, meshes, lights, mater
 handles vulkan initialization and the main render loop
 */
 
-// TODO if an image has mips, allow them to be viewed in the image viewer
 // TODO gpu side material data
 // with a vis-buffer
 const std::vector validationLayers = {"VK_LAYER_KHRONOS_validation"};
