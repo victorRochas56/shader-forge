@@ -127,6 +127,7 @@ class Renderer {
     uint32_t                            lightBufferIndex;
     uint32_t                            shadowDrawDataBufferIndex;
     uint32_t                            litDrawDataBufferIndex;
+    uint32_t                            litPassDataBufferIndex;
 
     // Persistent buffers for indirect drawing
     vk::raii::Buffer                    indirectDrawBuffer = nullptr;      // shadow pass
@@ -237,12 +238,14 @@ class Renderer {
         modelMatrixBufferIndex = descriptorSet->createFixedBuffer<glm::mat4>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
         lightBufferIndex = descriptorSet->createFixedBuffer<Light>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
         shadowDrawDataBufferIndex = descriptorSet->createFixedBuffer<ShadowDrawData>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
+        litPassDataBufferIndex = descriptorSet->createFixedBuffer<LitPassData>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
 
         // sets the frame offsets for each buffer
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
             descriptorSet->setBufferFrameOffset(modelMatrixBufferIndex, i, MAX_FIXED_BUFFER * i);
             descriptorSet->setBufferFrameOffset(lightBufferIndex, i, MAX_FIXED_BUFFER * i);
             descriptorSet->setBufferFrameOffset(shadowDrawDataBufferIndex, i, MAX_FIXED_BUFFER * i);
+            descriptorSet->setBufferFrameOffset(litPassDataBufferIndex,i, MAX_FIXED_BUFFER * i);
         }
 
         Gizmos::init(MAX_GIZMO_LINES, &*descriptorSet);
@@ -361,6 +364,13 @@ class Renderer {
 
         // create the root node - end of initialization
         sceneGraph.init(this);
+        descriptorSet->allocateFixedBuffer(litPassDataBufferIndex, LitPassData{.samplerIndex = defaultSamplerIndex,
+                                                                               .lightCount = 0,
+                                                                               .shadowSamplerIndex = shadowSamplerIndex,
+                                                                               .cameraPosition = activeCamera.position,
+                                                                               .cameraForward = glm::vec3(1, 0, 0),
+                                                                               .viewProjection = activeCamera.viewProjection,
+                                                                               .prevViewProjection = activeCamera.viewProjection});
     }
     #pragma endregion
 
@@ -752,8 +762,8 @@ class Renderer {
     }
 
     void createMotionVectorResources(uint32_t width, uint32_t height) {
-        createOrResizeMSAATarget(motionVectors,width,height, vk::Format::eR8G8B8A8Unorm);
-        createOrResizeRenderTarget(motionVectorTextureIndex, width, height, vk::Format::eR8G8B8A8Unorm,"internal/motion_vectors");
+        createOrResizeMSAATarget(motionVectors,width,height, vk::Format::eR16G16Sfloat);
+        createOrResizeRenderTarget(motionVectorTextureIndex, width, height, vk::Format::eR16G16Sfloat,"internal/motion_vectors");
     }
 
     void createSSRResources(uint32_t width, uint32_t height, uint32_t numTemporalFrames = 1) {
@@ -1020,6 +1030,16 @@ class Renderer {
 
         glm::vec3 cameraForward = glm::normalize(activeCamera.target - activeCamera.position);
 
+        LitPassData litPassData {
+            .samplerIndex = defaultSamplerIndex,
+            .lightCount = static_cast<uint32_t>(lights.size()),
+            .shadowSamplerIndex = shadowSamplerIndex,
+            .cameraPosition = activeCamera.position,
+            .cameraForward = cameraForward,
+            .viewProjection = activeCamera.viewProjection,
+            .prevViewProjection = activeCamera.prevViewProjection
+        };
+        descriptorSet->updateFixedBufferWithOffset<LitPassData>(litPassDataBufferIndex,0,litPassData,currentFrame);
 #pragma region DEPTH & HIZ
         if (!indirectCommands.empty()) {
             // Upload indirect commands and per-draw data (shared between depth prepass and lit pass)
@@ -1037,12 +1057,8 @@ class Renderer {
                                               .modelMatricesAddress = descriptorSet->getFixedBuffers()[modelMatrixBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(glm::mat4),
                                               .lightsAddress        = descriptorSet->getFixedBuffers()[lightBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(Light),
                                               .litDrawDataAddress   = descriptorSet->getFixedBuffers()[litDrawDataBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(LitDrawData),
-                                              .samplerIndex         = defaultSamplerIndex,
-                                              .lightCount           = static_cast<uint32_t>(lights.size()),
-                                              .shadowSamplerIndex   = shadowSamplerIndex,
-                                              .cameraPosition       = activeCamera.position,
-                                              .cameraForward        = cameraForward,
-                                              .viewProjection       = activeCamera.viewProjection};
+                                              .litPassData          = descriptorSet->getFixedBuffers()[litPassDataBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(LitPassData)
+                                            };
 
             // --- Depth prepass (depth-only, no color attachment) ---
             vk::RenderingAttachmentInfo depthPrepassAttachment = {.imageView = swapchain->getDepthImageView(),
@@ -1156,12 +1172,8 @@ class Renderer {
                                               .modelMatricesAddress = descriptorSet->getFixedBuffers()[modelMatrixBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(glm::mat4),
                                               .lightsAddress        = descriptorSet->getFixedBuffers()[lightBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(Light),
                                               .litDrawDataAddress   = descriptorSet->getFixedBuffers()[litDrawDataBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(LitDrawData),
-                                              .samplerIndex         = defaultSamplerIndex,
-                                              .lightCount           = static_cast<uint32_t>(lights.size()),
-                                              .shadowSamplerIndex   = shadowSamplerIndex,
-                                              .cameraPosition       = activeCamera.position,
-                                              .cameraForward        = cameraForward,
-                                              .viewProjection       = activeCamera.viewProjection};
+                                              .litPassData          = descriptorSet->getFixedBuffers()[litPassDataBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(LitPassData)
+                                            };
 
             for (const auto& [shader, materials] : shaders) {
                 auto currentPipeline = &(geoPipelines[shader.pipelineIndex]);

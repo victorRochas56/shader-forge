@@ -213,6 +213,10 @@ struct LitPushConstants {
     uint64_t modelMatricesAddress;
     uint64_t lightsAddress;
     uint64_t litDrawDataAddress;
+    uint64_t litPassData;
+};
+
+struct LitPassData {
     uint32_t samplerIndex;
     uint32_t lightCount;
     uint32_t shadowSamplerIndex;
@@ -222,6 +226,7 @@ struct LitPushConstants {
     glm::vec3 cameraForward;
     uint32_t padding2;
     glm::mat4 viewProjection;
+    glm::mat4 prevViewProjection;
 };
 
 // matches VkDrawIndexedIndirectCommand)

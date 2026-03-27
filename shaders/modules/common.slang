@@ -23,16 +23,21 @@ struct LitPushConstants {
     float4x4*     modelMatrices;
     Light*        lights;
     LitDrawData*  litDrawData;
+    LitPass*      litPassData;
+};
+
+struct LitPass {
     uint samplerIndex;
     uint lightCount;
     uint shadowSamplerIndex;
     uint padding0;
     float3 cameraPos;
-    uint padding2;
+    uint padding1;
     float3 cameraForward;
-    uint padding3;
+    uint padding2;
     float4x4 viewProjection;
-};
+    float4x4 prevViewProjection;
+}
 
 struct Cascade {
     float4x4 lightSpaceMatrix;
@@ -150,7 +155,7 @@ VertexOutput litVertMain(uint vertexID, uint drawID)
     VertexOutput output;
     float4 worldPos = mul(modelMatrix, float4(vertex.position, 1.0));
     output.worldPos = worldPos.xyz;
-    output.position = mul(pc.viewProjection, worldPos);
+    output.position = mul(pc.litPassData.viewProjection, worldPos);
     output.normal = mul((float3x3)modelMatrix, vertex.normal);
     output.texCoord = vertex.texCoord;
     output.tangent = normalize(mul((float3x3)modelMatrix, vertex.tangent));

@@ -28,23 +28,23 @@ FragmentOutput fragMain(VertexOutput input)
     bool alphaClip   = (draw.materialFlags & (1u << 5)) != 0;
 
     float4 albedo = hasAlbedo ?
-        textures[draw.albedoTextureIndex].Sample(samplers[pc.samplerIndex], input.texCoord) :
+        textures[draw.albedoTextureIndex].Sample(samplers[pc.litPassData.samplerIndex], input.texCoord) :
         float4(1.0, 1.0, 1.0, 1.0);
 
     if (alphaClip && albedo.a < draw.alphaCutoff)
         discard;
 
     float4 roughness = hasRoughness ?
-        textures[draw.roughnessTextureIndex].Sample(samplers[pc.samplerIndex], input.texCoord) :
+        textures[draw.roughnessTextureIndex].Sample(samplers[pc.litPassData.samplerIndex], input.texCoord) :
         float4(draw.roughness, draw.roughness, draw.roughness, 1.0);
 
     float4 metallic = hasMetallic ?
-        textures[draw.metallicTextureIndex].Sample(samplers[pc.samplerIndex], input.texCoord) :
+        textures[draw.metallicTextureIndex].Sample(samplers[pc.litPassData.samplerIndex], input.texCoord) :
         float4(draw.metallic, draw.metallic, draw.metallic, 1.0);
 
     float3 N;
     if (hasNormal) {
-        float3 normalMap = textures[draw.normalTextureIndex].SampleLevel(samplers[pc.samplerIndex], input.texCoord, 0).rgb;
+        float3 normalMap = textures[draw.normalTextureIndex].Sample(samplers[pc.litPassData.samplerIndex], input.texCoord).rgb;
         normalMap = normalMap * 2.0 - 1.0;
         float normalIntensity = 1.0;
         normalMap.xy *= normalIntensity;
@@ -62,13 +62,13 @@ FragmentOutput fragMain(VertexOutput input)
         N = normalize(input.normal);
     }
 
-    float3 V = normalize(pc.cameraPos.xyz - input.worldPos);
+    float3 V = normalize(pc.litPassData.cameraPos.xyz - input.worldPos);
     float3 F0 = float3(0.04);
     F0 = lerp(F0, albedo.rgb, metallic.r);
 
     float3 Lo = float3(0.0);
 
-    for(int i = 0; i < pc.lightCount; i++){
+    for(int i = 0; i < pc.litPassData.lightCount; i++){
         Light currentLight = pc.lights[i];
 
         if(currentLight.type != 1) {
@@ -128,7 +128,7 @@ FragmentOutput fragMain(VertexOutput input)
         float shadow = 0.0;
         if(currentLight.castsShadows == 1) {
             float3 geometricNormal = normalize(input.normal);
-            shadow = calculateShadow(input.worldPos, pc.cameraPos, pc.cameraForward, geometricNormal, L, currentLight);
+            shadow = calculateShadow(input.worldPos, pc.litPassData.cameraPos, pc.litPassData.cameraForward, geometricNormal, L, currentLight);
             if( currentLight.showCascades>0){
                 if(shadow == 0){
                     output.color = float4(1,0,0,1);
@@ -150,7 +150,7 @@ FragmentOutput fragMain(VertexOutput input)
     }
 
     TextureCube envMap = cubemaps[draw.environmentMapIndex];
-    SamplerState envSampler = samplers[pc.samplerIndex];
+    SamplerState envSampler = samplers[pc.litPassData.samplerIndex];
     //float3 specularIBL = calculateSpecularIBL(N, V, roughness.r, F0, envMap, envSampler);
     float3 diffuseIBL = calculateDiffuseIBL(N, albedo.rgb, envMap, envSampler);
 
@@ -289,7 +289,7 @@ float calculateShadow(float3 fragWorldPos, float3 cameraPos, float3 cameraForwar
             float2 sampleCoords = projCoords.xy + float2(x, y) * texelSize;
 
             float shadowMapDepth = textures[cascade.shadowMapIndex].Sample(
-                samplers[pc.shadowSamplerIndex],
+                samplers[pc.litPassData.shadowSamplerIndex],
                 sampleCoords
             ).r;
 

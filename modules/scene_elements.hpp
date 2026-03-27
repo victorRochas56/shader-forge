@@ -126,7 +126,7 @@ class Node {
     bool boundingBoxValid = false;
 };
 
-struct Camera { 
+struct Camera {
     glm::vec3 position;
     glm::vec3 target;
     float fov;
@@ -134,6 +134,7 @@ struct Camera {
     float nearPlane;
     float farPlane;
     glm::mat4 viewProjection;
+    glm::mat4 prevViewProjection;
     glm::mat4 viewMatrix;
     glm::mat4 projectionMatrix;
     float yaw = -90.0f;
@@ -208,6 +209,7 @@ struct Camera {
     }
 
     void calculateViewProjectionMatrix() {
+        prevViewProjection = viewProjection;
         glm::vec3 upVector = glm::vec3(0.0f, 1.0f, 0.0f); // World up direction
         // Create view matrix using lookAt
         viewMatrix = glm::lookAt(position, target, upVector);
