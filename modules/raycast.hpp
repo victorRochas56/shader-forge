@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "constants.hpp"
+#include "gizmo.hpp"
 #include "scene_elements.hpp"
 #include "structs.hpp"
 

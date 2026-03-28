@@ -1,5 +1,7 @@
 #include "gui.hpp"
 #include "material_editor_state.hpp"
+#include "pipelines.hpp"
+#include "swapchain.hpp"
 
 static void check_vk_result(VkResult err) {
     if (err == 0)

@@ -3,6 +3,7 @@
 #include <glm/glm.hpp>
 #include <unordered_map>
 #include "renderer.hpp"
+#include "raycast.hpp"
 #include "scene_elements.hpp"
 
 #include "material_editor_state.hpp"
