@@ -1,12 +1,14 @@
 Materials {
   Material {
-    ID : 1916092003
+    ID : 310543195
     Name : lion
     Shader : shaders/lit.spv
-    TextureMask : 1
+    MaterialFlags : 3
     Color : 1,1,1,1
     Metallic : 0
     Roughness : 0.5
+    AlphaClip : 0
+    AlphaCutoff : 0.5
     AlbedoTexture : textures/sponza/lion.tga
     MetallicTexture : 
     RoughnessTexture : 
@@ -14,13 +16,15 @@ Materials {
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/posz.jpg|textures/sky2/negy.jpg|textures/sky2/posy.jpg|textures/sky2/negx.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 1393514024
+    ID : 3747225808
     Name : red
     Shader : shaders/lit.spv
-    TextureMask : 1
+    MaterialFlags : 3
     Color : 1,0,0,1
     Metallic : 0
     Roughness : 1
+    AlphaClip : 0
+    AlphaCutoff : 0.5
     AlbedoTexture : textures/texture.jpg
     MetallicTexture : 
     RoughnessTexture : 
@@ -28,13 +32,15 @@ Materials {
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/posz.jpg|textures/sky2/negy.jpg|textures/sky2/posy.jpg|textures/sky2/negx.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 1565805073
+    ID : 4188002441
     Name : background
     Shader : shaders/lit.spv
-    TextureMask : 1
+    MaterialFlags : 3
     Color : 1,1,1,1
     Metallic : 0
     Roughness : 0.5
+    AlphaClip : 0
+    AlphaCutoff : 0.5
     AlbedoTexture : textures/sponza/background.tga
     MetallicTexture : 
     RoughnessTexture : 
@@ -42,13 +48,15 @@ Materials {
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 1753883957
+    ID : 1928866701
     Name : arch
     Shader : shaders/lit.spv
-    TextureMask : 1
+    MaterialFlags : 3
     Color : 1,1,1,1
     Metallic : 0
     Roughness : 0.816
+    AlphaClip : 0
+    AlphaCutoff : 0.5
     AlbedoTexture : textures/sponza/sponza_arch_diff.tga
     MetallicTexture : 
     RoughnessTexture : 
@@ -56,13 +64,15 @@ Materials {
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/posz.jpg|textures/sky2/negy.jpg|textures/sky2/posy.jpg|textures/sky2/negx.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 4110484263
+    ID : 35092991
     Name : bricks
     Shader : shaders/lit.spv
-    TextureMask : 9
+    MaterialFlags : 27
     Color : 1,1,1,1
     Metallic : 0
     Roughness : 0.894
+    AlphaClip : 0
+    AlphaCutoff : 0.5
     AlbedoTexture : textures/sponza/spnza_bricks_a_diff.tga
     MetallicTexture : 
     RoughnessTexture : 
@@ -70,13 +80,15 @@ Materials {
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/posy.jpg|textures/sky2/posz.jpg|textures/sky2/negx.jpg|textures/sky2/negy.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 3898091100
+    ID : 1210542436
     Name : ceiling
     Shader : shaders/lit.spv
-    TextureMask : 1
+    MaterialFlags : 3
     Color : 1,1,1,1
     Metallic : 0
     Roughness : 0.867
+    AlphaClip : 0
+    AlphaCutoff : 0.5
     AlbedoTexture : textures/sponza/sponza_ceiling_a_diff.tga
     MetallicTexture : 
     RoughnessTexture : 
@@ -84,13 +96,15 @@ Materials {
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negy.jpg|textures/sky2/negx.jpg|textures/sky2/posz.jpg|textures/sky2/posy.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 1320474455
+    ID : 1391075503
     Name : column_a
     Shader : shaders/lit.spv
-    TextureMask : 1
+    MaterialFlags : 3
     Color : 1,1,1,1
     Metallic : 0
     Roughness : 0.785
+    AlphaClip : 0
+    AlphaCutoff : 0.5
     AlbedoTexture : textures/sponza/sponza_column_a_diff.tga
     MetallicTexture : 
     RoughnessTexture : 
@@ -98,13 +112,15 @@ Materials {
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negy.jpg|textures/sky2/negx.jpg|textures/sky2/posz.jpg|textures/sky2/posy.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 3685947218
+    ID : 3496379082
     Name : column_b
     Shader : shaders/lit.spv
-    TextureMask : 1
+    MaterialFlags : 3
     Color : 1,1,1,1
     Metallic : 0
     Roughness : 0.863
+    AlphaClip : 0
+    AlphaCutoff : 0.5
     AlbedoTexture : textures/sponza/sponza_column_b_diff.tga
     MetallicTexture : 
     RoughnessTexture : 
@@ -112,125 +128,143 @@ Materials {
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negy.jpg|textures/sky2/negx.jpg|textures/sky2/posz.jpg|textures/sky2/posy.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 3155057325
+    ID : 127760149
     Name : column_c
     Shader : shaders/lit.spv
-    TextureMask : 9
+    MaterialFlags : 11
     Color : 1,1,1,1
     Metallic : 0
     Roughness : 0.846
+    AlphaClip : 0
+    AlphaCutoff : 0.5
     AlbedoTexture : textures/sponza/sponza_column_c_diff.tga
     MetallicTexture : 
     RoughnessTexture : 
-    NormalTexture : C:\Users\victo\Desktop\dev\my\shader-forge\build\Debug\textures\sponza\sponza_column_c_ddn.tga
+    NormalTexture : 
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/posy.jpg|textures/sky2/posz.jpg|textures/sky2/negx.jpg|textures/sky2/negy.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 1511285161
+    ID : 3651553329
     Name : details
     Shader : shaders/lit.spv
-    TextureMask : 9
+    MaterialFlags : 11
     Color : 1,1,1,1
     Metallic : 0
     Roughness : 0.833
+    AlphaClip : 0
+    AlphaCutoff : 0.5
     AlbedoTexture : textures/sponza/sponza_details_diff.tga
     MetallicTexture : 
     RoughnessTexture : 
-    NormalTexture : C:\Users\victo\Desktop\dev\my\shader-forge\build\Debug\textures\sponza\sponza_details_ddn.tga
+    NormalTexture : 
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/posz.jpg|textures/sky2/negy.jpg|textures/sky2/posy.jpg|textures/sky2/negx.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 4114766388
+    ID : 3455046604
     Name : fabric_a
     Shader : shaders/lit.spv
-    TextureMask : 9
+    MaterialFlags : 11
     Color : 1,1,1,1
     Metallic : 0
     Roughness : 0.843
+    AlphaClip : 0
+    AlphaCutoff : 0.5
     AlbedoTexture : textures/sponza/sponza_fabric_blue_diff.tga
     MetallicTexture : 
     RoughnessTexture : 
-    NormalTexture : C:\Users\victo\Desktop\dev\my\shader-forge\build\Debug\textures\sponza\sponza_fabric_ddn.tga
+    NormalTexture : 
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/posy.jpg|textures/sky2/posz.jpg|textures/sky2/negx.jpg|textures/sky2/negy.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 214147901
+    ID : 2323238709
     Name : fabric_b
     Shader : shaders/lit.spv
-    TextureMask : 9
+    MaterialFlags : 11
     Color : 1,1,1,1
     Metallic : 0
     Roughness : 0.898
+    AlphaClip : 0
+    AlphaCutoff : 0.5
     AlbedoTexture : textures/sponza/sponza_fabric_green_diff.tga
     MetallicTexture : 
     RoughnessTexture : 
-    NormalTexture : C:\Users\victo\Desktop\dev\my\shader-forge\build\Debug\textures\sponza\sponza_fabric_ddn.tga
+    NormalTexture : 
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/posy.jpg|textures/sky2/posz.jpg|textures/sky2/negx.jpg|textures/sky2/negy.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 387039493
+    ID : 1706246925
     Name : curtain_a
     Shader : shaders/lit.spv
-    TextureMask : 9
+    MaterialFlags : 11
     Color : 1,1,1,1
     Metallic : 0
     Roughness : 0.901
+    AlphaClip : 0
+    AlphaCutoff : 0.5
     AlbedoTexture : textures/sponza/sponza_curtain_blue_diff.tga
     MetallicTexture : 
     RoughnessTexture : 
-    NormalTexture : C:\Users\victo\Desktop\dev\my\shader-forge\build\Debug\textures\sponza\sponza_curtain_ddn.tga
+    NormalTexture : 
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/posz.jpg|textures/sky2/negy.jpg|textures/sky2/posy.jpg|textures/sky2/negx.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 1922845212
+    ID : 833465700
     Name : curtain_b
     Shader : shaders/lit.spv
-    TextureMask : 9
+    MaterialFlags : 11
     Color : 1,1,1,1
     Metallic : 0
     Roughness : 0.85
+    AlphaClip : 0
+    AlphaCutoff : 0.5
     AlbedoTexture : textures/sponza/sponza_curtain_green_diff.tga
     MetallicTexture : 
     RoughnessTexture : 
-    NormalTexture : C:\Users\victo\Desktop\dev\my\shader-forge\build\Debug\textures\sponza\sponza_curtain_ddn.tga
+    NormalTexture : 
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/posz.jpg|textures/sky2/negy.jpg|textures/sky2/posy.jpg|textures/sky2/negx.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 3517958048
+    ID : 3378280760
     Name : fabric
     Shader : shaders/lit.spv
-    TextureMask : 9
+    MaterialFlags : 11
     Color : 1,1,1,1
     Metallic : 0
     Roughness : 0.799
+    AlphaClip : 0
+    AlphaCutoff : 0.5
     AlbedoTexture : textures/sponza/sponza_fabric_diff.tga
     MetallicTexture : 
     RoughnessTexture : 
-    NormalTexture : C:\Users\victo\Desktop\dev\my\shader-forge\build\Debug\textures\sponza\sponza_fabric_ddn.tga
+    NormalTexture : 
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/posz.jpg|textures/sky2/negy.jpg|textures/sky2/posy.jpg|textures/sky2/negx.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 3544478357
+    ID : 1540951597
     Name : curtain
     Shader : shaders/lit.spv
-    TextureMask : 9
+    MaterialFlags : 11
     Color : 1,1,1,1
     Metallic : 0
     Roughness : 0.839
+    AlphaClip : 0
+    AlphaCutoff : 0.5
     AlbedoTexture : textures/sponza/sponza_curtain_diff.tga
     MetallicTexture : 
     RoughnessTexture : 
-    NormalTexture : C:\Users\victo\Desktop\dev\my\shader-forge\build\Debug\textures\sponza\sponza_curtain_ddn.tga
+    NormalTexture : 
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/posz.jpg|textures/sky2/negy.jpg|textures/sky2/posy.jpg|textures/sky2/negx.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 1748481909
+    ID : 848909293
     Name : flagpole
     Shader : shaders/lit.spv
-    TextureMask : 1
+    MaterialFlags : 3
     Color : 1,1,1,1
     Metallic : 0
     Roughness : 0.5
+    AlphaClip : 0
+    AlphaCutoff : 0.5
     AlbedoTexture : textures/sponza/sponza_flagpole_diff.tga
     MetallicTexture : 
     RoughnessTexture : 
@@ -238,41 +272,47 @@ Materials {
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 3430427537
+    ID : 973785609
     Name : floor
     Shader : shaders/lit.spv
-    TextureMask : 9
+    MaterialFlags : 19
     Color : 1,1,1,1
     Metallic : 0
-    Roughness : 1
+    Roughness : 0.316
+    AlphaClip : 0
+    AlphaCutoff : 0.5
     AlbedoTexture : textures/sponza/sponza_floor_a_diff.tga
     MetallicTexture : 
     RoughnessTexture : 
     NormalTexture : textures\sponza\sponza_floor_a_ddn.tga
-    EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/posz.jpg|textures/sky2/negy.jpg|textures/sky2/posy.jpg|textures/sky2/negx.jpg|textures/sky2/negz.jpg
+    EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/posy.jpg|textures/sky2/posz.jpg|textures/sky2/negx.jpg|textures/sky2/negy.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 2786271619
+    ID : 2084888763
     Name : roof
     Shader : shaders/lit.spv
-    TextureMask : 9
+    MaterialFlags : 11
     Color : 1,1,1,1
     Metallic : 0
     Roughness : 0.5
+    AlphaClip : 0
+    AlphaCutoff : 0.5
     AlbedoTexture : textures/sponza/sponza_roof_diff.tga
     MetallicTexture : 
     RoughnessTexture : 
-    NormalTexture : C:\Users\victo\Desktop\dev\my\shader-forge\build\Debug\textures\sponza\sponza_floor_a_ddn.tga
+    NormalTexture : 
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/posz.jpg|textures/sky2/negy.jpg|textures/sky2/posy.jpg|textures/sky2/negx.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 4078635824
+    ID : 3683290968
     Name : vase
     Shader : shaders/lit.spv
-    TextureMask : 1
+    MaterialFlags : 3
     Color : 1,1,1,1
     Metallic : 0
     Roughness : 0.5
+    AlphaClip : 0
+    AlphaCutoff : 0.5
     AlbedoTexture : textures/sponza/vase_dif.tga
     MetallicTexture : 
     RoughnessTexture : 
@@ -280,27 +320,31 @@ Materials {
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 1625309999
+    ID : 2946188615
     Name : vase_hanging
     Shader : shaders/lit.spv
-    TextureMask : 9
+    MaterialFlags : 11
     Color : 1,1,1,1
     Metallic : 1
     Roughness : 0.495
+    AlphaClip : 0
+    AlphaCutoff : 0.5
     AlbedoTexture : textures/sponza/vase_hanging.tga
     MetallicTexture : 
     RoughnessTexture : 
-    NormalTexture : C:\Users\victo\Desktop\dev\my\shader-forge\build\Debug\textures\sponza\vase_hanging_ddn.tga
+    NormalTexture : 
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 1847088107
+    ID : 2469254675
     Name : vase_round
     Shader : shaders/lit.spv
-    TextureMask : 9
+    MaterialFlags : 27
     Color : 1,1,1,1
     Metallic : 0
     Roughness : 0.423
+    AlphaClip : 0
+    AlphaCutoff : 0.5
     AlbedoTexture : textures/sponza/vase_round.tga
     MetallicTexture : 
     RoughnessTexture : 
@@ -308,14 +352,32 @@ Materials {
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/posy.jpg|textures/sky2/posz.jpg|textures/sky2/negx.jpg|textures/sky2/negy.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 2580605898
+    ID : 2183034546
     Name : chain
     Shader : shaders/lit.spv
-    TextureMask : 1
+    MaterialFlags : 3
     Color : 1,1,1,1
     Metallic : 0
     Roughness : 0.5
+    AlphaClip : 0
+    AlphaCutoff : 0.5
     AlbedoTexture : textures/sponza/chain_texture.tga
+    MetallicTexture : 
+    RoughnessTexture : 
+    NormalTexture : 
+    EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
+  }
+  Material {
+    ID : 1038337042
+    Name : plant
+    Shader : shaders/lit.spv
+    MaterialFlags : 34
+    Color : 1,1,1,1
+    Metallic : 0
+    Roughness : 0.722
+    AlphaClip : 1
+    AlphaCutoff : 0.5
+    AlbedoTexture : textures/sponza/vase_plant.tga
     MetallicTexture : 
     RoughnessTexture : 
     NormalTexture : 
@@ -329,406 +391,406 @@ Node {
   Rotation : 1,0,0,0
   Scale : 0.01,0.01,0.01
   Mesh : models/sponza.obj
-  MaterialID : 3685947218
-  MaterialID : 387039493
-  MaterialID : 3544478357
-  MaterialID : 3685947218
-  MaterialID : 1748481909
-  MaterialID : 3155057325
-  MaterialID : 3155057325
-  MaterialID : 3544478357
-  MaterialID : 387039493
-  MaterialID : 1922845212
-  MaterialID : 387039493
-  MaterialID : 1922845212
-  MaterialID : 387039493
-  MaterialID : 3544478357
-  MaterialID : 1922845212
-  MaterialID : 1748481909
-  MaterialID : 3685947218
-  MaterialID : 1748481909
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 1748481909
-  MaterialID : 3430427537
-  MaterialID : 4110484263
-  MaterialID : 3155057325
-  MaterialID : 3155057325
-  MaterialID : 3155057325
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 1320474455
-  MaterialID : 1320474455
-  MaterialID : 4110484263
-  MaterialID : 1511285161
-  MaterialID : 3155057325
-  MaterialID : 3155057325
-  MaterialID : 1511285161
-  MaterialID : 4110484263
-  MaterialID : 1511285161
-  MaterialID : 1511285161
-  MaterialID : 1511285161
-  MaterialID : 4110484263
-  MaterialID : 3155057325
-  MaterialID : 3155057325
-  MaterialID : 3155057325
-  MaterialID : 3155057325
-  MaterialID : 3155057325
-  MaterialID : 3155057325
-  MaterialID : 1625309999
-  MaterialID : 2580605898
-  MaterialID : 2580605898
-  MaterialID : 1625309999
-  MaterialID : 1625309999
-  MaterialID : 3155057325
-  MaterialID : 1625309999
-  MaterialID : 2580605898
-  MaterialID : 2580605898
-  MaterialID : 3155057325
-  MaterialID : 3155057325
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 1753883957
-  MaterialID : 1753883957
-  MaterialID : 1320474455
-  MaterialID : 1320474455
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 1753883957
-  MaterialID : 1753883957
-  MaterialID : 3685947218
-  MaterialID : 1753883957
-  MaterialID : 3898091100
-  MaterialID : 1753883957
-  MaterialID : 3898091100
-  MaterialID : 1753883957
-  MaterialID : 1753883957
-  MaterialID : 1753883957
-  MaterialID : 3898091100
-  MaterialID : 3517958048
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 214147901
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 1748481909
-  MaterialID : 3155057325
-  MaterialID : 3155057325
-  MaterialID : 3155057325
-  MaterialID : 3155057325
-  MaterialID : 3155057325
-  MaterialID : 3155057325
-  MaterialID : 3155057325
-  MaterialID : 3155057325
-  MaterialID : 1753883957
-  MaterialID : 1753883957
-  MaterialID : 1748481909
-  MaterialID : 1748481909
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 1748481909
-  MaterialID : 3685947218
-  MaterialID : 1748481909
-  MaterialID : 1748481909
-  MaterialID : 3685947218
-  MaterialID : 1748481909
-  MaterialID : 3155057325
-  MaterialID : 1748481909
-  MaterialID : 1748481909
-  MaterialID : 1748481909
-  MaterialID : 1748481909
-  MaterialID : 2176704029
-  MaterialID : 1748481909
-  MaterialID : 1748481909
-  MaterialID : 1748481909
-  MaterialID : 2176704029
-  MaterialID : 1748481909
-  MaterialID : 1748481909
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 4110484263
-  MaterialID : 4110484263
-  MaterialID : 1753883957
-  MaterialID : 2176704029
-  MaterialID : 1847088107
-  MaterialID : 2176704029
-  MaterialID : 1565805073
-  MaterialID : 3898091100
-  MaterialID : 1320474455
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 1753883957
-  MaterialID : 1320474455
-  MaterialID : 1320474455
-  MaterialID : 1320474455
-  MaterialID : 1320474455
-  MaterialID : 1320474455
-  MaterialID : 1320474455
-  MaterialID : 1320474455
-  MaterialID : 3898091100
-  MaterialID : 3430427537
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 2176704029
-  MaterialID : 4110484263
-  MaterialID : 1748481909
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 2580605898
-  MaterialID : 1753883957
-  MaterialID : 1753883957
-  MaterialID : 1753883957
-  MaterialID : 1753883957
-  MaterialID : 4110484263
-  MaterialID : 1753883957
-  MaterialID : 1753883957
-  MaterialID : 1753883957
-  MaterialID : 4110484263
-  MaterialID : 4110484263
-  MaterialID : 3685947218
-  MaterialID : 2580605898
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 2580605898
-  MaterialID : 2580605898
-  MaterialID : 3685947218
-  MaterialID : 1625309999
-  MaterialID : 1625309999
-  MaterialID : 2580605898
-  MaterialID : 1625309999
-  MaterialID : 3685947218
-  MaterialID : 2580605898
-  MaterialID : 1625309999
-  MaterialID : 1625309999
-  MaterialID : 3155057325
-  MaterialID : 1748481909
-  MaterialID : 3155057325
-  MaterialID : 3685947218
-  MaterialID : 3155057325
-  MaterialID : 1748481909
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 1748481909
-  MaterialID : 1748481909
-  MaterialID : 1748481909
-  MaterialID : 3155057325
-  MaterialID : 3155057325
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3155057325
-  MaterialID : 3155057325
-  MaterialID : 3155057325
-  MaterialID : 3155057325
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3155057325
-  MaterialID : 3155057325
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3898091100
-  MaterialID : 1753883957
-  MaterialID : 3898091100
-  MaterialID : 1753883957
-  MaterialID : 3898091100
-  MaterialID : 1753883957
-  MaterialID : 3898091100
-  MaterialID : 1753883957
-  MaterialID : 3898091100
-  MaterialID : 1753883957
-  MaterialID : 1625309999
-  MaterialID : 3685947218
-  MaterialID : 3517958048
-  MaterialID : 3685947218
-  MaterialID : 3517958048
-  MaterialID : 4114766388
-  MaterialID : 214147901
-  MaterialID : 3685947218
-  MaterialID : 2176704029
-  MaterialID : 2176704029
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 214147901
-  MaterialID : 4114766388
-  MaterialID : 1916092003
-  MaterialID : 1565805073
-  MaterialID : 4078635824
-  MaterialID : 4078635824
-  MaterialID : 4078635824
-  MaterialID : 4078635824
-  MaterialID : 1847088107
-  MaterialID : 2176704029
-  MaterialID : 1847088107
-  MaterialID : 2176704029
-  MaterialID : 1847088107
-  MaterialID : 2176704029
-  MaterialID : 1625309999
-  MaterialID : 4110484263
-  MaterialID : 1916092003
-  MaterialID : 1565805073
-  MaterialID : 1753883957
-  MaterialID : 1748481909
-  MaterialID : 1847088107
-  MaterialID : 2176704029
-  MaterialID : 3685947218
-  MaterialID : 1748481909
-  MaterialID : 3685947218
-  MaterialID : 1748481909
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 2580605898
-  MaterialID : 3685947218
-  MaterialID : 1748481909
-  MaterialID : 1748481909
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 2580605898
-  MaterialID : 1625309999
-  MaterialID : 1847088107
-  MaterialID : 2176704029
-  MaterialID : 1847088107
-  MaterialID : 2176704029
-  MaterialID : 2580605898
-  MaterialID : 1625309999
-  MaterialID : 2580605898
-  MaterialID : 1625309999
-  MaterialID : 1625309999
-  MaterialID : 1847088107
-  MaterialID : 2176704029
-  MaterialID : 1625309999
-  MaterialID : 1625309999
-  MaterialID : 1625309999
-  MaterialID : 1748481909
-  MaterialID : 1748481909
-  MaterialID : 1748481909
-  MaterialID : 1748481909
-  MaterialID : 1748481909
-  MaterialID : 1748481909
-  MaterialID : 1748481909
-  MaterialID : 1748481909
-  MaterialID : 1748481909
-  MaterialID : 1748481909
-  MaterialID : 3155057325
-  MaterialID : 3155057325
-  MaterialID : 3155057325
-  MaterialID : 3155057325
-  MaterialID : 3898091100
-  MaterialID : 4110484263
-  MaterialID : 1753883957
-  MaterialID : 4110484263
-  MaterialID : 1753883957
-  MaterialID : 3898091100
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 2176704029
-  MaterialID : 2176704029
-  MaterialID : 3685947218
-  MaterialID : 3685947218
-  MaterialID : 1748481909
-  MaterialID : 2176704029
-  MaterialID : 1748481909
-  MaterialID : 1748481909
-  MaterialID : 1748481909
-  MaterialID : 1748481909
-  MaterialID : 4110484263
-  MaterialID : 2786271619
-  MaterialID : 2786271619
-  MaterialID : 2580605898
-  MaterialID : 3155057325
-  MaterialID : 2580605898
-  MaterialID : 1625309999
-  MaterialID : 3155057325
-  MaterialID : 3155057325
-  MaterialID : 3155057325
-  MaterialID : 3155057325
-  MaterialID : 3155057325
-  MaterialID : 3155057325
-  MaterialID : 3155057325
-  MaterialID : 3155057325
-  MaterialID : 3155057325
-  MaterialID : 3155057325
-  MaterialID : 3155057325
-  MaterialID : 1625309999
+  MaterialID : 3496379082
+  MaterialID : 1706246925
+  MaterialID : 1540951597
+  MaterialID : 3496379082
+  MaterialID : 848909293
+  MaterialID : 127760149
+  MaterialID : 127760149
+  MaterialID : 1540951597
+  MaterialID : 1706246925
+  MaterialID : 833465700
+  MaterialID : 1706246925
+  MaterialID : 833465700
+  MaterialID : 1706246925
+  MaterialID : 1540951597
+  MaterialID : 833465700
+  MaterialID : 848909293
+  MaterialID : 3496379082
+  MaterialID : 848909293
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 848909293
+  MaterialID : 973785609
+  MaterialID : 35092991
+  MaterialID : 127760149
+  MaterialID : 127760149
+  MaterialID : 127760149
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 1391075503
+  MaterialID : 1391075503
+  MaterialID : 35092991
+  MaterialID : 3651553329
+  MaterialID : 127760149
+  MaterialID : 127760149
+  MaterialID : 3651553329
+  MaterialID : 35092991
+  MaterialID : 3651553329
+  MaterialID : 3651553329
+  MaterialID : 3651553329
+  MaterialID : 35092991
+  MaterialID : 127760149
+  MaterialID : 127760149
+  MaterialID : 127760149
+  MaterialID : 127760149
+  MaterialID : 127760149
+  MaterialID : 127760149
+  MaterialID : 2946188615
+  MaterialID : 2183034546
+  MaterialID : 2183034546
+  MaterialID : 2946188615
+  MaterialID : 2946188615
+  MaterialID : 127760149
+  MaterialID : 2946188615
+  MaterialID : 2183034546
+  MaterialID : 2183034546
+  MaterialID : 127760149
+  MaterialID : 127760149
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 1928866701
+  MaterialID : 1928866701
+  MaterialID : 1391075503
+  MaterialID : 1391075503
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 1928866701
+  MaterialID : 1928866701
+  MaterialID : 3496379082
+  MaterialID : 1928866701
+  MaterialID : 1210542436
+  MaterialID : 1928866701
+  MaterialID : 1210542436
+  MaterialID : 1928866701
+  MaterialID : 1928866701
+  MaterialID : 1928866701
+  MaterialID : 1210542436
+  MaterialID : 3378280760
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 2323238709
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 848909293
+  MaterialID : 127760149
+  MaterialID : 127760149
+  MaterialID : 127760149
+  MaterialID : 127760149
+  MaterialID : 127760149
+  MaterialID : 127760149
+  MaterialID : 127760149
+  MaterialID : 127760149
+  MaterialID : 1928866701
+  MaterialID : 1928866701
+  MaterialID : 848909293
+  MaterialID : 848909293
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 848909293
+  MaterialID : 3496379082
+  MaterialID : 848909293
+  MaterialID : 848909293
+  MaterialID : 3496379082
+  MaterialID : 848909293
+  MaterialID : 127760149
+  MaterialID : 848909293
+  MaterialID : 848909293
+  MaterialID : 848909293
+  MaterialID : 848909293
+  MaterialID : 1038337042
+  MaterialID : 848909293
+  MaterialID : 848909293
+  MaterialID : 848909293
+  MaterialID : 1038337042
+  MaterialID : 848909293
+  MaterialID : 848909293
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 35092991
+  MaterialID : 35092991
+  MaterialID : 1928866701
+  MaterialID : 1038337042
+  MaterialID : 2469254675
+  MaterialID : 1038337042
+  MaterialID : 4188002441
+  MaterialID : 1210542436
+  MaterialID : 1391075503
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 1928866701
+  MaterialID : 1391075503
+  MaterialID : 1391075503
+  MaterialID : 1391075503
+  MaterialID : 1391075503
+  MaterialID : 1391075503
+  MaterialID : 1391075503
+  MaterialID : 1391075503
+  MaterialID : 1210542436
+  MaterialID : 973785609
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 2816263693
+  MaterialID : 35092991
+  MaterialID : 848909293
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 2183034546
+  MaterialID : 1928866701
+  MaterialID : 1928866701
+  MaterialID : 1928866701
+  MaterialID : 1928866701
+  MaterialID : 35092991
+  MaterialID : 1928866701
+  MaterialID : 1928866701
+  MaterialID : 1928866701
+  MaterialID : 35092991
+  MaterialID : 35092991
+  MaterialID : 3496379082
+  MaterialID : 2183034546
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 2183034546
+  MaterialID : 2183034546
+  MaterialID : 3496379082
+  MaterialID : 2946188615
+  MaterialID : 2946188615
+  MaterialID : 2183034546
+  MaterialID : 2946188615
+  MaterialID : 3496379082
+  MaterialID : 2183034546
+  MaterialID : 2946188615
+  MaterialID : 2946188615
+  MaterialID : 127760149
+  MaterialID : 848909293
+  MaterialID : 127760149
+  MaterialID : 3496379082
+  MaterialID : 127760149
+  MaterialID : 848909293
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 848909293
+  MaterialID : 848909293
+  MaterialID : 848909293
+  MaterialID : 127760149
+  MaterialID : 127760149
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 127760149
+  MaterialID : 127760149
+  MaterialID : 127760149
+  MaterialID : 127760149
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 127760149
+  MaterialID : 127760149
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 1210542436
+  MaterialID : 1928866701
+  MaterialID : 1210542436
+  MaterialID : 1928866701
+  MaterialID : 1210542436
+  MaterialID : 1928866701
+  MaterialID : 1210542436
+  MaterialID : 1928866701
+  MaterialID : 1210542436
+  MaterialID : 1928866701
+  MaterialID : 2946188615
+  MaterialID : 3496379082
+  MaterialID : 3378280760
+  MaterialID : 3496379082
+  MaterialID : 3378280760
+  MaterialID : 3455046604
+  MaterialID : 2323238709
+  MaterialID : 3496379082
+  MaterialID : 1038337042
+  MaterialID : 1038337042
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 2323238709
+  MaterialID : 3455046604
+  MaterialID : 310543195
+  MaterialID : 4188002441
+  MaterialID : 3683290968
+  MaterialID : 3683290968
+  MaterialID : 3683290968
+  MaterialID : 3683290968
+  MaterialID : 2469254675
+  MaterialID : 1038337042
+  MaterialID : 2469254675
+  MaterialID : 1038337042
+  MaterialID : 2469254675
+  MaterialID : 1038337042
+  MaterialID : 2946188615
+  MaterialID : 35092991
+  MaterialID : 310543195
+  MaterialID : 4188002441
+  MaterialID : 1928866701
+  MaterialID : 848909293
+  MaterialID : 2469254675
+  MaterialID : 1038337042
+  MaterialID : 3496379082
+  MaterialID : 848909293
+  MaterialID : 3496379082
+  MaterialID : 848909293
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 2183034546
+  MaterialID : 3496379082
+  MaterialID : 848909293
+  MaterialID : 848909293
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 2183034546
+  MaterialID : 2946188615
+  MaterialID : 2469254675
+  MaterialID : 1038337042
+  MaterialID : 2469254675
+  MaterialID : 1038337042
+  MaterialID : 2183034546
+  MaterialID : 2946188615
+  MaterialID : 2183034546
+  MaterialID : 2946188615
+  MaterialID : 2946188615
+  MaterialID : 2469254675
+  MaterialID : 1038337042
+  MaterialID : 2946188615
+  MaterialID : 2946188615
+  MaterialID : 2946188615
+  MaterialID : 848909293
+  MaterialID : 848909293
+  MaterialID : 848909293
+  MaterialID : 848909293
+  MaterialID : 848909293
+  MaterialID : 848909293
+  MaterialID : 848909293
+  MaterialID : 848909293
+  MaterialID : 848909293
+  MaterialID : 848909293
+  MaterialID : 127760149
+  MaterialID : 127760149
+  MaterialID : 127760149
+  MaterialID : 127760149
+  MaterialID : 1210542436
+  MaterialID : 35092991
+  MaterialID : 1928866701
+  MaterialID : 35092991
+  MaterialID : 1928866701
+  MaterialID : 1210542436
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 1038337042
+  MaterialID : 1038337042
+  MaterialID : 3496379082
+  MaterialID : 3496379082
+  MaterialID : 848909293
+  MaterialID : 1038337042
+  MaterialID : 848909293
+  MaterialID : 848909293
+  MaterialID : 848909293
+  MaterialID : 848909293
+  MaterialID : 35092991
+  MaterialID : 2084888763
+  MaterialID : 2084888763
+  MaterialID : 2183034546
+  MaterialID : 127760149
+  MaterialID : 2183034546
+  MaterialID : 2946188615
+  MaterialID : 127760149
+  MaterialID : 127760149
+  MaterialID : 127760149
+  MaterialID : 127760149
+  MaterialID : 127760149
+  MaterialID : 127760149
+  MaterialID : 127760149
+  MaterialID : 127760149
+  MaterialID : 127760149
+  MaterialID : 127760149
+  MaterialID : 127760149
+  MaterialID : 2946188615
 }
 
 Node {
   Name : empty
   Position : -3.091,2.2014,-0.394067
-  Rotation : -0.527411,-0.51965,0.371512,0.560161
+  Rotation : 0.627385,0.393179,-0.483945,-0.466471
   Scale : 1,1,1
-  Light : Directional;25;4;1,1,1;1;2048;5.000000,10.000000,20.000000,30.000000
+  Light : Directional;25;5;1,1,1;1;2048;5.000000,10.000000,20.000000
 }
 

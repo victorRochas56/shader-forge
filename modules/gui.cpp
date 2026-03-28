@@ -457,3 +457,12 @@ void showDebugWindow(Renderer* renderer){
     ImGui::SliderFloat("Cull FOV Scale", &renderer->cullFovScale, 0.1f, 1.0f);
     ImGui::End();
 }
+
+void showTraces() {
+    ImGui::Begin("CPU Timing");
+    auto& traces = Tracer::getTraces();
+    for(auto& trace : traces){
+        ImGui::Text((trace.first+" : "+std::to_string(trace.second.averageDuration.count() * 1000.0)+" ms").c_str());
+    }
+    ImGui::End();
+};

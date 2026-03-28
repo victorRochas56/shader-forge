@@ -10,6 +10,7 @@
 #include "imgui_impl_vulkan.h"
 #include "renderer.hpp"
 #include "input.hpp"
+#include "profiling.hpp"
 #define GLFW_INCLUDE_NONE
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
@@ -66,3 +67,4 @@ void showImageViewList(Renderer* renderer);
 void showActionMenu(uint32_t context, Renderer* renderer, float posX, float posY);
 void showBufferAllocs(Renderer* renderer);
 void showDebugWindow(Renderer* renderer);
+void showTraces();

@@ -39,7 +39,7 @@ class ResourceManager {
   public:
     ResourceManager(Device& device, vk::raii::CommandPool& commandPool) : commandPool(commandPool), device(device) {};
 
-    std::tuple<vk::raii::Buffer, vk::raii::DeviceMemory> createIndirectDrawBuffer() {
+    std::tuple<vk::raii::Buffer, vk::raii::DeviceMemory, void*> createIndirectDrawBuffer() {
 
         vk::raii::Buffer indirectDrawBuffer = nullptr;
         vk::raii::DeviceMemory indirectDrawBufferMemory = nullptr;
@@ -56,7 +56,8 @@ class ResourceManager {
 
         indirectDrawBufferMemory = vk::raii::DeviceMemory(device.getDevice(), indirectAllocInfo);
         indirectDrawBuffer.bindMemory(*indirectDrawBufferMemory, 0);
-        return std::make_tuple(std::move(indirectDrawBuffer), std::move(indirectDrawBufferMemory));
+        void* mappedPtr = indirectDrawBufferMemory.mapMemory(0, indirectBufferSize);
+        return std::make_tuple(std::move(indirectDrawBuffer), std::move(indirectDrawBufferMemory), mappedPtr);
     }
 
     void createImage(uint32_t width, uint32_t height, uint32_t mipLevels, vk::SampleCountFlagBits numSamples, vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage,
@@ -181,6 +182,26 @@ class ResourceManager {
         } else {
             executeImageTransition(*commandBuffer, image, oldLayout, newLayout, baseMipLevel, mipLevelCount, baseArrayLayer, layerCount);
         }
+    }
+
+    struct ImageTransitionInfo {
+        vk::Image     image;
+        vk::ImageLayout oldLayout;
+        vk::ImageLayout newLayout;
+        uint32_t baseMipLevel   = 0;
+        uint32_t mipLevelCount  = 1;
+        uint32_t baseArrayLayer = 0;
+        uint32_t layerCount     = 1;
+    };
+
+    void transitionImageLayouts(vk::raii::CommandBuffer& cmd, const std::vector<ImageTransitionInfo>& transitions) {
+        std::vector<vk::ImageMemoryBarrier2> barriers;
+        barriers.reserve(transitions.size());
+        for (const auto& t : transitions) {
+            barriers.push_back(buildBarrier(t.image, t.oldLayout, t.newLayout, t.baseMipLevel, t.mipLevelCount, t.baseArrayLayer, t.layerCount));
+        }
+        vk::DependencyInfo depInfo = {.dependencyFlags = {}, .imageMemoryBarrierCount = static_cast<uint32_t>(barriers.size()), .pImageMemoryBarriers = barriers.data()};
+        cmd.pipelineBarrier2(depInfo);
     }
 
     // load from file (OBJ, GLTF, etc.)
@@ -350,8 +371,8 @@ class ResourceManager {
         endSingleTimeCommands(commandBuffer);
     }
 
-    void executeImageTransition(vk::raii::CommandBuffer& cmd, const vk::Image& image, const vk::ImageLayout oldLayout, const vk::ImageLayout newLayout, uint32_t baseMipLevel,
-                                uint32_t mipLevelCount, uint32_t baseArrayLayer, uint32_t layerCount) {
+    vk::ImageMemoryBarrier2 buildBarrier(const vk::Image& image, const vk::ImageLayout oldLayout, const vk::ImageLayout newLayout,
+                                         uint32_t baseMipLevel, uint32_t mipLevelCount, uint32_t baseArrayLayer, uint32_t layerCount) {
         vk::ImageMemoryBarrier2 barrier{.oldLayout = oldLayout,
                                         .newLayout = newLayout,
                                         .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
@@ -456,7 +477,6 @@ class ResourceManager {
             barrier.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
         }
 
-        // Shadow map transitions (PCF: shader read -> color attachment for writing depth)
         else if (oldLayout == vk::ImageLayout::eShaderReadOnlyOptimal && newLayout == vk::ImageLayout::eColorAttachmentOptimal) {
             barrier.srcAccessMask = vk::AccessFlagBits2::eShaderRead;
             barrier.dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
@@ -492,6 +512,13 @@ class ResourceManager {
         else {
             throw std::invalid_argument("unsupported layout transition!");
         }
+
+        return barrier;
+    }
+
+    void executeImageTransition(vk::raii::CommandBuffer& cmd, const vk::Image& image, const vk::ImageLayout oldLayout, const vk::ImageLayout newLayout, uint32_t baseMipLevel,
+                                uint32_t mipLevelCount, uint32_t baseArrayLayer, uint32_t layerCount) {
+        auto barrier = buildBarrier(image, oldLayout, newLayout, baseMipLevel, mipLevelCount, baseArrayLayer, layerCount);
         vk::DependencyInfo dependency_info = {.dependencyFlags = {}, .imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier};
         cmd.pipelineBarrier2(dependency_info);
     }

@@ -25,7 +25,8 @@ class Swapchain {
         auto surfaceCapabilities = device.getPhysicalDevice().getSurfaceCapabilitiesKHR(*surface);
         swapChainImageFormat = chooseSwapSurfaceFormat(device.getPhysicalDevice().getSurfaceFormatsKHR(*surface)).format;
         swapChainExtent = chooseSwapExtent(surfaceCapabilities, &window);
-        auto minImageCount = std::max(3u, surfaceCapabilities.minImageCount);
+        auto minImageCount = std::max(4u, surfaceCapabilities.minImageCount);
+        std::cout << "MIN IMAGE COUNT : " << surfaceCapabilities.minImageCount << " MAX IMAGE COUNT : " << surfaceCapabilities.maxImageCount << std::endl;
         minImageCount = (surfaceCapabilities.maxImageCount > 0 && minImageCount > surfaceCapabilities.maxImageCount) ? surfaceCapabilities.maxImageCount : minImageCount;
         vk::SwapchainCreateInfoKHR swapChainCreateInfo{.surface = *surface,
                                                        .minImageCount = minImageCount,
@@ -42,6 +43,7 @@ class Swapchain {
 
         swapChain = vk::raii::SwapchainKHR(device.getDevice(), swapChainCreateInfo);
         swapChainImages = swapChain.getImages();
+        std::cout << "ACTUAL SWAPCHAIN IMAGES: " << swapChainImages.size() << std::endl;
         createImageViews();
         createColorResources();
         createDepthResources();
@@ -126,7 +128,7 @@ class Swapchain {
     vk::PresentModeKHR chooseSwapPresentMode(const std::vector<vk::PresentModeKHR>& availablePresentModes, bool& useVsync) {
         if (!useVsync) {
             for (const auto& availablePresentMode : availablePresentModes) {
-                if (availablePresentMode == vk::PresentModeKHR::eMailbox) {
+                if (availablePresentMode == vk::PresentModeKHR::eImmediate) {
                     return availablePresentMode;
                 }
             }

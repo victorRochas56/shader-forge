@@ -1,4 +1,5 @@
 import modules.common;
+import modules.pbr;
 
 [shader("vertex")]
 VertexOutput vertMain(uint vertexID : SV_VertexID, uint drawID : SV_DrawIndex)
@@ -169,78 +170,6 @@ FragmentOutput fragMain(VertexOutput input)
 }
 
 
-
-float3 fresnelSchlick(float cosTheta, float3 F0)
-{
-    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
-}
-
-float3 fresnelSchlickRoughness(float cosTheta, float3 F0, float roughness)
-{
-    return F0 + (max(float3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
-}
-
-float DistributionGGX(float3 N, float3 H, float roughness)
-{
-    float a      = roughness*roughness;
-    float a2     = a*a;
-    float NdotH  = max(dot(N, H), 0.0);
-    float NdotH2 = NdotH*NdotH;
-
-    float num   = a2;
-    float denom = (NdotH2 * (a2 - 1.0) + 1.0);
-    denom = 3.14159265 * denom * denom;
-
-    return num / denom;
-}
-
-float GeometrySchlickGGX(float NdotV, float roughness)
-{
-    float r = (roughness + 1.0);
-    float k = (r*r) / 8.0;
-
-    float num   = NdotV;
-    float denom = NdotV * (1.0 - k) + k;
-
-    return num / denom;
-}
-
-float GeometrySmith(float3 N, float3 V, float3 L, float roughness)
-{
-    float NdotV = max(dot(N, V), 0.0);
-    float NdotL = max(dot(N, L), 0.0);
-    float ggx2  = GeometrySchlickGGX(NdotV, roughness);
-    float ggx1  = GeometrySchlickGGX(NdotL, roughness);
-
-    return ggx1 * ggx2;
-}
-
-float3 calculateSpecularIBL(float3 N, float3 V, float roughness, float3 F0, TextureCube envMap, SamplerState envSampler)
-{
-    float3 R = reflect(-V, N);
-
-    uint width, height, mipLevels;
-    envMap.GetDimensions(0, width, height, mipLevels);
-    float maxMipLevel = float(mipLevels - 1);
-
-    float mipLevel = roughness * maxMipLevel;
-
-    float3 prefilteredColor = envMap.SampleLevel(envSampler, R, mipLevel).rgb;
-
-    float NdotV = max(dot(N, V), 0.0);
-    float3 F = fresnelSchlickRoughness(NdotV, F0, roughness);
-
-    return prefilteredColor * F;
-}
-
-float3 calculateDiffuseIBL(float3 N, float3 albedo, TextureCube envMap, SamplerState envSampler)
-{
-    uint width, height, mipLevels;
-    envMap.GetDimensions(0, width, height, mipLevels);
-    float maxMipLevel = float(mipLevels - 1);
-    float3 irradiance = envMap.SampleLevel(envSampler, N, maxMipLevel).rgb;
-    return irradiance * albedo / 3.14159265;
-}
 
 float calculateShadow(float3 fragWorldPos, float3 cameraPos, float3 cameraForward, float3 geometricNormal, float3 L, Light light)
 {

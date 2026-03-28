@@ -165,6 +165,7 @@ struct SSRPushConstants {
     float thickness;        // depth tolerance for hit detection
     float roughnessThreshold; // skip SSR for fragments above this roughness
     int maxSteps;             // max ray march iterations
+    uint32_t frameIndex;
 };
 
 struct HiZPushConstants {

@@ -82,6 +82,9 @@ class Device {
         if (devIter != devices.end()) {
             physicalDevice = std::move(*devIter);
             std::cout << "running on device: " << physicalDevice.getProperties().deviceName << std::endl;
+            for(auto& presentMode : physicalDevice.getSurfacePresentModesKHR(surface)){
+                std::cout << "available present modes: " << vk::to_string(presentMode) << std::endl;
+            }
         } else {
             throw std::runtime_error("failed to find a suitable GPU!");
         }

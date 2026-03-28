@@ -22,6 +22,7 @@
 #include "renderer.hpp"
 #include "scenes.hpp"
 #include "gizmo.hpp"
+#include "profiling.hpp"
 
 #define GLM_FORCE_RADIANS
 #define GLM_DEPTH_ZERO_TO_ONE
@@ -59,11 +60,6 @@ class App {
     SceneManager sceneManager;
     MaterialEditorState materialEditorState;
 
-    static constexpr int FRAME_HISTORY_COUNT = 128;
-    double frameTimeHistory[FRAME_HISTORY_COUNT] = {};
-    int frameTimeIndex = 0;
-    int frameTimeCount = 0;
-
     void initWindow() {
         glfwInit();
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -84,16 +80,13 @@ class App {
 
     void mainLoop() {
         //basic frame timing
-        std::chrono::steady_clock::time_point frame_start = std::chrono::high_resolution_clock::now();
-        std::chrono::steady_clock::time_point frame_end = std::chrono::high_resolution_clock::now();
-        std::chrono::duration<double> frame_time = frame_end - frame_start;
         // main app loop
         while (!glfwWindowShouldClose(window)) {
-            frame_start = std::chrono::high_resolution_clock::now();
+            Tracer::startTrace("frame time");
 
             glfwPollEvents();
 
-            drawGui(frame_time);
+            drawGui();
 
             //gizmos are used in "immediate mode" so cleared every frame
             Gizmos::clearLineBuffer();
@@ -104,33 +97,24 @@ class App {
             //main draw loop
             renderer.drawFrame();
 
-            frame_end = std::chrono::high_resolution_clock::now();
-            frame_time = frame_end - frame_start;
-
-            frameTimeHistory[frameTimeIndex] = frame_time.count();
-            frameTimeIndex = (frameTimeIndex + 1) % FRAME_HISTORY_COUNT;
-            if (frameTimeCount < FRAME_HISTORY_COUNT) frameTimeCount++;
-
             renderer.activeCamera.updatePrevVPM(); // kinda ulgy to put here .. TODO: find a place for it
             InputManager::tickInputState();
+
+            Tracer::endTrace("frame time");
         }
         renderer.getDevice().getDevice().waitIdle();
         cleanup();
         //TODO : improve cleanup, prompt for save & exit?
     }
 
-    void drawGui(std::chrono::duration<double>& frame_time) {
+    void drawGui() {
 
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
-        
         ImGui::Begin("frame time");
-        double avgFrameTime = 0.0;
-        for (int i = 0; i < frameTimeCount; i++) avgFrameTime += frameTimeHistory[i];
-        if (frameTimeCount > 0) avgFrameTime /= frameTimeCount;
-        ImGui::Text("%.2f ms (avg %d frames)", avgFrameTime * 1000.0, frameTimeCount);
+        ImGui::Text("%.2f ms (avg %d frames)", Tracer::getTrace("frame time").duration * 1000.0, 1);
         ImGui::End();
 
         ImGui::Begin("node tree");
@@ -149,6 +133,7 @@ class App {
 
         showBufferAllocs(&renderer);
         showDebugWindow(&renderer);
+        showTraces();
 
         ImGui::Begin("Toggles");
         ImGui::SliderInt("ImageMip",&renderer.imageVisMipLevel,0,6);

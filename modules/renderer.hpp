@@ -44,6 +44,7 @@
 #include "scene_graph.hpp"
 #include "utils.hpp"
 #include "node_ops.hpp"
+#include "profiling.hpp"
 
 /*
 main rendering engine holds the state of the scene, nodes, meshes, lights, materials etc...
@@ -131,8 +132,10 @@ class Renderer {
     // Persistent buffers for indirect drawing
     vk::raii::Buffer                    indirectDrawBuffer = nullptr;      // shadow pass
     vk::raii::DeviceMemory              indirectDrawBufferMemory = nullptr;
+    void*                               indirectDrawBufferMapped = nullptr;
     vk::raii::Buffer                    litIndirectDrawBuffer = nullptr;   // lit geometry pass
     vk::raii::DeviceMemory              litIndirectDrawBufferMemory = nullptr;
+    void*                               litIndirectDrawBufferMapped = nullptr;
 
     // Reusable staging vectors (cleared per draw recording)
     std::vector<DrawIndexedIndirectCommand> indirectCommands;
@@ -255,8 +258,8 @@ class Renderer {
         }
 
         // indirect draw buffers (separate for shadow and lit passes)
-        std::tie(indirectDrawBuffer, indirectDrawBufferMemory)       = resourceManager->createIndirectDrawBuffer();
-        std::tie(litIndirectDrawBuffer, litIndirectDrawBufferMemory) = resourceManager->createIndirectDrawBuffer();
+        std::tie(indirectDrawBuffer, indirectDrawBufferMemory, indirectDrawBufferMapped)       = resourceManager->createIndirectDrawBuffer();
+        std::tie(litIndirectDrawBuffer, litIndirectDrawBufferMemory, litIndirectDrawBufferMapped) = resourceManager->createIndirectDrawBuffer();
 
         // after having created all our desire buffers we can initialize the descriptor set
         descriptorSet->createDescriptorSet();
@@ -381,8 +384,10 @@ class Renderer {
 #pragma region DRAWFRAME
     // main render loop
     void drawFrame() {
+        Tracer::startTrace("draw frame");
+        Tracer::startTrace("wait for fences");
         device->getDevice().waitForFences(*inFlightFences[currentFrame], vk::True, UINT64_MAX);
-
+        Tracer::endTrace("wait for fences");
         //TODO make all full screen passes have a resolution scale that can be set dirty when changed/ needs to recreate
         if (ssrResolutionDirty) {
             ssrResolutionDirty = false;
@@ -396,7 +401,9 @@ class Renderer {
             }
         }
 
+        Tracer::startTrace("acquire next image");
         auto [result, imageIndex] = swapchain->getSwapChain().acquireNextImage(UINT64_MAX, *presentCompleteSemaphores[currentFrame], nullptr);
+        Tracer::endTrace("acquire next image");
 
         if (result == vk::Result::eErrorOutOfDateKHR) {
             swapchain->recreate(window, vSync);
@@ -406,15 +413,19 @@ class Renderer {
         if (result != vk::Result::eSuccess && result != vk::Result::eSuboptimalKHR) {
             throw std::runtime_error("failed to acquire swap chain image!");
         }
+        Tracer::startTrace("wait image in flight");
         if (imagesInFlight[imageIndex] != VK_NULL_HANDLE) {
             vk::Result waitResult = device->getDevice().waitForFences(imagesInFlight[imageIndex], vk::True, UINT64_MAX);
             if (waitResult != vk::Result::eSuccess) {
                 throw std::runtime_error("failed to wait for image fence!");
             }
         }
+        Tracer::endTrace("wait image in flight");
 
+        Tracer::startTrace("reset fences");
         imagesInFlight[imageIndex] = *inFlightFences[currentFrame];
         device->getDevice().resetFences(*inFlightFences[currentFrame]);
+        Tracer::endTrace("reset fences");
 
         for (auto& [id, light] : lights) {
             if (light.castsShadows == 1) {
@@ -424,10 +435,12 @@ class Renderer {
                 }
             }
         }
-
+        Tracer::startTrace("record command buffer");
         commandBuffers[currentFrame].reset();
         recordCommandBuffer(imageIndex);
+        Tracer::endTrace("record command buffer");
 
+        Tracer::startTrace("submit & present");
         vk::PipelineStageFlags waitDestinationStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput);
         const vk::SubmitInfo submitInfo{.waitSemaphoreCount = 1,
                                         .pWaitSemaphores = &*presentCompleteSemaphores[currentFrame],
@@ -458,9 +471,11 @@ class Renderer {
         } else if (result != vk::Result::eSuccess) {
             throw std::runtime_error("failed to present swap chain image!");
         }
+        Tracer::endTrace("submit & present");
 
         currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
         //pipelineManager->checkForShaderUpdates(); // TODO enable this
+        Tracer::endTrace("draw frame");
     }
     #pragma endregion
 
@@ -866,7 +881,6 @@ class Renderer {
             if (light.castsShadows == 1)
                 recordShadowPass(cmd, light);
         }
-
         recordGeometryPass(cmd, imageIndex);
 
         if (enableSSR && ssrPipelineIndex != 0xFFFFFFFF)
@@ -985,18 +999,17 @@ class Renderer {
     }
 
     void recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
-        resourceManager->transitionImageLayout(&cmd, swapchain->getSwapChainImages()[imageIndex], vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
-        resourceManager->transitionImageLayout(&cmd, swapchain->getColorImage(), vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
-        resourceManager->transitionImageLayout(&cmd, swapchain->getDepthImage(), vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal);
-        resourceManager->transitionImageLayout(&cmd, roughnessMetal.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
-        resourceManager->transitionImageLayout(&cmd, *descriptorSet->getTextureResource(roughnessMetalTextureIndex).image,
-                                               vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
-        resourceManager->transitionImageLayout(&cmd, normalMSAA.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
-        resourceManager->transitionImageLayout(&cmd, *descriptorSet->getTextureResource(normalTextureIndex).image,
-                                               vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
-        resourceManager->transitionImageLayout(&cmd, motionVectors.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
-        resourceManager->transitionImageLayout(&cmd, *descriptorSet->getTextureResource(motionVectorTextureIndex).image,
-                                               vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
+        resourceManager->transitionImageLayouts(cmd, {
+            {swapchain->getSwapChainImages()[imageIndex],                            vk::ImageLayout::eUndefined,              vk::ImageLayout::eColorAttachmentOptimal},
+            {swapchain->getColorImage(),                                             vk::ImageLayout::eUndefined,              vk::ImageLayout::eColorAttachmentOptimal},
+            {swapchain->getDepthImage(),                                             vk::ImageLayout::eUndefined,              vk::ImageLayout::eDepthStencilAttachmentOptimal},
+            {roughnessMetal.image,                                                   vk::ImageLayout::eUndefined,              vk::ImageLayout::eColorAttachmentOptimal},
+            {*descriptorSet->getTextureResource(roughnessMetalTextureIndex).image,   vk::ImageLayout::eShaderReadOnlyOptimal,  vk::ImageLayout::eColorAttachmentOptimal},
+            {normalMSAA.image,                                                       vk::ImageLayout::eUndefined,              vk::ImageLayout::eColorAttachmentOptimal},
+            {*descriptorSet->getTextureResource(normalTextureIndex).image,           vk::ImageLayout::eShaderReadOnlyOptimal,  vk::ImageLayout::eColorAttachmentOptimal},
+            {motionVectors.image,                                                    vk::ImageLayout::eUndefined,              vk::ImageLayout::eColorAttachmentOptimal},
+            {*descriptorSet->getTextureResource(motionVectorTextureIndex).image,     vk::ImageLayout::eShaderReadOnlyOptimal,  vk::ImageLayout::eColorAttachmentOptimal},
+        });
 
         vk::ClearValue clearColor{.color = vk::ClearColorValue(std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f})};
         vk::ClearValue clearDepth{.depthStencil = vk::ClearDepthStencilValue{1.0f, 0}};
@@ -1042,9 +1055,7 @@ class Renderer {
 #pragma region DEPTH & HIZ
         if (!indirectCommands.empty()) {
             // Upload indirect commands and per-draw data (shared between depth prepass and lit pass)
-            void* data = litIndirectDrawBufferMemory.mapMemory(frameByteOffset, indirectCommands.size() * sizeof(DrawIndexedIndirectCommand));
-            memcpy(data, indirectCommands.data(), indirectCommands.size() * sizeof(DrawIndexedIndirectCommand));
-            litIndirectDrawBufferMemory.unmapMemory();
+            memcpy(static_cast<char*>(litIndirectDrawBufferMapped) + frameByteOffset, indirectCommands.data(), indirectCommands.size() * sizeof(DrawIndexedIndirectCommand));
 
             auto* litDataPtr = descriptorSet->getFixedBufferMappedData<LitDrawData>(litDrawDataBufferIndex);
             if (litDataPtr) {
@@ -1184,31 +1195,27 @@ class Renderer {
 
         cmd.endRendering();
 
-        // Blit color resolve to swapchain image
-        resourceManager->transitionImageLayout(&cmd, *colorResolve.image,
-            vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eTransferSrcOptimal);
-        resourceManager->transitionImageLayout(&cmd, swapchain->getSwapChainImages()[imageIndex],
-            vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eTransferDstOptimal);
+        // Copy color resolve to swapchain image
+        resourceManager->transitionImageLayouts(cmd, {
+            {*colorResolve.image,                         vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eTransferSrcOptimal},
+            {swapchain->getSwapChainImages()[imageIndex],  vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eTransferDstOptimal},
+        });
 
-        vk::ImageBlit blitRegion{
+        vk::ImageCopy copyRegion{
             .srcSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor, .layerCount = 1},
-            .srcOffsets = std::array<vk::Offset3D, 2>{vk::Offset3D{0, 0, 0}, vk::Offset3D{static_cast<int32_t>(swapchain->getSwapChainExtent().width), static_cast<int32_t>(swapchain->getSwapChainExtent().height), 1}},
             .dstSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor, .layerCount = 1},
-            .dstOffsets = std::array<vk::Offset3D, 2>{vk::Offset3D{0, 0, 0}, vk::Offset3D{static_cast<int32_t>(swapchain->getSwapChainExtent().width), static_cast<int32_t>(swapchain->getSwapChainExtent().height), 1}}
+            .extent = {swapchain->getSwapChainExtent().width, swapchain->getSwapChainExtent().height, 1}
         };
-        cmd.blitImage(*colorResolve.image, vk::ImageLayout::eTransferSrcOptimal,
+        cmd.copyImage(*colorResolve.image, vk::ImageLayout::eTransferSrcOptimal,
                       swapchain->getSwapChainImages()[imageIndex], vk::ImageLayout::eTransferDstOptimal,
-                      blitRegion, vk::Filter::eNearest);
+                      copyRegion);
 
-        // Transition back: color resolve to shader readable, swapchain to color attachment
-        resourceManager->transitionImageLayout(&cmd, *colorResolve.image,
-            vk::ImageLayout::eTransferSrcOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
-        resourceManager->transitionImageLayout(&cmd, swapchain->getSwapChainImages()[imageIndex],
-            vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eColorAttachmentOptimal);
-
-        // Transition roughness-metal to shader readable for SSR
-        resourceManager->transitionImageLayout(&cmd, *descriptorSet->getTextureResource(roughnessMetalTextureIndex).image,
-                                               vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+        // Transition back: color resolve to shader readable, swapchain to color attachment, roughness-metal to shader readable for SSR
+        resourceManager->transitionImageLayouts(cmd, {
+            {*colorResolve.image,                                                    vk::ImageLayout::eTransferSrcOptimal,    vk::ImageLayout::eShaderReadOnlyOptimal},
+            {swapchain->getSwapChainImages()[imageIndex],                             vk::ImageLayout::eTransferDstOptimal,    vk::ImageLayout::eColorAttachmentOptimal},
+            {*descriptorSet->getTextureResource(roughnessMetalTextureIndex).image,   vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal},
+        });
 
         // Generate normal mips inline for SSR pre-filtering
         auto& normalRes = descriptorSet->getTextureResource(normalTextureIndex);
@@ -1256,10 +1263,10 @@ class Renderer {
         vk::Extent2D ssaoExtent{ssaoTexture.width, ssaoTexture.height};
 
         // Transition depth to readable, SSAO target to color attachment
-        resourceManager->transitionImageLayout(&cmd, swapchain->getDepthImage(),
-            vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
-        resourceManager->transitionImageLayout(&cmd, *ssaoTexture.image,
-            vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
+        resourceManager->transitionImageLayouts(cmd, {
+            {swapchain->getDepthImage(),  vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal},
+            {*ssaoTexture.image,          vk::ImageLayout::eShaderReadOnlyOptimal,          vk::ImageLayout::eColorAttachmentOptimal},
+        });
 
         // Render SSAO at (potentially lower) SSAO resolution
         drawFullscreenPass(cmd, *pipelineManager->getPostProcessPipelines()[ssaoPipelineIndex], *ssaoTexture.imageView, ssaoExtent,
@@ -1293,12 +1300,11 @@ class Renderer {
         auto& ssrTexture = descriptorSet->getTextureResource(ssrTextureIndices[ssrIndex]);
         vk::Extent2D ssrExtent{ssrTexture.width, ssrTexture.height};
 
-        // transition depth to readable
-        resourceManager->transitionImageLayout(&cmd, swapchain->getDepthImage(),
-            vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
-        // transition SSR target to color attachment
-        resourceManager->transitionImageLayout(&cmd, *ssrTexture.image,
-            vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
+        // transition depth to readable, SSR target to color attachment
+        resourceManager->transitionImageLayouts(cmd, {
+            {swapchain->getDepthImage(),  vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal},
+            {*ssrTexture.image,           vk::ImageLayout::eShaderReadOnlyOptimal,          vk::ImageLayout::eColorAttachmentOptimal},
+        });
 
         // Render SSR at SSR resolution
         drawFullscreenPass(cmd, *pipelineManager->getPostProcessPipelines()[ssrPipelineIndex], *ssrTexture.imageView, ssrExtent,
@@ -1320,7 +1326,8 @@ class Renderer {
                              .hiZMipLevels = hiZMipLevels,
                              .thickness = ssrThickness,
                              .roughnessThreshold = ssrRoughnessThreshold,
-                             .maxSteps = ssrMaxSteps},
+                             .maxSteps = ssrMaxSteps,
+                             .frameIndex = currentFrame},
             vk::AttachmentLoadOp::eClear, {1.0f, 1.0f, 1.0f, 1.0f});
 
         resourceManager->transitionImageLayout(&cmd, *ssrTexture.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
@@ -1434,9 +1441,7 @@ class Renderer {
             // build the indirect draw command and submit it
             if (!indirectCommands.empty()) {
                 vk::DeviceSize frameByteOffset = currentFrame * MAX_INDIRECT_COMMANDS * sizeof(DrawIndexedIndirectCommand);
-                void* data = indirectDrawBufferMemory.mapMemory(frameByteOffset, indirectCommands.size() * sizeof(DrawIndexedIndirectCommand));
-                memcpy(data, indirectCommands.data(), indirectCommands.size() * sizeof(DrawIndexedIndirectCommand));
-                indirectDrawBufferMemory.unmapMemory();
+                memcpy(static_cast<char*>(indirectDrawBufferMapped) + frameByteOffset, indirectCommands.data(), indirectCommands.size() * sizeof(DrawIndexedIndirectCommand));
 
                 // Get the fixed buffer's mapped memory pointer and write with frame offset
                 auto* shadowDataBuffer = descriptorSet->getFixedBufferMappedData<ShadowDrawData>(shadowDrawDataBufferIndex);

@@ -1,4 +1,5 @@
 import modules.common;
+import modules.pbr;
 
 struct SSRPushConstants {
     float4x4 invViewProj;
@@ -19,6 +20,7 @@ struct SSRPushConstants {
     float thickness;
     float roughnessThreshold;
     int maxSteps;
+    uint frameIndex;
 };
 
 [[vk::push_constant]] SSRPushConstants SSRpc;
@@ -138,11 +140,17 @@ RayTraceOutput RayTrace(float3 worldPos, float3 reflDir) {
 
 
 
+// Hash function for pseudo-random numbers
+float2 hash2D(float2 p, uint seed) {
+    float3 p3 = fract(float3(p.xyx) * float3(0.1031, 0.1030, 0.0973));
+    p3 += dot(p3, p3.yzx + 33.33 + float(seed) * 1.7);
+    return fract((p3.xx + p3.yz) * p3.zy);
+}
+
 [shader("fragment")]
 float4 fragMain(VSOutput input) : SV_Target {
     float2 uv = input.texCoord;
 
-    // Early out for rough surfaces
     float roughness = textures[SSRpc.roughnessMetalIndex].Sample(samplers[SSRpc.roughnessMetalSamplerIndex], uv).r;
     if (roughness > SSRpc.roughnessThreshold)
         return float4(0, 0, 0, 0);
@@ -154,14 +162,45 @@ float4 fragMain(VSOutput input) : SV_Target {
     float3 normal = normalize(2.0f * normalData - 1.0f);
 
     float3 viewDir = normalize(worldPos - SSRpc.cameraPos);
-    float3 reflectDir = normalize(reflect(viewDir, normal));
 
-    RayTraceOutput ray = RayTrace(worldPos, reflectDir);
+    // For near-mirror surfaces, skip importance sampling and use perfect reflection
+    if (roughness < 0.01) {
+        float3 reflectDir = normalize(reflect(viewDir, normal));
+        RayTraceOutput ray = RayTrace(worldPos, reflectDir);
+        if (ray.Hit) {
+            float3 color = textures[SSRpc.colorIndex].Sample(samplers[SSRpc.colorSamplerIndex], ray.UV).rgb;
+            return float4(color, 1.0);
+        }
+        return float4(0, 0, 0, 0);
+    }
 
-    if (ray.Hit) {
-        float3 color = textures[SSRpc.colorIndex].Sample(samplers[SSRpc.colorSamplerIndex], ray.UV).rgb;
+    // Importance sample GGX: multiple samples per pixel, varied across frames
+    float3 totalColor = float3(0, 0, 0);
+    float totalWeight = 0.0;
+    float3x3 TBN = buildTBN(normal);
+
+    int sampleCount = 1;
+    for (uint s = 0; s < sampleCount; s++) {
+        float2 xi = hash2D(uv * float2(SSRpc.resolution), SSRpc.frameIndex * sampleCount + s);
+
+        float3 H = normalize(mul(sampleGGX(xi, roughness), TBN));
+        float3 L = normalize(reflect(viewDir, H));
+
+        float NdotL = dot(normal, L);
+        if (NdotL <= 0.0)
+            continue;
+
+        RayTraceOutput ray = RayTrace(worldPos, L);
+        if (ray.Hit) {
+            float3 color = textures[SSRpc.colorIndex].Sample(samplers[SSRpc.colorSamplerIndex], ray.UV).rgb;
+            totalColor += color * NdotL;
+            totalWeight += NdotL;
+        }
+    }
+
+    if (totalWeight > 0.0) {
         float fade = 1.0 - (roughness / SSRpc.roughnessThreshold);
-        return float4(color, fade);
+        return float4(totalColor / totalWeight, fade);
     }
 
     return float4(0, 0, 0, 0);

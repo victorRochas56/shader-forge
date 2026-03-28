@@ -624,6 +624,7 @@ class DescriptorSet {
     }
 
     void debugDescriptorSetState(const std::string& context) {
+        return;
         std::cout << "=== Descriptor Set Debug [" << context << "] ===" << std::endl;
         std::cout << "descriptorSet.has_value(): " << descriptorSet.has_value() << std::endl;
         if (descriptorSet.has_value()) {
