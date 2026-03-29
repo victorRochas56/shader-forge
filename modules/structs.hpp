@@ -146,6 +146,10 @@ struct SSAOPushConstants {
 };
 
 struct SSRPushConstants {
+    uint64_t ssrPassDataAddress;
+};
+
+struct SSRPassData {
     glm::mat4 invViewProj;
     glm::mat4 viewProj;
     glm::vec3 cameraPos;
@@ -214,7 +218,7 @@ struct LitPushConstants {
     uint64_t modelMatricesAddress;
     uint64_t lightsAddress;
     uint64_t litDrawDataAddress;
-    uint64_t litPassData;
+    uint64_t litPassDataAddress;
 };
 
 struct LitPassData {

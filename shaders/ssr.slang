@@ -2,6 +2,10 @@ import modules.common;
 import modules.pbr;
 
 struct SSRPushConstants {
+    SSRPassData* passData;
+};
+
+struct SSRPassData {
     float4x4 invViewProj;
     float4x4 viewProj;
     float3 cameraPos;
@@ -13,6 +17,7 @@ struct SSRPushConstants {
     uint roughnessMetalSamplerIndex;
     uint normalIndex;
     uint normalSamplerIndex;
+    uint _pad_resolution;
     uint2 resolution;
     float maxDistance;
     uint hiZIndex;
@@ -23,7 +28,8 @@ struct SSRPushConstants {
     uint frameIndex;
 };
 
-[[vk::push_constant]] SSRPushConstants SSRpc;
+[[vk::push_constant]] 
+ConstantBuffer<SSRPushConstants> SSRpc;
 
 struct VSOutput {
     float4 position : SV_Position;
@@ -41,7 +47,7 @@ VSOutput vertMain(uint vertexID : SV_VertexID) {
 
 // Project world position to screen-space UV (.xy) + projected depth (.z)
 float3 worldToScreen(float3 worldPos) {
-    float4 clip = mul(SSRpc.viewProj, float4(worldPos, 1.0));
+    float4 clip = mul(SSRpc.passData.viewProj, float4(worldPos, 1.0));
     clip.xyz /= clip.w;
     float2 uv = clip.xy * 0.5 + 0.5;
     return float3(uv, clip.z);
@@ -52,18 +58,18 @@ struct RayTraceOutput {
     float2 UV;
 };
 
-RayTraceOutput RayTrace(float3 worldPos, float3 reflDir) {
+RayTraceOutput RayTrace(float3 worldPos, float3 reflDir, float jitter) {
     RayTraceOutput output;
     output.Hit = false;
     output.UV = float2(0, 0);
 
-    SamplerState depthSampler = samplers[SSRpc.depthSamplerIndex];
-    float2 res = float2(SSRpc.resolution);
-    int maxLevel = max(0, int(SSRpc.hiZMipLevels) - 1);
+    SamplerState depthSampler = samplers[SSRpc.passData.depthSamplerIndex];
+    float2 res = float2(SSRpc.passData.resolution);
+    int maxLevel = max(0, int(SSRpc.passData.hiZMipLevels) - 1);
 
     // Project ray origin and endpoint to screen space (UV + depth)
     float3 ssOrigin = worldToScreen(worldPos);
-    float3 ssEnd = worldToScreen(worldPos + reflDir * SSRpc.maxDistance);
+    float3 ssEnd = worldToScreen(worldPos + reflDir * SSRpc.passData.maxDistance);
     float3 ssDir = ssEnd - ssOrigin;
 
     // Skip degenerate rays (< 1 pixel of screen movement)
@@ -74,11 +80,11 @@ RayTraceOutput RayTrace(float3 worldPos, float3 reflDir) {
     // Parametric t per pixel (for epsilon calculations)
     float tPerPixel = 1.0 / pixelLen;
 
-    // Start slightly offset to avoid self-intersection
-    float t = tPerPixel * 2.0;
+    // Start slightly offset to avoid self-intersection, jittered to break grid artifacts
+    float t = tPerPixel * (2.0 + jitter);
     int level = min(3, maxLevel);
 
-    for (int i = 0; i < SSRpc.maxSteps; i++) {
+    for (int i = 0; i < SSRpc.passData.maxSteps; i++) {
         float3 pos = ssOrigin + ssDir * t;
 
         // Bounds check
@@ -102,7 +108,7 @@ RayTraceOutput RayTrace(float3 worldPos, float3 reflDir) {
         float tCell = min(max(0.0, tBound.x), max(0.0, tBound.y));
 
         // Sample HiZ min-depth at current position and mip
-        float minDepth = textures[SSRpc.hiZIndex].SampleLevel(depthSampler, pos.xy, level).r;
+        float minDepth = textures[SSRpc.passData.hiZIndex].SampleLevel(depthSampler, pos.xy, level).r;
 
         // Conservative test: max ray depth within this cell vs min surface depth
         float exitDepth = pos.z + ssDir.z * tCell;
@@ -113,9 +119,9 @@ RayTraceOutput RayTrace(float3 worldPos, float3 reflDir) {
             if (level == 0) {
                 // At finest level - verify with thickness test
                 if (pos.z > minDepth) {
-                    float3 surfaceWorldPos = reconstructViewPos(pos.xy, minDepth, SSRpc.invViewProj);
-                    float3 rayWorldPos = reconstructViewPos(pos.xy, pos.z, SSRpc.invViewProj);
-                    if (length(rayWorldPos - surfaceWorldPos) < SSRpc.thickness) {
+                    float3 surfaceWorldPos = reconstructViewPos(pos.xy, minDepth, SSRpc.passData.invViewProj);
+                    float3 rayWorldPos = reconstructViewPos(pos.xy, pos.z, SSRpc.passData.invViewProj);
+                    if (length(rayWorldPos - surfaceWorldPos) < SSRpc.passData.thickness) {
                         output.Hit = true;
                         output.UV = pos.xy;
                         return output;
@@ -151,24 +157,26 @@ float2 hash2D(float2 p, uint seed) {
 float4 fragMain(VSOutput input) : SV_Target {
     float2 uv = input.texCoord;
 
-    float roughness = textures[SSRpc.roughnessMetalIndex].Sample(samplers[SSRpc.roughnessMetalSamplerIndex], uv).r;
-    if (roughness > SSRpc.roughnessThreshold)
+    float roughness = textures[SSRpc.passData.roughnessMetalIndex].SampleLevel(samplers[SSRpc.passData.roughnessMetalSamplerIndex], uv,0).r;
+
+    if (roughness > SSRpc.passData.roughnessThreshold)
         return float4(0, 0, 0, 0);
 
-    float initDepth = textures[SSRpc.depthIndex].SampleLevel(samplers[SSRpc.depthSamplerIndex], uv, 0).r;
-    float3 worldPos = reconstructViewPos(uv, initDepth, SSRpc.invViewProj);
+    float initDepth = textures[SSRpc.passData.depthIndex].SampleLevel(samplers[SSRpc.passData.depthSamplerIndex], uv, 0).r;
+    float3 viewPos = reconstructViewPos(uv, initDepth, SSRpc.passData.invViewProj);
 
-    float3 normalData = textures[SSRpc.normalIndex].Sample(samplers[SSRpc.normalSamplerIndex], uv).xyz;
+    float3 normalData = textures[SSRpc.passData.normalIndex].Sample(samplers[SSRpc.passData.normalSamplerIndex], uv).xyz;
     float3 normal = normalize(2.0f * normalData - 1.0f);
 
-    float3 viewDir = normalize(worldPos - SSRpc.cameraPos);
+    float3 viewDir = normalize(viewPos - SSRpc.passData.cameraPos);
 
     // For near-mirror surfaces, skip importance sampling and use perfect reflection
     if (roughness < 0.01) {
+        float2 mirrorXi = hash2D(uv * float2(SSRpc.passData.resolution), SSRpc.passData.frameIndex);
         float3 reflectDir = normalize(reflect(viewDir, normal));
-        RayTraceOutput ray = RayTrace(worldPos, reflectDir);
+        RayTraceOutput ray = RayTrace(viewPos, reflectDir, mirrorXi.x);
         if (ray.Hit) {
-            float3 color = textures[SSRpc.colorIndex].Sample(samplers[SSRpc.colorSamplerIndex], ray.UV).rgb;
+            float3 color = textures[SSRpc.passData.colorIndex].Sample(samplers[SSRpc.passData.colorSamplerIndex], ray.UV).rgb;
             return float4(color, 1.0);
         }
         return float4(0, 0, 0, 0);
@@ -179,9 +187,9 @@ float4 fragMain(VSOutput input) : SV_Target {
     float totalWeight = 0.0;
     float3x3 TBN = buildTBN(normal);
 
-    int sampleCount = 1;
+    int sampleCount = 4;
     for (uint s = 0; s < sampleCount; s++) {
-        float2 xi = hash2D(uv * float2(SSRpc.resolution), SSRpc.frameIndex * sampleCount + s);
+        float2 xi = hash2D(uv * float2(SSRpc.passData.resolution), SSRpc.passData.frameIndex * sampleCount + s);
 
         float3 H = normalize(mul(sampleGGX(xi, roughness), TBN));
         float3 L = normalize(reflect(viewDir, H));
@@ -190,17 +198,16 @@ float4 fragMain(VSOutput input) : SV_Target {
         if (NdotL <= 0.0)
             continue;
 
-        RayTraceOutput ray = RayTrace(worldPos, L);
+        RayTraceOutput ray = RayTrace(viewPos, L, xi.x);
         if (ray.Hit) {
-            float3 color = textures[SSRpc.colorIndex].Sample(samplers[SSRpc.colorSamplerIndex], ray.UV).rgb;
+            float3 color = textures[SSRpc.passData.colorIndex].Sample(samplers[SSRpc.passData.colorSamplerIndex], ray.UV).rgb;
             totalColor += color * NdotL;
             totalWeight += NdotL;
         }
     }
 
     if (totalWeight > 0.0) {
-        float fade = 1.0 - (roughness / SSRpc.roughnessThreshold);
-        return float4(totalColor / totalWeight, fade);
+        return float4(totalColor / totalWeight, 1.0);
     }
 
     return float4(0, 0, 0, 0);

@@ -64,6 +64,7 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     lightBufferIndex = descriptorSet->createFixedBuffer<Light>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
     shadowDrawDataBufferIndex = descriptorSet->createFixedBuffer<ShadowDrawData>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
     litPassDataBufferIndex = descriptorSet->createFixedBuffer<LitPassData>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
+    ssrPassDataBufferIndex = descriptorSet->createFixedBuffer<SSRPassData>(MAX_FRAMES_IN_FLIGHT, true);
 
     // sets the frame offsets for each buffer
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
@@ -71,6 +72,7 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
         descriptorSet->setBufferFrameOffset(lightBufferIndex, i, MAX_FIXED_BUFFER * i);
         descriptorSet->setBufferFrameOffset(shadowDrawDataBufferIndex, i, MAX_FIXED_BUFFER * i);
         descriptorSet->setBufferFrameOffset(litPassDataBufferIndex,i, MAX_FIXED_BUFFER * i);
+        descriptorSet->setBufferFrameOffset(ssrPassDataBufferIndex,i,i);
     }
 
     Gizmos::init(MAX_GIZMO_LINES, &*descriptorSet);
@@ -291,6 +293,7 @@ void Renderer::drawFrame() {
     Tracer::endTrace("submit & present");
 
     currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+    totalFrames++;
     //pipelineManager->checkForShaderUpdates(); // TODO enable this
     Tracer::endTrace("draw frame");
 }
@@ -586,6 +589,9 @@ void Renderer::createSSRResources(uint32_t width, uint32_t height, uint32_t numT
         ssrPipelineIndex = pipelineManager->createPipeline<SSRPushConstants>(
             PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone,
             vk::False, vk::False, "shaders/ssr.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
+        
+        //initialize pass data too
+        descriptorSet->allocateFixedBuffer(ssrPassDataBufferIndex,SSRPassData {});
     }
 
     // SSR apply pipeline with multiplicative blending (only created once)
@@ -851,7 +857,7 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
                                           .modelMatricesAddress = descriptorSet->getFixedBuffers()[modelMatrixBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(glm::mat4),
                                           .lightsAddress        = descriptorSet->getFixedBuffers()[lightBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(Light),
                                           .litDrawDataAddress   = descriptorSet->getFixedBuffers()[litDrawDataBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(LitDrawData),
-                                          .litPassData          = descriptorSet->getFixedBuffers()[litPassDataBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(LitPassData)
+                                          .litPassDataAddress   = descriptorSet->getFixedBuffers()[litPassDataBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(LitPassData)
                                         };
 
         // --- Depth prepass (depth-only, no color attachment) ---
@@ -966,7 +972,7 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
                                           .modelMatricesAddress = descriptorSet->getFixedBuffers()[modelMatrixBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(glm::mat4),
                                           .lightsAddress        = descriptorSet->getFixedBuffers()[lightBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(Light),
                                           .litDrawDataAddress   = descriptorSet->getFixedBuffers()[litDrawDataBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(LitDrawData),
-                                          .litPassData          = descriptorSet->getFixedBuffers()[litPassDataBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(LitPassData)
+                                          .litPassDataAddress   = descriptorSet->getFixedBuffers()[litPassDataBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(LitPassData)
                                         };
 
         for (const auto& [shader, materials] : shaders) {
@@ -1090,28 +1096,31 @@ void Renderer::recordSSRPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) 
         {*ssrTexture.image,           vk::ImageLayout::eShaderReadOnlyOptimal,          vk::ImageLayout::eColorAttachmentOptimal},
     });
 
+    descriptorSet->updateFixedBufferWithOffset(ssrPassDataBufferIndex, 0,
+                                     SSRPassData{
+                                        .invViewProj = glm::inverse(activeCamera.viewProjection),
+                                        .viewProj = activeCamera.viewProjection,
+                                        .cameraPos = activeCamera.position,
+                                        .depthIndex = hiZTextureIndex,
+                                        .depthSamplerIndex = depthSamplerIndex,
+                                        .colorIndex = colorResolveTextureIndex,
+                                        .colorSamplerIndex = defaultSamplerIndex,
+                                        .roughnessMetalIndex = roughnessMetalTextureIndex,
+                                        .roughnessMetalSamplerIndex = defaultSamplerIndex,
+                                        .normalIndex = normalTextureIndex,
+                                        .normalSamplerIndex = defaultSamplerIndex,
+                                        .resolution = glm::uvec2(ssrExtent.width, ssrExtent.height),
+                                        .maxDistance = ssrMaxDistance,
+                                        .hiZIndex = hiZTextureIndex,
+                                        .hiZMipLevels = hiZMipLevels,
+                                        .thickness = ssrThickness,
+                                        .roughnessThreshold = ssrRoughnessThreshold,
+                                        .maxSteps = ssrMaxSteps,
+                                        .frameIndex = totalFrames,
+                                     }, currentFrame);
     // Render SSR at SSR resolution
     drawFullscreenPass(cmd, *pipelineManager->getPostProcessPipelines()[ssrPipelineIndex], *ssrTexture.imageView, ssrExtent,
-        SSRPushConstants{.invViewProj = glm::inverse(activeCamera.viewProjection),
-                         .viewProj = activeCamera.viewProjection,
-                         .cameraPos = activeCamera.position,
-                         .depthIndex = swapchain->getDepthResolveIndex(),
-                         .depthSamplerIndex = depthSamplerIndex,
-                         .colorIndex = colorResolveTextureIndex,
-                         .colorSamplerIndex = defaultSamplerIndex,
-                         .roughnessMetalIndex = roughnessMetalTextureIndex,
-                         .roughnessMetalSamplerIndex = defaultSamplerIndex,
-                         .normalIndex = normalTextureIndex,
-                         .normalSamplerIndex = defaultSamplerIndex,
-                         .resolution = glm::uvec2(descriptorSet->getTextureResource(hiZTextureIndex).width,
-                                          descriptorSet->getTextureResource(hiZTextureIndex).height),
-                         .maxDistance = ssrMaxDistance,
-                         .hiZIndex = hiZTextureIndex,
-                         .hiZMipLevels = hiZMipLevels,
-                         .thickness = ssrThickness,
-                         .roughnessThreshold = ssrRoughnessThreshold,
-                         .maxSteps = ssrMaxSteps,
-                         .frameIndex = currentFrame},
+        SSRPushConstants{ .ssrPassDataAddress = descriptorSet->getFixedBuffers()[ssrPassDataBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * sizeof(SSRPassData)},
         vk::AttachmentLoadOp::eClear, {1.0f, 1.0f, 1.0f, 1.0f});
 
     resourceManager->transitionImageLayout(&cmd, *ssrTexture.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);

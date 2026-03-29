@@ -73,6 +73,7 @@ class Renderer {
     std::vector<vk::raii::Fence>        inFlightFences;
     std::vector<vk::Fence>              imagesInFlight;
     uint32_t                            currentFrame = 0;
+    uint32_t                            totalFrames = 0;
 
     //my classes
     std::unique_ptr<Device>             device;
@@ -110,6 +111,7 @@ class Renderer {
     uint32_t                            shadowDrawDataBufferIndex;
     uint32_t                            litDrawDataBufferIndex;
     uint32_t                            litPassDataBufferIndex;
+    uint32_t                            ssrPassDataBufferIndex;
 
     // Persistent buffers for indirect drawing
     vk::raii::Buffer                    indirectDrawBuffer = nullptr;      // shadow pass
