@@ -150,9 +150,12 @@ class Renderer {
     Image                               motionVectors;
 
     //SSR
-    std::vector<uint32_t>               ssrTextureIndices;
-    uint32_t                            ssrIndex = 0;
+    uint32_t                            ssrCurrentTextureIndex = 0xFFFFFFFF;
+    uint32_t                            ssrHistoryTextureIndices[2] = {0xFFFFFFFF, 0xFFFFFFFF};
+    uint32_t                            ssrHistoryFlip = 0;
+    bool                                ssrHistoryInvalid = true;
     uint32_t                            ssrPipelineIndex = 0xFFFFFFFF;
+    uint32_t                            ssrAccumulatePipelineIndex = 0xFFFFFFFF;
     uint32_t                            ssrApplyPipelineIndex = 0xFFFFFFFF;
     uint32_t                            colorResolveTextureIndex = 0xFFFFFFFF;
 
@@ -175,6 +178,7 @@ class Renderer {
     float                               ssrMaxDistance = 10.0f;
     int                                 ssrMaxSteps = 64;
     float                               ssrThickness = 0.5f;
+    float                               ssrTemporalBlend = 0.05f;
 
   private:
     // Temporary texture for gaussian blur
@@ -277,7 +281,7 @@ class Renderer {
     void createNormalResources(uint32_t width, uint32_t height);
     void createColorResolveResources(uint32_t width, uint32_t height);
     void createMotionVectorResources(uint32_t width, uint32_t height);
-    void createSSRResources(uint32_t width, uint32_t height, uint32_t numTemporalFrames = 1);
+    void createSSRResources(uint32_t width, uint32_t height);
     void createHiZResources(uint32_t width, uint32_t height);
     void createSyncObjects();
 #pragma endregion

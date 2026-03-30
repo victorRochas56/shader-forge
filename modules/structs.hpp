@@ -188,11 +188,21 @@ struct SSAOApplyPushConstants {
     uint32_t padding[2];
 };
 
+struct SSRAccumulatePushConstants {
+    uint32_t currentSSRIndex;
+    uint32_t historySSRIndex;
+    uint32_t motionVectorIndex;
+    uint32_t samplerIndex;
+    float    temporalBlend;
+    uint32_t historyValid;          // 0 = no valid history (first frame / resize)
+    uint32_t padding[2];
+};
+
 struct SSRApplyPushConstants {
     uint32_t samplerIndex;
     uint32_t sceneColorIndex;
     uint32_t sceneSamplerIndex;
-    std::array<uint32_t, 8> ssrTextureIndices;
+    uint32_t ssrTextureIndex;
 };
 
 struct LitDrawData {

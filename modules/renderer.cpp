@@ -575,26 +575,32 @@ void Renderer::createMotionVectorResources(uint32_t width, uint32_t height) {
     createOrResizeRenderTarget(motionVectorTextureIndex, width, height, vk::Format::eR16G16Sfloat,"internal/motion_vectors");
 }
 
-void Renderer::createSSRResources(uint32_t width, uint32_t height, uint32_t numTemporalFrames) {
+void Renderer::createSSRResources(uint32_t width, uint32_t height) {
 
-    int i = 0;
-    for(i = 0; i < numTemporalFrames; i++){
-        if(ssrTextureIndices.size() <= i)
-            ssrTextureIndices.push_back(0xFFFFFFFF);
-        createOrResizeRenderTarget(ssrTextureIndices[i], width, height, swapchain->getSwapChainImageFormat(), (std::string("internal/ssr") + std::to_string(i)).c_str());
-    }
+    createOrResizeRenderTarget(ssrCurrentTextureIndex, width, height, swapchain->getSwapChainImageFormat(), "internal/ssr_current");
+    createOrResizeRenderTarget(ssrHistoryTextureIndices[0], width, height, swapchain->getSwapChainImageFormat(), "internal/ssr_history0");
+    createOrResizeRenderTarget(ssrHistoryTextureIndices[1], width, height, swapchain->getSwapChainImageFormat(), "internal/ssr_history1");
+
+    ssrHistoryInvalid = true;
 
     // SSR pipeline (only created once)
     if (ssrPipelineIndex == 0xFFFFFFFF) {
         ssrPipelineIndex = pipelineManager->createPipeline<SSRPushConstants>(
             PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone,
             vk::False, vk::False, "shaders/ssr.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
-        
+
         //initialize pass data too
         descriptorSet->allocateFixedBuffer(ssrPassDataBufferIndex,SSRPassData {});
     }
 
-    // SSR apply pipeline with multiplicative blending (only created once)
+    // SSR accumulate pipeline (only created once)
+    if (ssrAccumulatePipelineIndex == 0xFFFFFFFF) {
+        ssrAccumulatePipelineIndex = pipelineManager->createPipeline<SSRAccumulatePushConstants>(
+            PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone,
+            vk::False, vk::False, "shaders/ssr_accumulate.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
+    }
+
+    // SSR apply pipeline (only created once)
     if (ssrApplyPipelineIndex == 0xFFFFFFFF) {
         ssrApplyPipelineIndex = pipelineManager->createPipeline<SSRApplyPushConstants>(
             PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone,
@@ -1087,13 +1093,17 @@ void Renderer::recordSSAOPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex)
 
 void Renderer::recordSSRPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
     auto swapExtent = swapchain->getSwapChainExtent();
-    auto& ssrTexture = descriptorSet->getTextureResource(ssrTextureIndices[ssrIndex]);
-    vk::Extent2D ssrExtent{ssrTexture.width, ssrTexture.height};
+    auto& ssrCurrent = descriptorSet->getTextureResource(ssrCurrentTextureIndex);
+    vk::Extent2D ssrExtent{ssrCurrent.width, ssrCurrent.height};
 
-    // transition depth to readable, SSR target to color attachment
+    uint32_t readHistory = ssrHistoryTextureIndices[ssrHistoryFlip];
+    uint32_t writeHistory = ssrHistoryTextureIndices[1 - ssrHistoryFlip];
+    auto& ssrWriteHist = descriptorSet->getTextureResource(writeHistory);
+
+    // --- Sub-pass 1: Ray trace -> ssrCurrentTextureIndex ---
     resourceManager->transitionImageLayouts(cmd, {
         {swapchain->getDepthImage(),  vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal},
-        {*ssrTexture.image,           vk::ImageLayout::eShaderReadOnlyOptimal,          vk::ImageLayout::eColorAttachmentOptimal},
+        {*ssrCurrent.image,           vk::ImageLayout::eShaderReadOnlyOptimal,          vk::ImageLayout::eColorAttachmentOptimal},
     });
 
     descriptorSet->updateFixedBufferWithOffset(ssrPassDataBufferIndex, 0,
@@ -1118,27 +1128,45 @@ void Renderer::recordSSRPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) 
                                         .maxSteps = ssrMaxSteps,
                                         .frameIndex = totalFrames,
                                      }, currentFrame);
-    // Render SSR at SSR resolution
-    drawFullscreenPass(cmd, *pipelineManager->getPostProcessPipelines()[ssrPipelineIndex], *ssrTexture.imageView, ssrExtent,
+
+    drawFullscreenPass(cmd, *pipelineManager->getPostProcessPipelines()[ssrPipelineIndex], *ssrCurrent.imageView, ssrExtent,
         SSRPushConstants{ .ssrPassDataAddress = descriptorSet->getFixedBuffers()[ssrPassDataBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * sizeof(SSRPassData)},
-        vk::AttachmentLoadOp::eClear, {1.0f, 1.0f, 1.0f, 1.0f});
+        vk::AttachmentLoadOp::eClear, {0.0f, 0.0f, 0.0f, 0.0f});
 
-    resourceManager->transitionImageLayout(&cmd, *ssrTexture.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+    // --- Sub-pass 2: Temporal accumulate -> writeHistory ---
+    resourceManager->transitionImageLayouts(cmd, {
+        {*ssrCurrent.image,    vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal},
+        {*ssrWriteHist.image,  vk::ImageLayout::eShaderReadOnlyOptimal,  vk::ImageLayout::eColorAttachmentOptimal},
+    });
 
-    // apply to swapchain at full resolution
-    std::array<uint32_t, 8> ssrIndices;
-    ssrIndices.fill(0xFFFFFFFF);
-    std::copy(ssrTextureIndices.begin(), ssrTextureIndices.end(), ssrIndices.begin());
+    drawFullscreenPass(cmd, *pipelineManager->getPostProcessPipelines()[ssrAccumulatePipelineIndex], *ssrWriteHist.imageView, ssrExtent,
+        SSRAccumulatePushConstants{
+            .currentSSRIndex = ssrCurrentTextureIndex,
+            .historySSRIndex = readHistory,
+            .motionVectorIndex = motionVectorTextureIndex,
+            .samplerIndex = defaultSamplerIndex,
+            .temporalBlend = ssrTemporalBlend,
+            .historyValid = ssrHistoryInvalid ? 0u : 1u,
+        },
+        vk::AttachmentLoadOp::eClear, {0.0f, 0.0f, 0.0f, 0.0f});
+
+    resourceManager->transitionImageLayout(&cmd, *ssrWriteHist.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+
+    // --- Sub-pass 3: Apply accumulated SSR to swapchain ---
     drawFullscreenPass(cmd, *pipelineManager->getPostProcessPipelines()[ssrApplyPipelineIndex], *swapchain->getSwapChainImageViews()[imageIndex], swapExtent,
-        SSRApplyPushConstants{.samplerIndex = defaultSamplerIndex, .sceneColorIndex = colorResolveTextureIndex, .sceneSamplerIndex = defaultSamplerIndex, .ssrTextureIndices = ssrIndices},
+        SSRApplyPushConstants{
+            .samplerIndex = defaultSamplerIndex,
+            .sceneColorIndex = colorResolveTextureIndex,
+            .sceneSamplerIndex = defaultSamplerIndex,
+            .ssrTextureIndex = writeHistory,
+        },
         vk::AttachmentLoadOp::eLoad);
 
     // transition depth back
     resourceManager->transitionImageLayout(&cmd, swapchain->getDepthImage(), vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
 
-    ssrIndex++;
-    if(ssrIndex >= ssrTextureIndices.size())
-        ssrIndex = 0;
+    ssrHistoryFlip = 1 - ssrHistoryFlip;
+    ssrHistoryInvalid = false;
 }
 
 void Renderer::recordImageVisPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {

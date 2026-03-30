@@ -79,10 +79,14 @@ RayTraceOutput RayTrace(float3 worldPos, float3 reflDir, float jitter) {
 
     // Parametric t per pixel (for epsilon calculations)
     float tPerPixel = 1.0 / pixelLen;
+    // Minimum advancement per step to prevent stalling on cell boundaries
+    float minStep = tPerPixel * 1.0;
 
     // Start slightly offset to avoid self-intersection, jittered to break grid artifacts
     float t = tPerPixel * (2.0 + jitter);
-    int level = min(3, maxLevel);
+    int level = min(max(maxLevel - 2, 3), maxLevel);
+    // Track consecutive empty cells to accelerate mip ascent
+    int emptyStreak = 0;
 
     for (int i = 0; i < SSRpc.passData.maxSteps; i++) {
         float3 pos = ssOrigin + ssDir * t;
@@ -105,7 +109,7 @@ RayTraceOutput RayTrace(float3 worldPos, float3 reflDir, float jitter) {
         float2 tBound;
         tBound.x = abs(ssDir.x) > 1e-8 ? (boundaryUV.x - pos.x) / ssDir.x : 1e10;
         tBound.y = abs(ssDir.y) > 1e-8 ? (boundaryUV.y - pos.y) / ssDir.y : 1e10;
-        float tCell = min(max(0.0, tBound.x), max(0.0, tBound.y));
+        float tCell = max(min(max(0.0, tBound.x), max(0.0, tBound.y)), minStep);
 
         // Sample HiZ min-depth at current position and mip
         float minDepth = textures[SSRpc.passData.hiZIndex].SampleLevel(depthSampler, pos.xy, level).r;
@@ -116,6 +120,7 @@ RayTraceOutput RayTrace(float3 worldPos, float3 reflDir, float jitter) {
 
         if (rayMaxZ > minDepth) {
             // Ray potentially intersects geometry in this cell
+            emptyStreak = 0;
             if (level == 0) {
                 // At finest level - verify with thickness test
                 if (pos.z > minDepth) {
@@ -127,31 +132,41 @@ RayTraceOutput RayTrace(float3 worldPos, float3 reflDir, float jitter) {
                         return output;
                     }
                 }
-                // Failed thickness test or ray not yet behind surface - advance
-                t += tCell + tPerPixel * 0.5;
+                // Failed thickness test - skip past this surface and resume coarse traversal
+                t += tCell;
+                level = min(2, maxLevel);
             } else {
                 // Descend to finer mip for more precision
                 level--;
             }
         } else {
             // Ray is in front of everything in this cell - skip it
-            t += tCell + tPerPixel * 0.5;
-            // Ascend mip for faster traversal
-            if (level < maxLevel) level++;
+            t += tCell;
+            emptyStreak++;
+            // Ascend mip aggressively: jump up by 2 after consecutive empty cells
+            if (emptyStreak >= 2 && level + 2 <= maxLevel) {
+                level += 2;
+                emptyStreak = 0;
+            } else if (level < maxLevel) {
+                level++;
+            }
         }
     }
 
     return output;
 }
+#define M1 1597334677U     //1719413*929
+#define M2 3812015801U     //140473*2467*11
 
-
-
-// Hash function for pseudo-random numbers
-float2 hash2D(float2 p, uint seed) {
-    float3 p3 = fract(float3(p.xyx) * float3(0.1031, 0.1030, 0.0973));
-    p3 += dot(p3, p3.yzx + 33.33 + float(seed) * 1.7);
-    return fract((p3.xx + p3.yz) * p3.zy);
+float2 hash2D( uint2 q, uint seed )
+{
+    q *= uint2(M1, M2); 
+    
+    uint n = ((q.x ^ q.y) ^ seed) * M1;
+    
+    return float2(float(n) * (1.0/float(0xffffffffU)),float(n+1) * (1.0/float(0xffffffffU)));
 }
+
 
 [shader("fragment")]
 float4 fragMain(VSOutput input) : SV_Target {
@@ -172,7 +187,7 @@ float4 fragMain(VSOutput input) : SV_Target {
 
     // For near-mirror surfaces, skip importance sampling and use perfect reflection
     if (roughness < 0.01) {
-        float2 mirrorXi = hash2D(uv * float2(SSRpc.passData.resolution), SSRpc.passData.frameIndex);
+        float2 mirrorXi = hash2D(uint2(uv * float2(SSRpc.passData.resolution)), SSRpc.passData.frameIndex);
         float3 reflectDir = normalize(reflect(viewDir, normal));
         RayTraceOutput ray = RayTrace(viewPos, reflectDir, mirrorXi.x);
         if (ray.Hit) {
@@ -187,9 +202,9 @@ float4 fragMain(VSOutput input) : SV_Target {
     float totalWeight = 0.0;
     float3x3 TBN = buildTBN(normal);
 
-    int sampleCount = 4;
+    int sampleCount = 1;
     for (uint s = 0; s < sampleCount; s++) {
-        float2 xi = hash2D(uv * float2(SSRpc.passData.resolution), SSRpc.passData.frameIndex * sampleCount + s);
+        float2 xi = hash2D(uint2(uv * float2(SSRpc.passData.resolution)), SSRpc.passData.frameIndex * sampleCount + s);
 
         float3 H = normalize(mul(sampleGGX(xi, roughness), TBN));
         float3 L = normalize(reflect(viewDir, H));
@@ -207,7 +222,7 @@ float4 fragMain(VSOutput input) : SV_Target {
     }
 
     if (totalWeight > 0.0) {
-        return float4(totalColor / totalWeight, 1.0);
+        return float4(totalColor / totalWeight, 1.0 - roughness);
     }
 
     return float4(0, 0, 0, 0);

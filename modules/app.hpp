@@ -156,6 +156,7 @@ class App {
             ImGui::SliderInt("Max Steps",&renderer.ssrMaxSteps,16,128);
             ImGui::SliderFloat("Thickness",&renderer.ssrThickness,0.01f,5.0f);
             ImGui::SliderFloat("Roughness Threshold",&renderer.ssrRoughnessThreshold,0.0f,1.0f);
+            ImGui::SliderFloat("Temporal Blend",&renderer.ssrTemporalBlend,0.01f,1.0f);
             if(ImGui::SliderFloat("Resolution Scale",&renderer.ssrResolutionScale,0.25f,1.0f)){
                 renderer.ssrResolutionDirty = true;
             }
