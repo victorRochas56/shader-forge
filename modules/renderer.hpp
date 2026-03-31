@@ -137,6 +137,9 @@ class Renderer {
     uint32_t                            ssaoPipelineIndex = 0xFFFFFFFF;
     uint32_t                            ssaoApplyPipelineIndex = 0xFFFFFFFF;
 
+    //number of mips for a full resolution fullscreen image
+    uint32_t                            fullscreenMipLevels = 1; 
+
     // Roughness-metallic MRT from lit pass
     uint32_t                            roughnessMetalTextureIndex = 0xFFFFFFFF;
     Image                               roughnessMetal;
@@ -158,6 +161,8 @@ class Renderer {
     uint32_t                            ssrAccumulatePipelineIndex = 0xFFFFFFFF;
     uint32_t                            ssrApplyPipelineIndex = 0xFFFFFFFF;
     uint32_t                            colorResolveTextureIndex = 0xFFFFFFFF;
+    std::vector<vk::raii::ImageView>    colorResolveMipViews;
+
 
     // Hi-Z (hierarchical depth pyramid)
     uint32_t                            hiZTextureIndex = 0xFFFFFFFF;
@@ -181,8 +186,9 @@ class Renderer {
     float                               ssrTemporalBlend = 0.05f;
 
   private:
-    // Temporary texture for gaussian blur
+    // Temporary texture for gaussian blur (mipmapped for per-mip blur passes)
     uint32_t                            tempBlurTextureIndex = 0xFFFFFFFF;
+    std::vector<vk::raii::ImageView>    tempBlurMipViews;
 
     bool                                vSync = true;
     bool                                showBBOXes = false;

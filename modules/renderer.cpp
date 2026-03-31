@@ -152,7 +152,7 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
                                                                                vk::CullModeFlagBits::eNone, vk::True, vk::True, "shaders/shadow_geometry.spv",
                                                                                descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
     blurPipelineIndex =
-        pipelineManager->createPipeline<BlurPushConstants>(PipelineCategory::BEFORE_GEOMETRY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
+        pipelineManager->createPipeline<BlurPushConstants>(PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
                                                            vk::False, "shaders/blur.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
 
     depthPipelineIndex =
@@ -381,7 +381,7 @@ void Renderer::handleSwapchainResize() {
 void Renderer::blurAttachment(vk::raii::CommandBuffer& cmd, uint32_t sourceTextureIndex, uint32_t tempTextureIndex, uint32_t width, uint32_t height, float blurRadius,
                     uint32_t samplerIndex) {
 
-    auto& blurPipeline = *pipelineManager->getBeforeGeoPipelines()[blurPipelineIndex];
+    auto& blurPipeline = *pipelineManager->getPostProcessPipelines()[blurPipelineIndex];
     auto& sourceTexture = descriptorSet->getTextureResource(sourceTextureIndex);
     auto& tempTexture = descriptorSet->getTextureResource(tempTextureIndex);
     vk::Extent2D extent{width, height};
@@ -567,7 +567,60 @@ void Renderer::createNormalResources(uint32_t width, uint32_t height) {
 }
 
 void Renderer::createColorResolveResources(uint32_t width, uint32_t height) {
-    createOrResizeRenderTarget(colorResolveTextureIndex, width, height, swapchain->getSwapChainImageFormat(), "internal/color_resolve", vk::ImageUsageFlagBits::eTransferSrc);
+    colorResolveMipViews.clear();
+
+    fullscreenMipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(width, height)))) + 1;
+
+    if (colorResolveTextureIndex != 0xFFFFFFFF) {
+        descriptorSet->freeTexture(colorResolveTextureIndex);
+    }
+
+    auto format = swapchain->getSwapChainImageFormat();
+
+    vk::raii::Image image = nullptr;
+    vk::raii::DeviceMemory memory = nullptr;
+    resourceManager->createImage(width, height, fullscreenMipLevels, vk::SampleCountFlagBits::e1, format, vk::ImageTiling::eOptimal,
+                                 vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferSrc,
+                                 vk::MemoryPropertyFlagBits::eDeviceLocal, image, memory);
+
+    // Create per-mip image views for rendering to individual levels
+    for (uint32_t mip = 0; mip < fullscreenMipLevels; ++mip) {
+        vk::ImageViewCreateInfo viewInfo{.image = image,
+                                         .viewType = vk::ImageViewType::e2D,
+                                         .format = format,
+                                         .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor, .baseMipLevel = mip, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1}};
+        colorResolveMipViews.emplace_back(device->getDevice(), viewInfo);
+    }
+
+    // Create a full-chain view for sampling
+    auto fullView = resourceManager->createImageView(image, format, vk::ImageAspectFlagBits::eColor, fullscreenMipLevels);
+    resourceManager->transitionImageLayout(nullptr, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal, 0, fullscreenMipLevels);
+    colorResolveTextureIndex = descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(fullView), "internal/color_resolve", false, width, height);
+
+    // Temp texture for separable blur passes (mipmapped, matching color resolve)
+    tempBlurMipViews.clear();
+
+    if (tempBlurTextureIndex != 0xFFFFFFFF) {
+        descriptorSet->freeTexture(tempBlurTextureIndex);
+    }
+
+    vk::raii::Image tempImage = nullptr;
+    vk::raii::DeviceMemory tempMemory = nullptr;
+    resourceManager->createImage(width, height, fullscreenMipLevels, vk::SampleCountFlagBits::e1, format, vk::ImageTiling::eOptimal,
+                                 vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
+                                 vk::MemoryPropertyFlagBits::eDeviceLocal, tempImage, tempMemory);
+
+    for (uint32_t mip = 0; mip < fullscreenMipLevels; ++mip) {
+        vk::ImageViewCreateInfo viewInfo{.image = tempImage,
+                                         .viewType = vk::ImageViewType::e2D,
+                                         .format = format,
+                                         .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor, .baseMipLevel = mip, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1}};
+        tempBlurMipViews.emplace_back(device->getDevice(), viewInfo);
+    }
+
+    auto tempFullView = resourceManager->createImageView(tempImage, format, vk::ImageAspectFlagBits::eColor, fullscreenMipLevels);
+    resourceManager->transitionImageLayout(nullptr, tempImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal, 0, fullscreenMipLevels);
+    tempBlurTextureIndex = descriptorSet->allocateTexture(std::move(tempImage), std::move(tempMemory), std::move(tempFullView), "internal/blur_temp", false, width, height);
 }
 
 void Renderer::createMotionVectorResources(uint32_t width, uint32_t height) {
@@ -788,6 +841,7 @@ void Renderer::recordHiZPass(vk::raii::CommandBuffer& cmd) {
         resourceManager->transitionImageLayout(&cmd, *hiZRes.image,
             vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, mip, 1);
     }
+    // hiZ empty space calculation pass?
 
     // Transition depth resolve back to depth attachment
     resourceManager->transitionImageLayout(&cmd, *descriptorSet->getTextureResource(swapchain->getDepthResolveIndex()).image,
@@ -1099,6 +1153,44 @@ void Renderer::recordSSRPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) 
     uint32_t readHistory = ssrHistoryTextureIndices[ssrHistoryFlip];
     uint32_t writeHistory = ssrHistoryTextureIndices[1 - ssrHistoryFlip];
     auto& ssrWriteHist = descriptorSet->getTextureResource(writeHistory);
+
+    // --- Sub-pass 0: Generate blurred mip chain for cone tracing (GPU Pro 5 style)
+    // Mip 0 is already populated by the geometry pass MSAA resolve.
+    // For each subsequent mip: 2-pass separable Gaussian blur reading mip N-1, writing to mip N.
+    auto& colorRes = descriptorSet->getTextureResource(colorResolveTextureIndex);
+    auto& tempTexture = descriptorSet->getTextureResource(tempBlurTextureIndex);
+    auto& blurPipeline = *pipelineManager->getPostProcessPipelines()[blurPipelineIndex];
+
+    uint32_t maxBlurMips = std::min(fullscreenMipLevels, 6u);
+    for (uint32_t mip = 1; mip < fullscreenMipLevels; ++mip) {
+        uint32_t mipW = std::max(1u, colorRes.width >> mip);
+        uint32_t mipH = std::max(1u, colorRes.height >> mip);
+        vk::Extent2D mipExtent{mipW, mipH};
+
+        // Horizontal blur: read colorResolve mip N-1 -> write temp mip N
+        resourceManager->transitionImageLayout(&cmd, *tempTexture.image,
+            vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal, mip, 1);
+
+        drawFullscreenPass(cmd, blurPipeline, *tempBlurMipViews[mip], mipExtent,
+            BlurPushConstants{.inputTextureIndex = colorResolveTextureIndex, .samplerIndex = defaultSamplerIndex,
+                              .isHorizontal = 1, .blurRadius = 1.0f, .resolution = glm::uvec2(mipW, mipH),
+                              .mipLevel = mip - 1});
+
+        resourceManager->transitionImageLayout(&cmd, *tempTexture.image,
+            vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, mip, 1);
+
+        // Vertical blur: read temp mip N -> write colorResolve mip N
+        resourceManager->transitionImageLayout(&cmd, *colorRes.image,
+            vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal, mip, 1);
+
+        drawFullscreenPass(cmd, blurPipeline, *colorResolveMipViews[mip], mipExtent,
+            BlurPushConstants{.inputTextureIndex = tempBlurTextureIndex, .samplerIndex = defaultSamplerIndex,
+                              .isHorizontal = 0, .blurRadius = 1.0f, .resolution = glm::uvec2(mipW, mipH),
+                              .mipLevel = mip});
+
+        resourceManager->transitionImageLayout(&cmd, *colorRes.image,
+            vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, mip, 1);
+    }
 
     // --- Sub-pass 1: Ray trace -> ssrCurrentTextureIndex ---
     resourceManager->transitionImageLayouts(cmd, {

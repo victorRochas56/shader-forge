@@ -127,8 +127,8 @@ struct BlurPushConstants {
     int32_t isHorizontal;
     float blurRadius;
     glm::uvec2 resolution;
+    uint32_t mipLevel;
     uint32_t padding1;
-    uint32_t padding2;
 };
 
 struct SSAOPushConstants {

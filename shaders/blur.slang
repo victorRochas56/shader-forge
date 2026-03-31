@@ -7,8 +7,8 @@ struct BlurPushConstants {
     int isHorizontal;
     float blurRadius;
     uint2 resolution;
+    uint mipLevel;
     uint padding1;
-    uint padding2;
 };
 
 [[vk::push_constant]] BlurPushConstants pc;
@@ -48,9 +48,10 @@ float4 fragMain(VSOutput input) : SV_Target {
             float2 offset = float2(float(i) * texelSize.x * pc.blurRadius, 0.0);
             int weightIdx = abs(i);
             if (weightIdx < 5) {
-                float4 sample = textures[pc.inputTextureIndex].Sample(
+                float4 sample = textures[pc.inputTextureIndex].SampleLevel(
                     samplers[pc.samplerIndex],
-                    input.texCoord + offset
+                    input.texCoord + offset,
+                    pc.mipLevel
                 );
                 result += sample * weights[weightIdx];
                 totalWeight += weights[weightIdx];
@@ -62,9 +63,10 @@ float4 fragMain(VSOutput input) : SV_Target {
             float2 offset = float2(0.0, float(i) * texelSize.y * pc.blurRadius);
             int weightIdx = abs(i);
             if (weightIdx < 5) {
-                float4 sample = textures[pc.inputTextureIndex].Sample(
+                float4 sample = textures[pc.inputTextureIndex].SampleLevel(
                     samplers[pc.samplerIndex],
-                    input.texCoord + offset
+                    input.texCoord + offset,
+                    pc.mipLevel
                 );
                 result += sample * weights[weightIdx];
                 totalWeight += weights[weightIdx];

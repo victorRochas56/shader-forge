@@ -57,107 +57,76 @@ struct RayTraceOutput {
     bool Hit;
     float2 UV;
 };
+/*
+float3 RayTrace(float3 p, float3 v) {
 
-RayTraceOutput RayTrace(float3 worldPos, float3 reflDir, float jitter) {
-    RayTraceOutput output;
-    output.Hit = false;
-    output.UV = float2(0, 0);
+    const float rootLevel = SSRpc.passData.hiZMipLevels - 1.0f; //convert to 0 based indexing
 
-    SamplerState depthSampler = samplers[SSRpc.passData.depthSamplerIndex];
-    float2 res = float2(SSRpc.passData.resolution);
-    int maxLevel = max(0, int(SSRpc.passData.hiZMipLevels) - 1);
+    float level = 3; //starting hiZ level
+    float2 crossEpsilon = float2(0.001,0.001);
 
-    // Project ray origin and endpoint to screen space (UV + depth)
-    float3 ssOrigin = worldToScreen(worldPos);
-    float3 ssEnd = worldToScreen(worldPos + reflDir * SSRpc.passData.maxDistance);
-    float3 ssDir = ssEnd - ssOrigin;
+    //get cell cross direction and small offset to enter the next cell when crossing
+    float2 crossStep, crossOffset;
+    crossStep.x = (v.x >= 0) ? 1.f : -1.f;
+    crossStep.y = (v.y >= 0) ? 1.f : -1.f;
+    crossOffset.xy = crossStep.xy * crossEpsilon.xy;
+    crossStep.xy = saturate(crossStep.xy);
 
-    // Skip degenerate rays (< 1 pixel of screen movement)
-    float pixelLen = length(ssDir.xy * res);
-    if (pixelLen < 1.0)
-        return output;
+    //set current ray to the original screen coordinate and depth
+    // max depth
+    float3 ray = p.xyz;
 
-    // Parametric t per pixel (for epsilon calculations)
-    float tPerPixel = 1.0 / pixelLen;
-    // Minimum advancement per step to prevent stalling on cell boundaries
-    float minStep = tPerPixel * 1.0;
+    //scale the vector such that z is 1.0f
+    float3 d = v.xyz /= v.z;
 
-    // Start slightly offset to avoid self-intersection, jittered to break grid artifacts
-    float t = tPerPixel * (2.0 + jitter);
-    int level = min(max(maxLevel - 2, 3), maxLevel);
-    // Track consecutive empty cells to accelerate mip ascent
-    int emptyStreak = 0;
+    //set starting point to the point where z = 0.0f
+    // min depth
+    float3 o = intersectDepthPlane(p.xy,d.xy,-p.z);
 
-    for (int i = 0; i < SSRpc.passData.maxSteps; i++) {
-        float3 pos = ssOrigin + ssDir * t;
+    // cross to next cell so that we don't self intersect immediately
+    float2 rayCell = getCell(ray.xy, hiZSize.xy);
+    ray = intersectCellBoundary(o.xy,d.xy,rayCell.xy,hiZSize.xy,crossStep.xy,crossOffset.xy);
 
-        // Bounds check
-        if (any(pos.xy < 0.0) || any(pos.xy > 1.0) || pos.z < 0.0 || pos.z > 1.0 || t >= 1.0)
-            break;
+    int iterations = 0;
+    // stop level is 2, too high can lead to artifacts
+    [loop]
+    while(level >= 2 && iterations < SSRpc.passData.maxSteps){
+        // get the minimum depth plane in which the current ray resides
+        float minZ = getMinimumDepthPlane(ray.xy, level, rootLevel);
 
-        // Cell size at current mip level
-        float2 mipRes = max(floor(res * exp2(-float(level))), float2(1, 1));
+        //get the cell number of our current ray
+        const float2 cellCount = getCellCount(level, rootLevel);
+        const float2 oldCellIdx = getCell(ray.xy, cellCount);
 
-        // Next cell boundary in the ray's direction
-        float2 pixelCoord = pos.xy * mipRes;
-        float2 nextBound;
-        nextBound.x = ssDir.x > 0 ? floor(pixelCoord.x) + 1.0 : ceil(pixelCoord.x) - 1.0;
-        nextBound.y = ssDir.y > 0 ? floor(pixelCoord.y) + 1.0 : ceil(pixelCoord.y) - 1.0;
-        float2 boundaryUV = nextBound / mipRes;
+        //intersect only if ray depth is below the minimum depth plane
+        float3 tmpRay = intersectDepthPlane(o.xy,d.xy,max(ray.z,minZ));
 
-        // Parametric distance to each cell boundary
-        float2 tBound;
-        tBound.x = abs(ssDir.x) > 1e-8 ? (boundaryUV.x - pos.x) / ssDir.x : 1e10;
-        tBound.y = abs(ssDir.y) > 1e-8 ? (boundaryUV.y - pos.y) / ssDir.y : 1e10;
-        float tCell = max(min(max(0.0, tBound.x), max(0.0, tBound.y)), minStep);
+        //get the new cell number as well
+        const float2 newCellIdx = getCell(tmpRay.xy, cellCount);
 
-        // Sample HiZ min-depth at current position and mip
-        float minDepth = textures[SSRpc.passData.hiZIndex].SampleLevel(depthSampler, pos.xy, level).r;
-
-        // Conservative test: max ray depth within this cell vs min surface depth
-        float exitDepth = pos.z + ssDir.z * tCell;
-        float rayMaxZ = max(pos.z, exitDepth);
-
-        if (rayMaxZ > minDepth) {
-            // Ray potentially intersects geometry in this cell
-            emptyStreak = 0;
-            if (level == 0) {
-                // At finest level - verify with thickness test
-                if (pos.z > minDepth) {
-                    float3 surfaceWorldPos = reconstructViewPos(pos.xy, minDepth, SSRpc.passData.invViewProj);
-                    float3 rayWorldPos = reconstructViewPos(pos.xy, pos.z, SSRpc.passData.invViewProj);
-                    if (length(rayWorldPos - surfaceWorldPos) < SSRpc.passData.thickness) {
-                        output.Hit = true;
-                        output.UV = pos.xy;
-                        return output;
-                    }
-                }
-                // Failed thickness test - skip past this surface and resume coarse traversal
-                t += tCell;
-                level = min(2, maxLevel);
-            } else {
-                // Descend to finer mip for more precision
-                level--;
-            }
-        } else {
-            // Ray is in front of everything in this cell - skip it
-            t += tCell;
-            emptyStreak++;
-            // Ascend mip aggressively: jump up by 2 after consecutive empty cells
-            if (emptyStreak >= 2 && level + 2 <= maxLevel) {
-                level += 2;
-                emptyStreak = 0;
-            } else if (level < maxLevel) {
-                level++;
-            }
+        //if the new cell number is different from the old cell number, we crossed a cell
+        [branch]
+        if(crossedCellBoundary(oldCellIdx,newCellIdx)){
+            //so intersect the boundary of that cell instead and go up a level
+            //for taking a larger step next loop
+            tmpRay = intersectCellBoundary(o,d,oldCellIdx,cellCount.xy,crossStep.xy, crossOffset.xy);
+            //clamp to a highest level to avoid too much stepping around
+            level = min(SSRpc.passData.hiZMipLevels - 1.0f, level + 2.0f);
         }
-    }
+        ray.xyz = tmpRay.xyz;
 
-    return output;
-}
+        //go down a level in the hiZ
+        --level;
+
+        ++iterations;
+        //end while
+    } 
+    return ray;
+}*/
+
+
 #define M1 1597334677U     //1719413*929
 #define M2 3812015801U     //140473*2467*11
-
 float2 hash2D( uint2 q, uint seed )
 {
     q *= uint2(M1, M2); 
@@ -170,6 +139,7 @@ float2 hash2D( uint2 q, uint seed )
 
 [shader("fragment")]
 float4 fragMain(VSOutput input) : SV_Target {
+    return float4(0, 0, 0, 0);
     float2 uv = input.texCoord;
 
     float roughness = textures[SSRpc.passData.roughnessMetalIndex].SampleLevel(samplers[SSRpc.passData.roughnessMetalSamplerIndex], uv,0).r;
@@ -185,45 +155,7 @@ float4 fragMain(VSOutput input) : SV_Target {
 
     float3 viewDir = normalize(viewPos - SSRpc.passData.cameraPos);
 
-    // For near-mirror surfaces, skip importance sampling and use perfect reflection
-    if (roughness < 0.01) {
-        float2 mirrorXi = hash2D(uint2(uv * float2(SSRpc.passData.resolution)), SSRpc.passData.frameIndex);
-        float3 reflectDir = normalize(reflect(viewDir, normal));
-        RayTraceOutput ray = RayTrace(viewPos, reflectDir, mirrorXi.x);
-        if (ray.Hit) {
-            float3 color = textures[SSRpc.passData.colorIndex].Sample(samplers[SSRpc.passData.colorSamplerIndex], ray.UV).rgb;
-            return float4(color, 1.0);
-        }
-        return float4(0, 0, 0, 0);
-    }
+    float3 reflectDir = normalize(reflect(viewDir, normal));
+    //float3 ray = RayTrace(viewPos, reflectDir);
 
-    // Importance sample GGX: multiple samples per pixel, varied across frames
-    float3 totalColor = float3(0, 0, 0);
-    float totalWeight = 0.0;
-    float3x3 TBN = buildTBN(normal);
-
-    int sampleCount = 1;
-    for (uint s = 0; s < sampleCount; s++) {
-        float2 xi = hash2D(uint2(uv * float2(SSRpc.passData.resolution)), SSRpc.passData.frameIndex * sampleCount + s);
-
-        float3 H = normalize(mul(sampleGGX(xi, roughness), TBN));
-        float3 L = normalize(reflect(viewDir, H));
-
-        float NdotL = dot(normal, L);
-        if (NdotL <= 0.0)
-            continue;
-
-        RayTraceOutput ray = RayTrace(viewPos, L, xi.x);
-        if (ray.Hit) {
-            float3 color = textures[SSRpc.passData.colorIndex].Sample(samplers[SSRpc.passData.colorSamplerIndex], ray.UV).rgb;
-            totalColor += color * NdotL;
-            totalWeight += NdotL;
-        }
-    }
-
-    if (totalWeight > 0.0) {
-        return float4(totalColor / totalWeight, 1.0 - roughness);
-    }
-
-    return float4(0, 0, 0, 0);
 }
