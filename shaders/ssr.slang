@@ -57,72 +57,99 @@ struct RayTraceOutput {
     bool Hit;
     float2 UV;
 };
+
+// Advance ray to a given depth: since d = v/v.z, d.z == 1, so t == depth
+float3 intersectDepthPlane(float3 o, float3 d, float t) {
+    return o + d * t;
+}
+
+// Get the cell (tile) index for a given position at a given mip level size
+float2 getCell(float2 ray, float2 cellCount) {
+    return floor(ray * cellCount);
+}
+
+// Find the intersection of the ray with the next cell boundary
+float3 intersectCellBoundary(float3 o, float3 d, float2 cellIndex, float2 cellCount, float2 crossStep, float2 crossOffset) {
+    float2 cellSize = 1.0 / cellCount;
+    float2 nextBoundary = (cellIndex + crossStep) * cellSize + crossOffset;
+    float2 t = (nextBoundary - o.xy) / d.xy;
+    float tMin = min(t.x, t.y);
+    return o + d * tMin;
+}
+
+// Get the cell count at a given mip level
+float2 getCellCount(float level, float rootLevel) {
+    return float2(SSRpc.passData.resolution) / exp2(level);
+}
+
+// Sample the minimum depth from the Hi-Z buffer at a given mip level
+float getMinimumDepthPlane(float2 ray, float level, float rootLevel) {
+    return textures[SSRpc.passData.hiZIndex].SampleLevel(samplers[SSRpc.passData.depthSamplerIndex], ray, level).r;
+}
+
+// Check if the ray crossed a cell boundary
+bool crossedCellBoundary(float2 oldCellIdx, float2 newCellIdx) {
+    return any(oldCellIdx != newCellIdx);
+}
+
 /*
+*   p is screen space point
+*   v is screen space ray direction
+*/
+#define HIZ_START_LEVEL 2
+#define HIZ_STOP_LEVEL 2
+
 float3 RayTrace(float3 p, float3 v) {
+    const float rootLevel = SSRpc.passData.hiZMipLevels - 1.0f;
 
-    const float rootLevel = SSRpc.passData.hiZMipLevels - 1.0f; //convert to 0 based indexing
+    float level = HIZ_START_LEVEL;
 
-    float level = 3; //starting hiZ level
-    float2 crossEpsilon = float2(0.001,0.001);
+    float iterations = 0.0f;
 
-    //get cell cross direction and small offset to enter the next cell when crossing
-    float2 crossStep, crossOffset;
-    crossStep.x = (v.x >= 0) ? 1.f : -1.f;
-    crossStep.y = (v.y >= 0) ? 1.f : -1.f;
-    crossOffset.xy = crossStep.xy * crossEpsilon.xy;
+    float2 crossStep;
+    float2 crossOffset;
+
+    crossStep.x = (v.x >= 0)? 1.f : -1.f;
+    crossStep.y = (v.y >= 0)? 1.f : -1.f;
+    crossOffset.xy = crossStep.xy * SSRpc.passData.thickness;
     crossStep.xy = saturate(crossStep.xy);
 
-    //set current ray to the original screen coordinate and depth
-    // max depth
     float3 ray = p.xyz;
 
-    //scale the vector such that z is 1.0f
     float3 d = v.xyz /= v.z;
 
-    //set starting point to the point where z = 0.0f
-    // min depth
-    float3 o = intersectDepthPlane(p.xy,d.xy,-p.z);
+    float3 o = intersectDepthPlane(p, d, -p.z);
 
-    // cross to next cell so that we don't self intersect immediately
-    float2 rayCell = getCell(ray.xy, hiZSize.xy);
-    ray = intersectCellBoundary(o.xy,d.xy,rayCell.xy,hiZSize.xy,crossStep.xy,crossOffset.xy);
+    float2 hiZSize = float2(SSRpc.passData.resolution);
+    float2 rayCell = getCell(ray.xy, hiZSize);
+    ray = intersectCellBoundary(o, d, rayCell, hiZSize, crossStep.xy, crossOffset.xy);
 
-    int iterations = 0;
-    // stop level is 2, too high can lead to artifacts
     [loop]
-    while(level >= 2 && iterations < SSRpc.passData.maxSteps){
-        // get the minimum depth plane in which the current ray resides
-        float minZ = getMinimumDepthPlane(ray.xy, level, rootLevel);
+    while( level >= HIZ_STOP_LEVEL && iterations < SSRpc.passData.maxSteps){
+        
+        float minZ = getMinimumDepthPlane(ray.xy,level,rootLevel);
 
-        //get the cell number of our current ray
-        const float2 cellCount = getCellCount(level, rootLevel);
+        const float2 cellCount = getCellCount(level,rootLevel);
         const float2 oldCellIdx = getCell(ray.xy, cellCount);
 
-        //intersect only if ray depth is below the minimum depth plane
-        float3 tmpRay = intersectDepthPlane(o.xy,d.xy,max(ray.z,minZ));
+        float3 tmpRay = intersectDepthPlane(o,d,max(ray.z,minZ));
 
-        //get the new cell number as well
-        const float2 newCellIdx = getCell(tmpRay.xy, cellCount);
+        const float2 newCellIdx = getCell(tmpRay.xy,cellCount);
 
-        //if the new cell number is different from the old cell number, we crossed a cell
         [branch]
         if(crossedCellBoundary(oldCellIdx,newCellIdx)){
-            //so intersect the boundary of that cell instead and go up a level
-            //for taking a larger step next loop
-            tmpRay = intersectCellBoundary(o,d,oldCellIdx,cellCount.xy,crossStep.xy, crossOffset.xy);
-            //clamp to a highest level to avoid too much stepping around
-            level = min(SSRpc.passData.hiZMipLevels - 1.0f, level + 2.0f);
+            tmpRay = intersectCellBoundary(o,d,oldCellIdx,cellCount.xy,crossStep.xy,crossOffset.xy);
+            level = min(rootLevel, level + 2.0f);
         }
         ray.xyz = tmpRay.xyz;
 
-        //go down a level in the hiZ
         --level;
 
         ++iterations;
-        //end while
-    } 
+    }
+
     return ray;
-}*/
+}
 
 
 #define M1 1597334677U     //1719413*929
@@ -139,7 +166,6 @@ float2 hash2D( uint2 q, uint seed )
 
 [shader("fragment")]
 float4 fragMain(VSOutput input) : SV_Target {
-    return float4(0, 0, 0, 0);
     float2 uv = input.texCoord;
 
     float roughness = textures[SSRpc.passData.roughnessMetalIndex].SampleLevel(samplers[SSRpc.passData.roughnessMetalSamplerIndex], uv,0).r;
@@ -148,14 +174,28 @@ float4 fragMain(VSOutput input) : SV_Target {
         return float4(0, 0, 0, 0);
 
     float initDepth = textures[SSRpc.passData.depthIndex].SampleLevel(samplers[SSRpc.passData.depthSamplerIndex], uv, 0).r;
-    float3 viewPos = reconstructViewPos(uv, initDepth, SSRpc.passData.invViewProj);
 
-    float3 normalData = textures[SSRpc.passData.normalIndex].Sample(samplers[SSRpc.passData.normalSamplerIndex], uv).xyz;
-    float3 normal = normalize(2.0f * normalData - 1.0f);
+    // Reconstruct world position
+    float3 worldPos = reconstructViewPos(uv, initDepth, SSRpc.passData.invViewProj);
 
-    float3 viewDir = normalize(viewPos - SSRpc.passData.cameraPos);
+    // View direction and world-space normal
+    float3 viewDir = normalize(worldPos - SSRpc.passData.cameraPos);
+    float3 N = textures[SSRpc.passData.normalIndex].SampleLevel(samplers[SSRpc.passData.normalSamplerIndex], uv, 0).rgb;
+    N = normalize(N * 2.0 - 1.0);
 
-    float3 reflectDir = normalize(reflect(viewDir, normal));
-    //float3 ray = RayTrace(viewPos, reflectDir);
+    // World-space reflection direction
+    float3 reflectDir = reflect(viewDir, N);
 
+    // P: screen-space origin
+    float3 p = float3(uv, initDepth);
+
+    // P': project reflected point into screen space
+    float3 pPrime = worldToScreen(worldPos + reflectDir * SSRpc.passData.maxDistance);
+
+    // Screen-space ray direction for tracing
+    float3 v = pPrime - p;
+
+    float3 ray = RayTrace(p,v);
+
+    return textures[SSRpc.passData.colorIndex].Sample(samplers[SSRpc.passData.colorSamplerIndex],ray.xy);
 }
