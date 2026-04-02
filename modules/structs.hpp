@@ -163,7 +163,6 @@ struct SSRPassData {
     uint32_t normalSamplerIndex;
     uint32_t _pad_resolution;   // align uvec2 to 8 bytes (std430)
     glm::uvec2 resolution;
-    float maxDistance;       // max ray travel distance in view space
     uint32_t hiZIndex;      // Hi-Z pyramid texture index
     uint32_t hiZMipLevels;  // number of mip levels in Hi-Z pyramid
     float thickness;        // depth tolerance for hit detection

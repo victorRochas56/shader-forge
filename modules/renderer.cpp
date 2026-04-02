@@ -1212,7 +1212,6 @@ void Renderer::recordSSRPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) 
                                         .normalIndex = normalTextureIndex,
                                         .normalSamplerIndex = defaultSamplerIndex,
                                         .resolution = glm::uvec2(ssrExtent.width, ssrExtent.height),
-                                        .maxDistance = ssrMaxDistance,
                                         .hiZIndex = hiZTextureIndex,
                                         .hiZMipLevels = hiZMipLevels,
                                         .thickness = ssrThickness,

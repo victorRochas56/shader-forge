@@ -179,11 +179,10 @@ class Renderer {
 
     bool                                enableSSR = true;
     float                               ssrResolutionScale = 1.0f;
-    float                               ssrRoughnessThreshold = 0.6f;
-    float                               ssrMaxDistance = 10.0f;
-    int                                 ssrMaxSteps = 64;
-    float                               ssrThickness = 0.5f;
-    float                               ssrTemporalBlend = 0.05f;
+    float                               ssrRoughnessThreshold = 0.9f;
+    int                                 ssrMaxSteps = 32;
+    float                               ssrThickness = 0.05f;
+    float                               ssrTemporalBlend = 0.1f;
 
   private:
     // Temporary texture for gaussian blur (mipmapped for per-mip blur passes)

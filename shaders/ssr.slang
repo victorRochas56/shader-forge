@@ -19,7 +19,6 @@ struct SSRPassData {
     uint normalSamplerIndex;
     uint _pad_resolution;
     uint2 resolution;
-    float maxDistance;
     uint hiZIndex;
     uint hiZMipLevels;
     float thickness;
@@ -111,7 +110,7 @@ float3 RayTrace(float3 p, float3 v) {
 
     crossStep.x = (v.x >= 0)? 1.f : -1.f;
     crossStep.y = (v.y >= 0)? 1.f : -1.f;
-    crossOffset.xy = crossStep.xy * SSRpc.passData.thickness;
+    crossOffset.xy = crossStep.xy * 0.025;
     crossStep.xy = saturate(crossStep.xy);
 
     float3 ray = p.xyz;
@@ -186,16 +185,32 @@ float4 fragMain(VSOutput input) : SV_Target {
     // World-space reflection direction
     float3 reflectDir = reflect(viewDir, N);
 
+    if (dot(reflectDir, viewDir) < 0.0)
+        return float4(0, 0, 0, 0);
+
     // P: screen-space origin
     float3 p = float3(uv, initDepth);
 
     // P': project reflected point into screen space
-    float3 pPrime = worldToScreen(worldPos + reflectDir * SSRpc.passData.maxDistance);
+    float3 pPrime = worldToScreen(worldPos + reflectDir * 10.0f);
 
     // Screen-space ray direction for tracing
     float3 v = pPrime - p;
 
+    // Reject rays going toward the camera in screen-space depth
+    if (v.z < 0.0)
+        return float4(0, 0, 0, 0);
+
     float3 ray = RayTrace(p,v);
+
+    float reflDepth = ray.z;
+    float4 realDepth = textures[SSRpc.passData.hiZIndex].SampleLevel(samplers[SSRpc.passData.depthSamplerIndex],ray.xy,0);
+
+    if(any(ray.xy < 0.0) || any(ray.xy > 1.0))
+        return float4(0,0,0,0);
+
+    if(abs(reflDepth - realDepth.r) > SSRpc.passData.thickness)
+        return float4(0,0,0,0);
 
     return textures[SSRpc.passData.colorIndex].Sample(samplers[SSRpc.passData.colorSamplerIndex],ray.xy);
 }

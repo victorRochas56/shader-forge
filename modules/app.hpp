@@ -152,7 +152,6 @@ class App {
             renderer.toggleSSR();
         }
         if(renderer.enableSSR){
-            ImGui::SliderFloat("Max Distance",&renderer.ssrMaxDistance,1.0f,100.0f);
             ImGui::SliderInt("Max Steps",&renderer.ssrMaxSteps,16,128);
             ImGui::SliderFloat("Thickness",&renderer.ssrThickness,0.01f,5.0f);
             ImGui::SliderFloat("Roughness Threshold",&renderer.ssrRoughnessThreshold,0.0f,1.0f);
