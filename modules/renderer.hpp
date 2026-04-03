@@ -6,6 +6,7 @@
 #define VULKAN_HPP_NO_CONSTRUCTORS 1 // for structs constructors
 #endif
 
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <unordered_set>
@@ -100,7 +101,22 @@ class Renderer {
 
     //rendering data
     std::vector<Material>               materials;
-    std::map<Shader, std::map<Material, std::map<Node*, std::unordered_set<uint32_t>>>> shaders; // map between Shaders and Nodes + their submeshes to render
+
+    struct RenderEntry {
+        Node*    node;
+        uint32_t submeshIndex;
+        uint32_t materialIndex;       // index into materials vector
+        uint32_t shaderPipelineIndex;
+    };
+    struct ShaderDrawRange {
+        uint32_t pipelineIndex;
+        uint32_t firstCommand;
+        uint32_t commandCount;
+    };
+    std::vector<RenderEntry>            renderEntries;
+    bool                                renderListDirty = false;
+    std::vector<ShaderDrawRange>        shaderDrawRanges;
+
     Shader                              fallbackLitShader;
     uint32_t                            fallbackDefaultMaterialIndex;
     std::map<uint32_t, Light>           lights;
@@ -178,9 +194,9 @@ class Renderer {
     float                               ssaoResolutionScale = 0.5f;
 
     bool                                enableSSR = true;
-    float                               ssrResolutionScale = 1.0f;
+    float                               ssrResolutionScale = 0.5f;
     float                               ssrRoughnessThreshold = 0.9f;
-    int                                 ssrMaxSteps = 32; 
+    int                                 ssrMaxSteps = 16; 
     float                               ssrThickness = 0.015f;
     float                               ssrTemporalBlend = 0.1f;
 

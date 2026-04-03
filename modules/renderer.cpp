@@ -330,11 +330,37 @@ uint32_t Renderer::addMaterial(Material material) {
     materials.push_back(material);
     return materials.size() - 1;
 }
-void Renderer::addMeshToShader(Node* node, uint32_t submeshIndex, Shader shader, Material material) { shaders[shader][material][node].insert(submeshIndex); }
-void Renderer::removeMeshFromShader(Node* node, uint32_t subMeshIndex, Shader shader, Material material) { shaders[shader][material][node].erase(subMeshIndex); }
+void Renderer::addMeshToShader(Node* node, uint32_t submeshIndex, Shader shader, Material material) {
+    uint32_t matIdx = 0;
+    for (uint32_t i = 0; i < materials.size(); i++) {
+        if (materials[i] == material) { matIdx = i; break; }
+    }
+    for (const auto& e : renderEntries) {
+        if (e.node == node && e.submeshIndex == submeshIndex &&
+            e.materialIndex == matIdx && e.shaderPipelineIndex == shader.pipelineIndex)
+            return;
+    }
+    renderEntries.push_back({node, submeshIndex, matIdx, shader.pipelineIndex});
+    renderListDirty = true;
+}
+void Renderer::removeMeshFromShader(Node* node, uint32_t subMeshIndex, Shader shader, Material material) {
+    uint32_t matIdx = 0;
+    for (uint32_t i = 0; i < materials.size(); i++) {
+        if (materials[i] == material) { matIdx = i; break; }
+    }
+    for (auto it = renderEntries.begin(); it != renderEntries.end(); ++it) {
+        if (it->node == node && it->submeshIndex == subMeshIndex &&
+            it->materialIndex == matIdx && it->shaderPipelineIndex == shader.pipelineIndex) {
+            *it = renderEntries.back();
+            renderEntries.pop_back();
+            renderListDirty = true;
+            return;
+        }
+    }
+}
 Shader Renderer::getFallBackShader() { return fallbackLitShader; }
 uint32_t Renderer::getFallBackMaterial() { return fallbackDefaultMaterialIndex; }
-void Renderer::clearRenderList() { shaders.clear(); }
+void Renderer::clearRenderList() { renderEntries.clear(); shaderDrawRanges.clear(); renderListDirty = false; }
 
 const std::map<uint32_t, Light>& Renderer::getLights() { return lights; }
 std::map<uint32_t, Light>& Renderer::getLightsMutable() { return lights; }
@@ -727,20 +753,31 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
     auto& cmd = commandBuffers[currentFrame];
     cmd.begin({});
 
+    Tracer::startTrace("record shadow pass");
     for (auto& [lightId, light] : lights) {
         if (light.castsShadows == 1)
             recordShadowPass(cmd, light);
     }
-    recordGeometryPass(cmd, imageIndex);
+    Tracer::endTrace("record shadow pass");
 
+    Tracer::startTrace("record geo pass");
+    recordGeometryPass(cmd, imageIndex);
+    Tracer::endTrace("record geo pass");
+
+    Tracer::startTrace("record ssr pass");
     if (enableSSR && ssrPipelineIndex != 0xFFFFFFFF)
         recordSSRPass(cmd, imageIndex);
-
+    Tracer::endTrace("record ssr pass");
+    
+    Tracer::startTrace("record ssao pass");
     if (enableSSAO && ssaoPipelineIndex != 0xFFFFFFFF)
         recordSSAOPass(cmd, imageIndex);
+    Tracer::endTrace("record ssao pass");
 
+    Tracer::startTrace("record image vis pass");
     if (imageVisIndex != 0xFFFFFFFF)
         recordImageVisPass(cmd, imageIndex);
+    Tracer::endTrace("record image vis pass");
 
     recordOverlayPass(cmd, imageIndex);
 
@@ -750,50 +787,66 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
 
 template <typename PerSubMeshFn>
 void Renderer::buildGeometryDrawCommands(const std::array<Plane, 6>& frustumPlanes, bool doCulling, PerSubMeshFn&& perSubMeshFn) {
+    if (renderListDirty) {
+        std::sort(renderEntries.begin(), renderEntries.end(), [](const RenderEntry& a, const RenderEntry& b) {
+            return a.shaderPipelineIndex < b.shaderPipelineIndex;
+        });
+        renderListDirty = false;
+    }
+
     indirectCommands.clear();
+    shaderDrawRanges.clear();
 
-    for (const auto& [shader, materials] : shaders) {
-        for (const auto& [material, node_mesh] : materials) {
-            for (const auto& [node, subMeshIndices] : node_mesh) {
+    std::unordered_set<uint32_t> freedMeshes;
+    uint32_t currentPipelineIdx = UINT32_MAX;
 
-                if (assetManager.meshes[node->getMeshIndex()].freed == true) {
-                    for (uint32_t subMesh : assetManager.meshes[node->getMeshIndex()].subMeshes) {
-                        descriptorSet->freeVariableBuffer(vertexBufferIndex, assetManager.subMeshes[subMesh].vertexAllocationIndex);
-                        descriptorSet->freeVariableBuffer(indexBufferIndex, assetManager.subMeshes[subMesh].indexAllocationIndex);
-                        assetManager.freeSubMeshes.push(subMesh);
-                    }
-                    assetManager.freeMeshes.push(node->getMeshIndex());
-                    continue;
+    for (const auto& entry : renderEntries) {
+        Node* node = entry.node;
+        uint32_t meshIdx = node->getMeshIndex();
+
+        if (assetManager.meshes[meshIdx].freed) {
+            if (freedMeshes.insert(meshIdx).second) {
+                for (uint32_t subMesh : assetManager.meshes[meshIdx].subMeshes) {
+                    descriptorSet->freeVariableBuffer(vertexBufferIndex, assetManager.subMeshes[subMesh].vertexAllocationIndex);
+                    descriptorSet->freeVariableBuffer(indexBufferIndex, assetManager.subMeshes[subMesh].indexAllocationIndex);
+                    assetManager.freeSubMeshes.push(subMesh);
                 }
-
-                if (node->isBoundingBoxValid() && doCulling) {
-                    if (!isAABBInFrustum(node->getBoundingBoxMin(), node->getBoundingBoxMax(), frustumPlanes))
-                        continue;
-                }
-
-                for (auto mesh : subMeshIndices) {
-                    const auto& subMesh = assetManager.subMeshes[mesh];
-
-                    glm::vec3 subWorldMin, subWorldMax;
-                    transformAABBToWorldSpace(subMesh.boundingBoxMin, subMesh.boundingBoxMax, node->getTransform(), subWorldMin, subWorldMax);
-                    if (!isAABBInFrustum(subWorldMin, subWorldMax, frustumPlanes) && doCulling){
-                        culledCount++;
-                        continue;
-                    }
-
-                    if(showBBOXes && doCulling)
-                        Gizmos::drawBox(subWorldMin,subWorldMax,glm::vec4(1.0f,1.0f,0.0f,1.0f));
-
-                    indirectCommands.push_back({.indexCount    = subMesh.indexCount,
-                                                .instanceCount = 1,
-                                                .firstIndex    = static_cast<uint32_t>(subMesh.indexOffset / sizeof(uint32_t)),
-                                                .vertexOffset  = 0,
-                                                .firstInstance = 0});
-
-                    perSubMeshFn(subMesh, *node, material);
-                }
+                assetManager.freeMeshes.push(meshIdx);
             }
+            continue;
         }
+
+        if (node->isBoundingBoxValid() && doCulling) {
+            if (!isAABBInFrustum(node->getBoundingBoxMin(), node->getBoundingBoxMax(), frustumPlanes))
+                continue;
+        }
+
+        const auto& subMesh = assetManager.subMeshes[entry.submeshIndex];
+
+        glm::vec3 subWorldMin, subWorldMax;
+        transformAABBToWorldSpace(subMesh.boundingBoxMin, subMesh.boundingBoxMax, node->getTransform(), subWorldMin, subWorldMax);
+        if (!isAABBInFrustum(subWorldMin, subWorldMax, frustumPlanes) && doCulling) {
+            culledCount++;
+            continue;
+        }
+
+        if (showBBOXes && doCulling)
+            Gizmos::drawBox(subWorldMin, subWorldMax, glm::vec4(1.0f, 1.0f, 0.0f, 1.0f));
+
+        if (entry.shaderPipelineIndex != currentPipelineIdx) {
+            currentPipelineIdx = entry.shaderPipelineIndex;
+            shaderDrawRanges.push_back({currentPipelineIdx, static_cast<uint32_t>(indirectCommands.size()), 0});
+        }
+
+        indirectCommands.push_back({.indexCount    = subMesh.indexCount,
+                                    .instanceCount = 1,
+                                    .firstIndex    = static_cast<uint32_t>(subMesh.indexOffset / sizeof(uint32_t)),
+                                    .vertexOffset  = 0,
+                                    .firstInstance = 0});
+        shaderDrawRanges.back().commandCount++;
+
+        const Material& material = materials[entry.materialIndex];
+        perSubMeshFn(subMesh, *node, material);
     }
 }
 
@@ -1035,11 +1088,12 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
                                           .litPassDataAddress   = descriptorSet->getFixedBuffers()[litPassDataBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(LitPassData)
                                         };
 
-        for (const auto& [shader, materials] : shaders) {
-            auto currentPipeline = &(geoPipelines[shader.pipelineIndex]);
+        for (const auto& range : shaderDrawRanges) {
+            auto currentPipeline = &(geoPipelines[range.pipelineIndex]);
             bindPipeline(cmd, **currentPipeline);
             cmd.pushConstants<LitPushConstants>((*currentPipeline)->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pushConstants);
-            cmd.drawIndexedIndirect(*litIndirectDrawBuffer, frameByteOffset, static_cast<uint32_t>(indirectCommands.size()), sizeof(DrawIndexedIndirectCommand));
+            vk::DeviceSize rangeOffset = frameByteOffset + range.firstCommand * sizeof(DrawIndexedIndirectCommand);
+            cmd.drawIndexedIndirect(*litIndirectDrawBuffer, rangeOffset, range.commandCount, sizeof(DrawIndexedIndirectCommand));
         }
     }
 
@@ -1302,6 +1356,31 @@ void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light) {
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, currentPipeline->pipeline);
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, currentPipeline->layout, 0, {*currentPipeline->descriptorSet}, {});
 
+    // Build indirect draw commands once — identical across all cascades since culling is off
+    std::array<Plane, 6> dummyPlanes{};
+    drawDataList.clear();
+    buildGeometryDrawCommands(dummyPlanes, false, [&](const auto& subMesh, auto& node, const auto& material) {
+        drawDataList.push_back({.vertexAllocationIndex = subMesh.vertexAllocationIndex,
+                                .vertexOffset = static_cast<uint32_t>(subMesh.vertexOffset),
+                                .vertexStride = subMesh.vertexStride,
+                                .modelMatrixIndex = node.getModelMatrixIndex()});
+    });
+
+    vk::DeviceSize frameByteOffset = currentFrame * MAX_INDIRECT_COMMANDS * sizeof(DrawIndexedIndirectCommand);
+
+    // Upload indirect commands and draw data once for all cascades
+    if (!indirectCommands.empty()) {
+        memcpy(static_cast<char*>(indirectDrawBufferMapped) + frameByteOffset, indirectCommands.data(), indirectCommands.size() * sizeof(DrawIndexedIndirectCommand));
+
+        auto* shadowDataBuffer = descriptorSet->getFixedBufferMappedData<ShadowDrawData>(shadowDrawDataBufferIndex);
+        if (shadowDataBuffer) {
+            uint32_t frameOffset = currentFrame * MAX_FIXED_BUFFER;
+            memcpy(&shadowDataBuffer[frameOffset], drawDataList.data(), drawDataList.size() * sizeof(ShadowDrawData));
+        } else {
+            std::cerr << "Error: shadow data buffer mapped memory is null!" << std::endl;
+        }
+    }
+
     //CSM shadows
     for (int i = 0; i < cascadeCount; i++) {
         if (light.type == LightType::Directional) {
@@ -1333,38 +1412,12 @@ void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light) {
         cmd.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(shadowMapResolution), static_cast<float>(shadowMapResolution), 0.0f, 1.0f));
         cmd.setScissor(0, vk::Rect2D({0, 0}, {shadowMapResolution, shadowMapResolution}));
 
-        // Extract frustum planes for this cascade
         glm::mat4 lightSpaceMatrix = light.lightSpaceMatrix;
         if (light.type == LightType::Directional) {
             lightSpaceMatrix = light.cascades[i].lightSpaceMatrix;
         }
-        std::array<Plane, 6> frustumPlanes = extractFrustumPlanes(lightSpaceMatrix);
-        //Gizmos::drawFrustum(lightSpaceMatrix,glm::vec4(0,1,0,1));
 
-        // Build indirect draw commands and shadow draw data with CPU frustum culling
-        drawDataList.clear();
-        buildGeometryDrawCommands(frustumPlanes, false, [&](const auto& subMesh, auto& node, const auto& material) {
-            drawDataList.push_back({.vertexAllocationIndex = subMesh.vertexAllocationIndex,
-                                    .vertexOffset = static_cast<uint32_t>(subMesh.vertexOffset),
-                                    .vertexStride = subMesh.vertexStride,
-                                    .modelMatrixIndex = node.getModelMatrixIndex()});
-        });
-
-        // build the indirect draw command and submit it
         if (!indirectCommands.empty()) {
-            vk::DeviceSize frameByteOffset = currentFrame * MAX_INDIRECT_COMMANDS * sizeof(DrawIndexedIndirectCommand);
-            memcpy(static_cast<char*>(indirectDrawBufferMapped) + frameByteOffset, indirectCommands.data(), indirectCommands.size() * sizeof(DrawIndexedIndirectCommand));
-
-            // Get the fixed buffer's mapped memory pointer and write with frame offset
-            auto* shadowDataBuffer = descriptorSet->getFixedBufferMappedData<ShadowDrawData>(shadowDrawDataBufferIndex);
-            if (shadowDataBuffer) {
-                uint32_t frameOffset = currentFrame * MAX_FIXED_BUFFER;
-                memcpy(&shadowDataBuffer[frameOffset], drawDataList.data(), drawDataList.size() * sizeof(ShadowDrawData));
-            } else {
-                std::cerr << "Error: shadow data buffer mapped memory is null!" << std::endl;
-            }
-
-            // Set push constants (same for all draws in this cascade)
             ShadowPushConstants pushConstants = {
                 .vertexBufferAddress   = descriptorSet->getVariableBuffers()[vertexBufferIndex]->address,
                 .modelMatricesAddress  = descriptorSet->getFixedBuffers()[modelMatrixBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(glm::mat4),
