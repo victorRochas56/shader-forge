@@ -379,7 +379,7 @@ struct Cascade {
 struct Light {
     LightType type = LightType::Point;
     uint32_t modelMatrixIndex = 0;
-    uint32_t nodeIndex = MAX_NODES;
+    uint32_t nodeIndex = 0;
     uint32_t padding1;
     float range = 10.0;
     float intensity = 1.0;

@@ -14,19 +14,21 @@ class Renderer;
 
 class SceneGraph {
   public:
-    uint32_t selectedNode = MAX_NODES;
+    uint32_t selectedNode = 0; // 0 = none selected
 
-    SceneGraph() : nodes(new std::array<std::optional<Node>, MAX_NODES>()) {}
-    ~SceneGraph() { delete nodes; }
+    SceneGraph() { nodes.reserve(MAX_NODES); }
+    ~SceneGraph() = default;
 
     void init(Renderer* renderer);
 
-    Node* getRootNode() { return rootNode; }
+    static constexpr uint32_t ROOT_INDEX = 1;
 
-    std::array<std::optional<Node>, MAX_NODES>& getNodes() { return *nodes; }
+    Node& getRootNode() { return nodes[ROOT_INDEX]; }
 
-    uint32_t addNode(uint32_t parentIndex = 0, glm::vec3 position = glm::vec3(0.0f), glm::quat rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
-                     glm::vec3 scale = glm::vec3(1.0f), bool keepWorldTransform = false);
+    std::vector<Node>& getNodes() { return nodes; }
+
+    uint32_t addNode(uint32_t parentIndex = ROOT_INDEX, glm::vec3 position = glm::vec3(0.0f), glm::quat rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
+                     glm::vec3 scale = glm::vec3(1.0f));
 
     void removeNode(uint32_t index) { throw std::runtime_error("remove node not implemented!"); }
 
@@ -36,20 +38,45 @@ class SceneGraph {
         }
     }
 
-    void deSelectNode() { selectedNode = MAX_NODES; }
+    void deSelectNode() { selectedNode = 0; }
 
-    uint32_t getNodeCount() { return lastNode + 1; }
+    uint32_t getNodeCount() { return lastNode; } // excludes null node at 0
     uint32_t getLastNode() { return lastNode; }
 
     void resetLastNode() {
         lastNode = 0;
-        selectedNode = MAX_NODES;
+        selectedNode = 0;
+    }
+
+    // Link child into parent's sibling list (firstChild/nextSibling)
+    void linkChild(uint32_t parentIdx, uint32_t childIdx) {
+        nodes[childIdx].parentIndex = parentIdx;
+        nodes[childIdx].nextSibling = nodes[parentIdx].firstChild;
+        nodes[parentIdx].firstChild = childIdx;
+    }
+
+    // Iterate children of a node by index via callback: fn(Node& child)
+    template<typename Fn>
+    void forEachChild(uint32_t nodeIdx, Fn&& fn) {
+        uint32_t child = nodes[nodeIdx].firstChild;
+        while (child != 0) {
+            fn(nodes[child]);
+            child = nodes[child].nextSibling;
+        }
+    }
+
+    template<typename Fn>
+    void forEachChild(const Node& node, Fn&& fn) {
+        uint32_t child = node.firstChild;
+        while (child != 0) {
+            fn(nodes[child]);
+            child = nodes[child].nextSibling;
+        }
     }
 
   private:
     Renderer* renderer = nullptr;
-    Node* rootNode = nullptr;
-    std::array<std::optional<Node>, MAX_NODES>* nodes;
+    std::vector<Node> nodes;
     uint32_t lastNode = 0;
 
     // Allocate GPU model matrix buffer for a node

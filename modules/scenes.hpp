@@ -27,15 +27,20 @@ class SceneManager {
         savedMaterialIDs.clear();
 
         // first collect all unique materials used by nodes
-        Node* rootNode = renderer.sceneGraph.getRootNode();
-        for (Node* childNode : rootNode->getChildren()) {
-            collectMaterials(childNode, renderer);
+        Node& rootNode = renderer.sceneGraph.getRootNode();
+        auto& nodes = renderer.sceneGraph.getNodes();
+        uint32_t child = rootNode.firstChild;
+        while (child != 0) {
+            collectMaterials(nodes[child], renderer);
+            child = nodes[child].nextSibling;
         }
         writeMaterials(renderer);
 
         // then write all nodes
-        for (Node* childNode : rootNode->getChildren()) {
-            writeNodes(childNode, renderer);
+        child = rootNode.firstChild;
+        while (child != 0) {
+            writeNodes(nodes[child], renderer);
+            child = nodes[child].nextSibling;
         }
         ofs.close();
     }
@@ -63,7 +68,7 @@ class SceneManager {
             if (line == "Materials {") {
                 parseMaterialsSection(ifs, renderer, materialIDToIndex);
             } else if (line == "Node {") {
-                parseNode(ifs, renderer, renderer.sceneGraph.getRootNode(), materialIDToIndex, loadedMeshes);
+                parseNode(ifs, renderer, SceneGraph::ROOT_INDEX, materialIDToIndex, loadedMeshes);
             }
         }
 
@@ -113,15 +118,16 @@ class SceneManager {
     void clearSceneInternal(Renderer& renderer) { // meshes and textures remain loaded in memory for reuse (TODO check on load for unused?)
         std::cout << "Clearing scene..." << std::endl;
 
-        Node* rootNode = renderer.sceneGraph.getRootNode();
+        auto& nodes = renderer.sceneGraph.getNodes();
+        Node& rootNode = renderer.sceneGraph.getRootNode();
 
-        // we don't delete root itself
-        std::vector<Node*> children = rootNode->getChildren();
-
-        for (Node* child : children) {
-            clearNodeRecursive(child, renderer);
-            rootNode->removeChild(child);
+        // we don't delete root itself - clear all children recursively
+        uint32_t child = rootNode.firstChild;
+        while (child != 0) {
+            clearNodeRecursive(nodes[child], renderer);
+            child = nodes[child].nextSibling;
         }
+        rootNode.firstChild = 0;
 
         auto& materials = renderer.getMaterials();
         if (materials.size() > 1) {
@@ -130,32 +136,31 @@ class SceneManager {
             materials.push_back(defaultMaterial);
         }
 
-        auto& nodes = renderer.sceneGraph.getNodes();
-        for (uint32_t i = 1; i < MAX_NODES; i++) {
-            nodes[i].reset();
-        }
+        renderer.sceneGraph.getNodes().clear();
         renderer.sceneGraph.resetLastNode();
         renderer.clearRenderList();
         renderer.clearLights();
+        renderer.sceneGraph.init(&renderer);
         std::cout << "Scene cleared successfully!" << std::endl;
     }
 
-    void clearNodeRecursive(Node* node, Renderer& renderer) {
-        std::vector<Node*> children = node->getChildren();
-        for (Node* child : children) {
-            clearNodeRecursive(child, renderer);
+    void clearNodeRecursive(Node& node, Renderer& renderer) {
+        auto& nodes = renderer.sceneGraph.getNodes();
+        uint32_t child = node.firstChild;
+        while (child != 0) {
+            clearNodeRecursive(nodes[child], renderer);
+            child = nodes[child].nextSibling;
         }
 
         // Remove meshes from shader rendering maps
-        if (node->getMeshIndex() != MAX_MESHES) {
-            uint32_t meshIndex = node->getMeshIndex();
-            auto& materialIndices = node->getMaterialIndices();
-
-            for (size_t i = 0; i < materialIndices.size(); i++) {
+        if (node.getMeshIndex() != MAX_MESHES) {
+            uint32_t meshIndex = node.getMeshIndex();
+            auto& materialIndices = node.getMaterialIndices();
+            for (size_t i = 0; i < node.materialIndexCount; i++) {
                 uint32_t matIndex = materialIndices[i];
                 if (i < renderer.assetManager.meshes[meshIndex].subMeshes.size()) {
                     uint32_t subMeshIndex = renderer.assetManager.meshes[meshIndex].subMeshes[i];
-                    renderer.removeMeshFromShader(node, subMeshIndex, renderer.getMaterials()[matIndex].shaderSource, renderer.getMaterials()[matIndex]);
+                    renderer.removeMeshFromShader(&node, subMeshIndex, renderer.getMaterials()[matIndex].shaderSource, renderer.getMaterials()[matIndex]);
                 }
             }
         }
@@ -316,7 +321,7 @@ class SceneManager {
         std::cout << "Loaded material ID: " << materialID << " -> index: " << materialIndex << std::endl;
     }
 
-    void parseNode(std::ifstream& ifs, Renderer& renderer, Node* parent, std::unordered_map<uint32_t, uint32_t>& materialIDToIndex,
+    void parseNode(std::ifstream& ifs, Renderer& renderer, uint32_t parentIndex, std::unordered_map<uint32_t, uint32_t>& materialIDToIndex,
                    std::unordered_map<std::string, uint32_t>& loadedMeshes) {
         std::string name = "Node";
         glm::vec3 position(0.0f);
@@ -408,11 +413,11 @@ class SceneManager {
         }
 
         // Create the node
-        uint32_t nodeIndex = renderer.sceneGraph.addNode(parent->getIndex(), position, rotation, scale, false);
-        Node* newNode = &*renderer.sceneGraph.getNodes()[nodeIndex];
-        newNode->name = name;
+        uint32_t nodeIndex = renderer.sceneGraph.addNode(parentIndex, position, rotation, scale);
+        Node& newNode = renderer.sceneGraph.getNodes()[nodeIndex];
+        newNode.name = name;
 
-        std::cout << "Created node: " << name << " at index " << nodeIndex << std::endl;
+        std::cout << "created node: " << name << " at index " << nodeIndex << std::endl;
 
         // Load mesh if specified
         if (!meshPath.empty()) {
@@ -426,18 +431,18 @@ class SceneManager {
                     loadedMeshes[meshPath] = meshIndex;
                     std::cout << "Loaded mesh: " << meshPath << std::endl;
                 }
-                NodeOps::assignMesh(*newNode, meshIndex, renderer);
+                NodeOps::assignMesh(newNode, meshIndex, renderer);
 
                 // Add materials to submeshes
                 for (size_t i = 0; i < materialIDs.size(); i++) {
                     uint32_t materialID = materialIDs[i];
                     if (materialIDToIndex.find(materialID) != materialIDToIndex.end()) {
                         uint32_t materialIndex = materialIDToIndex[materialID];
-                        NodeOps::assignMaterial(*newNode, i, materialIndex, renderer);
+                        NodeOps::assignMaterial(newNode, i, materialIndex, renderer);
                         std::cout << "  Added material " << materialID << " to submesh " << i << std::endl;
                     } else {
                         std::cerr << "Material ID " << materialID << " not found, using fallback" << std::endl;
-                        NodeOps::assignMaterial(*newNode, i, renderer.getFallBackMaterial(), renderer);
+                        NodeOps::assignMaterial(newNode, i, renderer.getFallBackMaterial(), renderer);
                     }
                 }
             } catch (const std::exception& e) {
@@ -447,24 +452,28 @@ class SceneManager {
 
         // Add light if specified
         if (hasLight) {
-            NodeOps::assignLight(*newNode, light, renderer);
+            NodeOps::assignLight(newNode, light, renderer);
             std::cout << "Added light to node: " << name << std::endl;
         }
     }
 
-    void collectMaterials(Node* node, Renderer& renderer) {
-        if (node->getMeshIndex() != MAX_MESHES) {
-            for (uint32_t materialIndex : node->getMaterialIndices()) {
-                Material& mat = renderer.getMaterials()[materialIndex];
+    void collectMaterials(Node& node, Renderer& renderer) {
+        if (node.getMeshIndex() != MAX_MESHES) {
+            auto& materialIndices = node.getMaterialIndices();
+            for (int i = 0; i < node.materialIndexCount; i++) {
+                Material& mat = renderer.getMaterials()[materialIndices[i]];
                 savedMaterialIDs.insert(mat.materialID);
             }
         }
-        for (auto* childNode : node->getChildren()) {
-            collectMaterials(childNode, renderer);
+        auto& nodes = renderer.sceneGraph.getNodes();
+        uint32_t child = node.firstChild;
+        while (child != 0) {
+            collectMaterials(nodes[child], renderer);
+            child = nodes[child].nextSibling;
         }
     }
 
-    void writeMaterials(Renderer& renderer) {
+    void writeMaterials(Renderer& renderer) { 
         ofs << "Materials {" << std::endl;
         for (const Material& mat : renderer.getMaterials()) {
             // Skip default material (index 0) as it's recreated on init
@@ -504,18 +513,18 @@ class SceneManager {
         ofs << "}" << std::endl << std::endl;
     }
 
-    void writeNodes(Node* node, Renderer& renderer) {
+    void writeNodes(Node& node, Renderer& renderer) {
         ofs << "Node {" << std::endl;
-        ofs << "  Name : " << node->name << std::endl;
-        glm::vec3 pos = node->getWorldPosition();
-        glm::quat rot = node->getWorldRotation();
-        glm::vec3 scale = node->getWorldScale();
+        ofs << "  Name : " << node.name << std::endl;
+        glm::vec3 pos = node.getWorldPosition();
+        glm::quat rot = node.getWorldRotation();
+        glm::vec3 scale = node.getWorldScale();
         ofs << "  Position : " << pos.x << "," << pos.y << "," << pos.z << std::endl;
         ofs << "  Rotation : " << rot.w << "," << rot.x << "," << rot.y << "," << rot.z << std::endl;
         ofs << "  Scale : " << scale.x << "," << scale.y << "," << scale.z << std::endl;
 
-        if (node->getLightIndex() != MAX_LIGHTS) {
-            Light light = renderer.getLight(node->getLightIndex());
+        if (node.getLightIndex() != MAX_LIGHTS) {
+            Light light = renderer.getLight(node.getLightIndex());
             std::string type;
             std::string cascades = "";
             switch (light.type) {
@@ -543,22 +552,24 @@ class SceneManager {
                 << light.castsShadows << ";" << light.shadowResolution << cascades << std::endl;
         }
 
-        if (node->getMeshIndex() != MAX_MESHES) {
-            Mesh mesh = renderer.assetManager.meshes[node->getMeshIndex()];
+        if (node.getMeshIndex() != MAX_MESHES) {
+            Mesh mesh = renderer.assetManager.meshes[node.getMeshIndex()];
             ofs << "  Mesh : " << mesh.sourceFile << std::endl;
 
             // Reference materials by their matID
-            for (uint32_t materialIndex : node->getMaterialIndices()) {
-                Material& mat = renderer.getMaterials()[materialIndex];
+            auto& materialIndices = node.getMaterialIndices();
+            for (int i = 0; i < node.materialIndexCount; i++) {
+                Material& mat = renderer.getMaterials()[materialIndices[i]];
                 ofs << "  MaterialID : " << mat.materialID << std::endl;
             }
         }
         ofs << "}" << std::endl;
 
-        if (!node->getChildren().empty()) {
-            for (auto* childNode : node->getChildren()) {
-                writeNodes(childNode, renderer);
-            }
+        auto& nodes = renderer.sceneGraph.getNodes();
+        uint32_t child = node.firstChild;
+        while (child != 0) {
+            writeNodes(nodes[child], renderer);
+            child = nodes[child].nextSibling;
         }
         ofs << std::endl;
     }

@@ -91,8 +91,8 @@ class App {
             //gizmos are used in "immediate mode" so cleared every frame
             Gizmos::clearLineBuffer();
             //draw axes visualization for every node
-            for (int i = 0; i < renderer.sceneGraph.getNodeCount(); i++) {
-                Gizmos::drawAxes(renderer.sceneGraph.getNodes()[i]->getTransform(), 0.15);
+            for (int i = 1; i <= renderer.sceneGraph.getNodeCount(); i++) {
+                Gizmos::drawAxes(renderer.sceneGraph.getNodes()[i].getTransform(), 0.15);
             }
             //main draw loop
             renderer.drawFrame();
@@ -120,8 +120,8 @@ class App {
         ImGui::Begin("node tree");
         traverseNodeTree(renderer.sceneGraph.getRootNode(), 0, renderer.sceneGraph.selectedNode, &renderer);
         ImGui::End();
-        if (renderer.sceneGraph.selectedNode != MAX_NODES) {
-            showNodeInfo(*renderer.sceneGraph.getNodes()[renderer.sceneGraph.selectedNode], renderer);
+        if (renderer.sceneGraph.selectedNode != 0) {
+            showNodeInfo(renderer.sceneGraph.getNodes()[renderer.sceneGraph.selectedNode], renderer);
         }
         if (InputManager::getInstance().contextMenuShown) {
             showActionMenu(0, &renderer, InputManager::getInstance().contextMenuPinX, InputManager::getInstance().contextMenuPinY);

@@ -15,7 +15,7 @@
 namespace Raycast {
 
 struct MeshHit {
-    uint32_t nodeIndex = MAX_NODES;
+    uint32_t nodeIndex = 0;
     uint32_t submeshLocalIndex = 0;
     float distance = std::numeric_limits<float>::max();
 };
@@ -56,15 +56,13 @@ inline float rayTriangle(glm::vec3 origin, glm::vec3 dir, glm::vec3 v0, glm::vec
 }
 
 // Raycast against node bounding positions (existing proximity-based approach)
-inline std::vector<uint32_t> castNodes(glm::vec3 origin, glm::vec3 direction, std::array<std::optional<Node>, MAX_NODES>& nodes, uint32_t lastNode) {
+inline std::vector<uint32_t> castNodes(glm::vec3 origin, glm::vec3 direction, std::vector<Node>& nodes, uint32_t lastNode) {
     float margin = 0.05f;
     glm::vec3 dir = glm::normalize(direction);
     std::vector<uint32_t> foundNodes;
 
     for (uint32_t i = 1; i <= lastNode; i++) {
-        if (!nodes[i].has_value())
-            continue;
-        glm::vec3 nodeWorldLoc = glm::vec3(nodes[i]->getWorldPosition());
+        glm::vec3 nodeWorldLoc = glm::vec3(nodes[i].getWorldPosition());
         glm::vec3 toNode = nodeWorldLoc - origin;
         float projectionLength = glm::dot(toNode, dir);
         if (projectionLength < 0)
@@ -79,7 +77,7 @@ inline std::vector<uint32_t> castNodes(glm::vec3 origin, glm::vec3 direction, st
 }
 
 // Raycast against actual mesh triangles, returns closest hit with node and submesh indices
-inline MeshHit castMeshes(glm::vec3 origin, glm::vec3 direction, std::array<std::optional<Node>, MAX_NODES>& nodes, uint32_t lastNode,
+inline MeshHit castMeshes(glm::vec3 origin, glm::vec3 direction, std::vector<Node>& nodes, uint32_t lastNode,
                           std::vector<Mesh>& meshes, std::vector<SubMesh>& subMeshes) {
 
     glm::vec3 dir = glm::normalize(direction);
@@ -89,9 +87,7 @@ inline MeshHit castMeshes(glm::vec3 origin, glm::vec3 direction, std::array<std:
     glm::vec3 resV2;
 
     for (uint32_t i = 1; i <= lastNode; i++) {
-        if (!nodes[i].has_value())
-            continue;
-        auto& node = *nodes[i];
+        auto& node = nodes[i];
         uint32_t meshIdx = node.getMeshIndex();
         if (meshIdx >= meshes.size())
             continue;

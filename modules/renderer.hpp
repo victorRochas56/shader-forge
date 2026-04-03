@@ -180,8 +180,8 @@ class Renderer {
     bool                                enableSSR = true;
     float                               ssrResolutionScale = 1.0f;
     float                               ssrRoughnessThreshold = 0.9f;
-    int                                 ssrMaxSteps = 32;
-    float                               ssrThickness = 0.05f;
+    int                                 ssrMaxSteps = 32; 
+    float                               ssrThickness = 0.015f;
     float                               ssrTemporalBlend = 0.1f;
 
   private:

@@ -1,15 +1,13 @@
 #include "node_gui.hpp"
 #include "gui.hpp"
-#include "renderer.hpp"
 #include "input.hpp"
 #include "node_ops.hpp"
+#include "renderer.hpp"
 #include "transform_system.hpp"
 
 static std::unordered_map<uint32_t, NodeGuiState> guiStates;
 
-NodeGuiState& getNodeGuiState(uint32_t nodeIndex) {
-    return guiStates[nodeIndex];
-}
+NodeGuiState& getNodeGuiState(uint32_t nodeIndex) { return guiStates[nodeIndex]; }
 
 void showNodeInfo(Node& node, Renderer& renderer) {
     auto& state = getNodeGuiState(node.nodeIndex);
@@ -22,9 +20,9 @@ void showNodeInfo(Node& node, Renderer& renderer) {
         showNodeMaterialDialog(node, renderer);
     }
     showNodeLightInfo(node, renderer);
-    showNodeTransformInfo(node);
-    TransformSystem::updateAll(node, renderer.getDescriptorSet(), renderer.getModelMatrixBufferIndex(),
-                               renderer.assetManager.meshes, renderer.getLightsMutable());
+    showNodeTransformInfo(node, renderer);
+    TransformSystem::updateAll(node, renderer.sceneGraph.getNodes(), renderer.getDescriptorSet(), renderer.getModelMatrixBufferIndex(), renderer.assetManager.meshes,
+                               renderer.getLightsMutable());
     ImGui::End();
 }
 
@@ -51,17 +49,19 @@ void showNodeMeshInfo(Node& node, Renderer& renderer) {
 
         if (ImGui::Button("Confirm")) {
             // remove old mesh from render queue for shader
-            for (uint32_t index : node.materialIndices) {
-                for (int i = 0; i < renderer.assetManager.meshes[node.meshIndex].subMeshes.size(); i++) {
-                    renderer.removeMeshFromShader(&node, renderer.assetManager.meshes[node.meshIndex].subMeshes[i], renderer.getMaterials()[index].shaderSource,
-                                                   renderer.getMaterials()[index]);
+            auto& matIndices = node.getMaterialIndices();
+            for (int i = 0; i < node.materialIndexCount; i++) {
+                int index = matIndices[i];
+                for (int subMeshIdx = 0; subMeshIdx < renderer.assetManager.meshes[node.meshIndex].subMeshes.size(); subMeshIdx++) {
+                    renderer.removeMeshFromShader(&node, renderer.assetManager.meshes[node.meshIndex].subMeshes[subMeshIdx],
+                                                  renderer.getMaterials()[index].shaderSource, renderer.getMaterials()[index]);
                 }
             }
             // load new mesh
             node.meshIndex = renderer.assetManager.loadMeshFromFile(std::string(state.textBuffer));
             state.materialList.clear();
             state.selectedMaterials.clear();
-            node.materialIndices.clear();
+            node.materialIndexCount = 0;
             for (int i = 0; i < renderer.assetManager.meshes[node.meshIndex].subMeshes.size(); i++) {
                 NodeOps::assignMaterial(node, i, renderer.getFallBackMaterial(), renderer);
             }
@@ -118,8 +118,8 @@ void showNodeMaterialDialog(Node& node, Renderer& renderer) {
         uint32_t currentMatIdx = node.materialIndices[firstSubmeshIdx];
 
         // Get the original material name from the OBJ file
-        std::string originalMatName =
-            (firstSubmeshIdx < mesh.originalMaterialNames.size()) ? mesh.originalMaterialNames[firstSubmeshIdx] : ("Material_" + std::to_string(originalMatId));
+        std::string originalMatName = (firstSubmeshIdx < mesh.originalMaterialNames.size()) ? mesh.originalMaterialNames[firstSubmeshIdx]
+                                                                                            : ("Material_" + std::to_string(originalMatId));
 
         std::string displayText = originalMatName;
         if (submeshIndices.size() > 1) {
@@ -136,10 +136,12 @@ void showNodeMaterialDialog(Node& node, Renderer& renderer) {
                     if (n != currentMatIdx) {
                         // Update all submeshes that share this original material ID
                         for (uint32_t subMeshIdx : submeshIndices) {
-                            renderer.removeMeshFromShader(&node, mesh.subMeshes[subMeshIdx], renderer.getMaterials()[node.materialIndices[subMeshIdx]].shaderSource,
-                                                           renderer.getMaterials()[node.materialIndices[subMeshIdx]]);
+                            renderer.removeMeshFromShader(&node, mesh.subMeshes[subMeshIdx],
+                                                          renderer.getMaterials()[node.materialIndices[subMeshIdx]].shaderSource,
+                                                          renderer.getMaterials()[node.materialIndices[subMeshIdx]]);
                             node.materialIndices[subMeshIdx] = n;
-                            renderer.addMeshToShader(&node, mesh.subMeshes[subMeshIdx], renderer.getMaterials()[n].shaderSource, renderer.getMaterials()[n]);
+                            renderer.addMeshToShader(&node, mesh.subMeshes[subMeshIdx], renderer.getMaterials()[n].shaderSource,
+                                                     renderer.getMaterials()[n]);
                             state.selectedMaterials[subMeshIdx] = n;
                         }
                     }
@@ -185,11 +187,11 @@ void showNodeLightInfo(Node& node, Renderer& renderer) {
 
         if (light.type == LightType::Directional) {
 
-            ImGui::DragInt("show cascades", &light.showCascades,1,0,1);
+            ImGui::DragInt("show cascades", &light.showCascades, 1, 0, 1);
 
-            for(int i = 0; i< light.numCascades;i++){
+            for (int i = 0; i < light.numCascades; i++) {
                 std::string cascadeLabel = "cascade ";
-                cascadeLabel+= std::to_string(i);
+                cascadeLabel += std::to_string(i);
                 ImGui::DragFloat(cascadeLabel.c_str(), &light.cascades[i].splitDistance);
             }
             state.lightShadow = light.castsShadows;
@@ -202,16 +204,20 @@ void showNodeLightInfo(Node& node, Renderer& renderer) {
                         vk::raii::Image shadowMapImage = nullptr;
                         vk::raii::DeviceMemory shadowMapMemory = nullptr;
                         // PCF uses R32F format to store raw depth values
-                        renderer.getResourceManager().createImage(light.shadowResolution, light.shadowResolution, 1, vk::SampleCountFlagBits::e1, vk::Format::eR32Sfloat,
-                                                     vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
-                                                     vk::MemoryPropertyFlagBits::eDeviceLocal, shadowMapImage, shadowMapMemory, 1);
-                        vk::raii::ImageView shadowMapImageView = renderer.getResourceManager().createImageView(shadowMapImage, vk::Format::eR32Sfloat, vk::ImageAspectFlagBits::eColor);
+                        renderer.getResourceManager().createImage(light.shadowResolution, light.shadowResolution, 1, vk::SampleCountFlagBits::e1,
+                                                                  vk::Format::eR32Sfloat, vk::ImageTiling::eOptimal,
+                                                                  vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
+                                                                  vk::MemoryPropertyFlagBits::eDeviceLocal, shadowMapImage, shadowMapMemory, 1);
+                        vk::raii::ImageView shadowMapImageView =
+                            renderer.getResourceManager().createImageView(shadowMapImage, vk::Format::eR32Sfloat, vk::ImageAspectFlagBits::eColor);
 
                         // Initial layout transition from undefined to shader read optimal
-                        renderer.getResourceManager().transitionImageLayout(nullptr, shadowMapImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal);
+                        renderer.getResourceManager().transitionImageLayout(nullptr, shadowMapImage, vk::ImageLayout::eUndefined,
+                                                                            vk::ImageLayout::eShaderReadOnlyOptimal);
 
-                        light.cascades[i].shadowMapIndex =
-                            renderer.getDescriptorSet().allocateTexture(std::move(shadowMapImage), std::move(shadowMapMemory), std::move(shadowMapImageView),"internal/"+node.name+"/csm_"+std::to_string(i));
+                        light.cascades[i].shadowMapIndex = renderer.getDescriptorSet().allocateTexture(
+                            std::move(shadowMapImage), std::move(shadowMapMemory), std::move(shadowMapImageView),
+                            "internal/" + node.name + "/csm_" + std::to_string(i));
                     }
                 } else {
                     for (int i = 0; i < light.numCascades; i++) {
@@ -230,7 +236,7 @@ void showNodeLightInfo(Node& node, Renderer& renderer) {
     }
 }
 
-void showNodeTransformInfo(Node& node) {
+void showNodeTransformInfo(Node& node, Renderer& renderer) {
     ImGui::Text("position: ");
     ImGui::SetNextItemWidth(80);
     ImGui::DragFloat("Pos X", &node.relativePosition.x, 0.1);
@@ -276,8 +282,9 @@ void showNodeTransformInfo(Node& node) {
         glm::quat qZ = glm::angleAxis(node.worldRotationEuler.z, glm::vec3(0, 0, 1));
         glm::quat desiredWorldRotation = qZ * qY * qX;
 
-        if (node.parent != nullptr) {
-            glm::quat parentWorldRotation = node.parent->getWorldRotation();
+        if (node.parentIndex != 0) {
+            auto& nodes = renderer.sceneGraph.getNodes();
+            glm::quat parentWorldRotation = nodes[node.parentIndex].getWorldRotation();
             node.relativeRotation = glm::inverse(parentWorldRotation) * desiredWorldRotation;
         } else {
             node.relativeRotation = desiredWorldRotation;
@@ -304,8 +311,9 @@ void showNodeTransformInfo(Node& node) {
             worldRotationDelta.z = 0.0f;
         }
 
-        if (node.parent != nullptr) {
-            node.relativeRotation = glm::inverse(node.parent->getWorldRotation()) * newWorld;
+        if (node.parentIndex != 0) {
+            auto& nodes = renderer.sceneGraph.getNodes();
+            node.relativeRotation = glm::inverse(nodes[node.parentIndex].getWorldRotation()) * newWorld;
         } else {
             node.relativeRotation = newWorld;
         }

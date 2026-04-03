@@ -22,46 +22,14 @@
 #include <glm/gtx/hash.hpp>
 
 class Renderer; // forward declaration for free functions below
+class SceneGraph;
 
 class Node {
   public:
     std::string name = "empty";
 
-    Node(uint32_t arrayIndex, Node* parent = nullptr, glm::vec3 position = glm::vec3(0.0f), glm::quat rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
-         glm::vec3 scale = glm::vec3(1.0f), bool keepWorldTransform = false);
-
-    void setParent(Node* newParent) { parent = newParent; }
-
-    void addChild(Node* child, bool keepRelativeTransform = false) {
-        children.push_back(child);
-        child->setParent(this);
-        if (keepRelativeTransform) {
-            glm::mat4 parentInverse = glm::inverse(worldTransform);
-            glm::mat4 relativeTransform = parentInverse * child->worldTransform;
-
-            child->relativePosition = glm::vec3(relativeTransform[3]);
-
-            child->relativeScale.x = glm::length(glm::vec3(relativeTransform[0]));
-            child->relativeScale.y = glm::length(glm::vec3(relativeTransform[1]));
-            child->relativeScale.z = glm::length(glm::vec3(relativeTransform[2]));
-
-            glm::mat3 rotMatrix;
-            rotMatrix[0] = glm::vec3(relativeTransform[0]) / child->relativeScale.x;
-            rotMatrix[1] = glm::vec3(relativeTransform[1]) / child->relativeScale.y;
-            rotMatrix[2] = glm::vec3(relativeTransform[2]) / child->relativeScale.z;
-            child->relativeRotation = glm::quat_cast(rotMatrix);
-
-            child->relativeRotationEuler = glm::eulerAngles(child->relativeRotation);
-        }
-    }
-
-    void removeChild(Node* child) {
-        auto it = std::find(children.begin(), children.end(), child);
-        if (it != children.end()) {
-            children.erase(it);
-            child->parent = nullptr;
-        }
-    }
+    Node(uint32_t arrayIndex, uint32_t parentIndex = 0, glm::vec3 position = glm::vec3(0.0f), glm::quat rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
+         glm::vec3 scale = glm::vec3(1.0f));
     glm::vec3 getWorldPosition() { return glm::vec3(worldTransform[3]); }
     glm::vec3 getRelativePosition() { return relativePosition; }
     glm::mat4 getTransform() { return worldTransform; }
@@ -91,8 +59,6 @@ class Node {
     uint32_t getIndex() { return nodeIndex; }
     uint32_t getModelMatrixIndex() { return modelMatrixIndices[0]; } 
 
-    std::vector<Node*>& getChildren() { return children; }
-
     uint32_t getMeshIndex() { return meshIndex; }
     uint32_t getLightIndex() { return lightIndex; }
     std::vector<uint32_t>& getMaterialIndices() {return materialIndices; }
@@ -104,8 +70,10 @@ class Node {
 
     uint32_t nodeIndex;
 
-    std::vector<Node*> children;
-    Node* parent = nullptr;
+    // Tree structure (indices into SceneGraph::nodes, 0 = none/invalid)
+    uint32_t parentIndex = 0;
+    uint32_t firstChild = 0;
+    uint32_t nextSibling = 0;
 
     glm::vec3 relativePosition;
     glm::vec3 relativeScale;
@@ -118,6 +86,7 @@ class Node {
 
     uint32_t meshIndex = MAX_MESHES;
     std::vector<uint32_t> materialIndices;
+    uint32_t materialIndexCount = 0;
     uint32_t lightIndex = MAX_LIGHTS;
 
     // Bounding box for frustum culling (in world space)

@@ -61,7 +61,7 @@ static void browseButton(const char* id, char* pathBuffer, size_t bufferSize) {
 //forward declarations
 struct MaterialEditorState;
 void initIMGUI(Renderer* renderer);
-void traverseNodeTree(Node* node, uint32_t level, uint32_t selectedNode, Renderer* renderer);
+void traverseNodeTree(Node& node, uint32_t level, uint32_t selectedNode, Renderer* renderer);
 void showMaterialEditor(MaterialEditorState& state, Renderer* renderer);
 void showImageViewList(Renderer* renderer);
 void showActionMenu(uint32_t context, Renderer* renderer, float posX, float posY);

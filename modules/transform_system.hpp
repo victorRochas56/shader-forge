@@ -3,31 +3,35 @@
 #include "descriptor_sets.hpp"
 #include "structs.hpp"
 #include <map>
+#include <vector>
 
 class AssetManager;
 
 namespace TransformSystem {
 
     // Recompute world transforms for a node and all descendants (pure math, no GPU)
-    inline void recomputeTransforms(Node& node) {
+    inline void recomputeTransforms(Node& node, std::vector<Node>& nodes) {
         node.localTransform = makeTransform(node.relativePosition, node.relativeRotation, node.relativeScale);
-        if (node.parent != nullptr) {
-            node.worldTransform = node.parent->worldTransform * node.localTransform;
-            glm::quat worldRotation = node.parent->getWorldRotation() * node.relativeRotation;
+        if (node.parentIndex != 0) {
+            Node& parent = nodes[node.parentIndex];
+            node.worldTransform = parent.worldTransform * node.localTransform;
+            glm::quat worldRotation = parent.getWorldRotation() * node.relativeRotation;
             node.worldRotationEuler = glm::eulerAngles(worldRotation);
         } else {
             node.worldTransform = node.localTransform;
             node.worldRotationEuler = glm::eulerAngles(node.relativeRotation);
         }
 
-        for (Node* child : node.children) {
-            recomputeTransforms(*child);
+        uint32_t child = node.firstChild;
+        while (child != 0) {
+            recomputeTransforms(nodes[child], nodes);
+            child = nodes[child].nextSibling;
         }
     }
 
     // Sync a node's world transform to GPU buffers, update light direction, and recompute bounding box
     template<typename MeshArray>
-    void syncToGPU(Node& node, DescriptorSet& ds, uint32_t modelMatrixBufferIndex,
+    void syncToGPU(Node& node, std::vector<Node>& nodes, DescriptorSet& ds, uint32_t modelMatrixBufferIndex,
                    const MeshArray& meshes, std::map<uint32_t, Light>& lights) {
         // Update model matrix for all frames
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
@@ -58,17 +62,19 @@ namespace TransformSystem {
             }
         }
 
-        for (Node* child : node.children) {
-            syncToGPU(*child, ds, modelMatrixBufferIndex, meshes, lights);
+        uint32_t child = node.firstChild;
+        while (child != 0) {
+            syncToGPU(nodes[child], nodes, ds, modelMatrixBufferIndex, meshes, lights);
+            child = nodes[child].nextSibling;
         }
     }
 
     // Full update: recompute transforms then sync to GPU (replaces Node::update())
     template<typename MeshArray>
-    void updateAll(Node& node, DescriptorSet& ds, uint32_t modelMatrixBufferIndex,
+    void updateAll(Node& node, std::vector<Node>& nodes, DescriptorSet& ds, uint32_t modelMatrixBufferIndex,
                    const MeshArray& meshes, std::map<uint32_t, Light>& lights) {
-        recomputeTransforms(node);
-        syncToGPU(node, ds, modelMatrixBufferIndex, meshes, lights);
+        recomputeTransforms(node, nodes);
+        syncToGPU(node, nodes, ds, modelMatrixBufferIndex, meshes, lights);
     }
 
 }

@@ -40,6 +40,7 @@ void assignMaterial(Node& node, uint32_t submeshIndex, uint32_t materialIndex, R
         renderer.addMeshToShader(&node, renderer.assetManager.meshes[node.meshIndex].subMeshes[submeshIndex], renderer.getMaterials()[materialIndex].shaderSource,
                                   renderer.getMaterials()[materialIndex]);
         node.materialIndices.push_back(materialIndex);
+        node.materialIndexCount++;
     }
 }
 
@@ -66,7 +67,7 @@ void assignLight(Node& node, Light light, Renderer& renderer) {
     node.lightIndex = renderer.getDescriptorSet().allocateFixedBuffer<Light>(renderer.getLightBufferIndex(), light);
     renderer.addLight(node.lightIndex, light);
     std::cout << "added light at index : " << node.lightIndex << std::endl;
-    TransformSystem::updateAll(node, renderer.getDescriptorSet(), renderer.getModelMatrixBufferIndex(),
+    TransformSystem::updateAll(node, renderer.sceneGraph.getNodes(), renderer.getDescriptorSet(), renderer.getModelMatrixBufferIndex(),
                                renderer.assetManager.meshes, renderer.getLightsMutable());
 }
 

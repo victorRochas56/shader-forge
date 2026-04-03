@@ -19,5 +19,5 @@ void showNodeInfo(Node& node, Renderer& renderer);
 void showNodeMeshInfo(Node& node, Renderer& renderer);
 void showNodeMaterialDialog(Node& node, Renderer& renderer);
 void showNodeLightInfo(Node& node, Renderer& renderer);
-void showNodeTransformInfo(Node& node);
+void showNodeTransformInfo(Node& node, Renderer& renderer);
 

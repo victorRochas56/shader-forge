@@ -83,25 +83,26 @@ void initIMGUI(Renderer* renderer) {
     }
 }
 
-void traverseNodeTree(Node* node, uint32_t level, uint32_t selectedNode, Renderer* renderer) {
+void traverseNodeTree(Node& node, uint32_t level, uint32_t selectedNode, Renderer* renderer) {
     std::string displayText = " ";
     for (int i = 0; i < level; i++) {
         displayText += " ";
     }
-    if (node->getIndex() == selectedNode) {
+    if (node.getIndex() == selectedNode) {
         ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(200, 200, 0, 255));
-        displayText += "|_[" + node->name + "]";
+        displayText += "|_[" + node.name + "]";
     } else {
-        displayText += "|_ " + node->name;
+        displayText += "|_ " + node.name;
     }
     ImGui::Text(displayText.c_str());
-    if (node->getIndex() == selectedNode) {
+    if (node.getIndex() == selectedNode) {
         ImGui::PopStyleColor();
     }
-    if (!node->getChildren().empty()) {
-        for (auto* childNode : node->getChildren()) {
-            traverseNodeTree(childNode, level + 1, selectedNode, renderer);
-        }
+    auto& nodes = renderer->sceneGraph.getNodes();
+    uint32_t child = node.firstChild;
+    while (child != 0) {
+        traverseNodeTree(nodes[child], level + 1, selectedNode, renderer);
+        child = nodes[child].nextSibling;
     }
 }
 
@@ -287,17 +288,17 @@ void showMaterialEditor(MaterialEditorState& state, Renderer* renderer) {
 
             // update shader mappings for all nodes using this material
             auto& nodes = renderer->sceneGraph.getNodes();
-            for (uint32_t i = 1; i < renderer->sceneGraph.getNodeCount(); i++) {
-                if (!nodes[i].has_value()) continue;
-                auto& matIndices = nodes[i]->getMaterialIndices();
-                auto meshIdx = nodes[i]->getMeshIndex();
+            for (uint32_t i = 1; i <= renderer->sceneGraph.getNodeCount(); i++) {
+                auto& matIndices = nodes[i].getMaterialIndices();
+                auto meshIdx = nodes[i].getMeshIndex();
                 if (meshIdx >= renderer->assetManager.meshes.size()) continue;
 
                 for (size_t j = 0; j < matIndices.size(); j++) {
+                    if(matIndices[j] == 0xFFFFFFFF) break;
                     if (matIndices[j] == static_cast<uint32_t>(state.selectedIndex)) {
                         uint32_t subMeshIndex = renderer->assetManager.meshes[meshIdx].subMeshes[j];
-                        renderer->removeMeshFromShader(&*nodes[i], subMeshIndex, oldMat.shaderSource, oldMat);
-                        renderer->addMeshToShader(&*nodes[i], subMeshIndex, existingMat.shaderSource, existingMat);
+                        renderer->removeMeshFromShader(&nodes[i], subMeshIndex, oldMat.shaderSource, oldMat);
+                        renderer->addMeshToShader(&nodes[i], subMeshIndex, existingMat.shaderSource, existingMat);
                     }
                 }
             }
@@ -370,7 +371,7 @@ void showActionMenu(uint32_t context, Renderer* renderer, float posX, float posY
         int width = 0, height = 0;
         glfwGetWindowSize(renderer->getWindow(), &width, &height);
         renderer->activeCamera.rayFromScreenCoords((posX / width) * 2.0 - 1.0, (posY / height) * 2.0 - 1.0, &origin, &direction);
-        renderer->sceneGraph.addNode(0, origin + direction);
+        renderer->sceneGraph.addNode(SceneGraph::ROOT_INDEX, origin + direction);
     }
 
     ImGui::End();
