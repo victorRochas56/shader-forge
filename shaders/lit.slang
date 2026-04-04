@@ -160,7 +160,7 @@ FragmentOutput fragMain(VertexOutput input)
     kD *= 1.0 - metallic.r;
 
     float ao = 1.0;
-    float3 ambient = (kD * diffuseIBL /*+ kS * specularIBL*/) * ao;
+    float3 ambient = (kD * diffuseIBL) * ao;
     float3 color = ambient + Lo;
 
     output.color = float4(color, 1.0);

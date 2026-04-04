@@ -29,7 +29,6 @@ struct Vertex
 struct VertexOutput
 {
     float4 position : SV_Position;
-    float depth : DEPTH;
 };
 
 Vertex loadVertex(float* buffer, uint vertexIndex, uint stride, uint offset)
@@ -56,21 +55,11 @@ VertexOutput vertMain(uint vertexID : SV_VertexID, uint drawID : SV_DrawIndex)
 
     VertexOutput output;
     output.position = mul(pc.lightSpaceMatrix, worldPos);
-    // Store NDC depth (after perspective divide) to match sampling in lit.slang
-    output.depth = output.position.z / output.position.w;
     return output;
 }
 
-struct FragmentOutput
-{
-    float depth : SV_Target0;
-};
-
+// Depth-only pass — hardware writes depth automatically via SV_Position.z
 [shader("fragment")]
-FragmentOutput fragMain(VertexOutput input)
+void fragMain(VertexOutput input)
 {
-    FragmentOutput output;
-    output.depth = input.depth;
-
-    return output;
 }

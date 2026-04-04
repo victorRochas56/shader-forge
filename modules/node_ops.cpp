@@ -55,11 +55,12 @@ void assignLight(Node& node, Light light, Renderer& renderer) {
         for (int i = 0; i < light.numCascades; i++) {
             vk::raii::Image shadowMapImage = nullptr;
             vk::raii::DeviceMemory shadowMapMemory = nullptr;
-            resourceManager.createImage(light.shadowResolution, light.shadowResolution, 1, vk::SampleCountFlagBits::e1, vk::Format::eR32Sfloat, vk::ImageTiling::eOptimal,
-                                         vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, shadowMapImage,
+            resourceManager.createImage(light.shadowResolution, light.shadowResolution, 1, vk::SampleCountFlagBits::e1, vk::Format::eD32Sfloat, vk::ImageTiling::eOptimal,
+                                         vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, shadowMapImage,
                                          shadowMapMemory, 1);
-            vk::raii::ImageView shadowMapImageView = resourceManager.createImageView(shadowMapImage, vk::Format::eR32Sfloat, vk::ImageAspectFlagBits::eColor);
-            resourceManager.transitionImageLayout(nullptr, shadowMapImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal);
+            vk::raii::ImageView shadowMapImageView = resourceManager.createImageView(shadowMapImage, vk::Format::eD32Sfloat, vk::ImageAspectFlagBits::eDepth);
+            resourceManager.transitionImageLayout(nullptr, shadowMapImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal);
+            resourceManager.transitionImageLayout(nullptr, shadowMapImage, vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
 
             light.cascades[i].shadowMapIndex = renderer.getDescriptorSet().allocateTexture(std::move(shadowMapImage), std::move(shadowMapMemory), std::move(shadowMapImageView),"internal/"+node.name+"/csm_"+std::to_string(i));
         }
@@ -166,9 +167,22 @@ void calculateCascadedLightSpaceMatrices(Light& light, Camera& camera, Renderer*
             orthoNear, orthoFar
         );
 
+        // Snap the shadow matrix translation to texel boundaries so the
+        // shadow map stays locked to a fixed world-space grid as the camera moves.
+        glm::mat4 shadowMatrix = lightProj * lightView;
+        float halfRes = static_cast<float>(light.shadowResolution) * 0.5f;
+        glm::vec4 shadowOrigin = shadowMatrix * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+        shadowOrigin *= halfRes;
+        glm::vec4 rounded = glm::round(shadowOrigin);
+        glm::vec4 roundOffset = rounded - shadowOrigin;
+        roundOffset /= halfRes;
+        lightProj[3][0] += roundOffset.x;
+        lightProj[3][1] += roundOffset.y;
+
+        float finalExtent = glm::max(lsMax.x - lsMin.x, lsMax.y - lsMin.y);
         light.cascades[i].lightSpaceMatrix = lightProj * lightView;
         light.cascades[i].texelSize = 1.0f / static_cast<float>(light.shadowResolution);
-        light.cascades[i].worldTexelSize = maxExtent / static_cast<float>(light.shadowResolution);
+        light.cascades[i].worldTexelSize = finalExtent / static_cast<float>(light.shadowResolution);
 
         lastSplitDist = splitDist;
     }

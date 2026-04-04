@@ -237,6 +237,28 @@ void showNodeLightInfo(Node& node, Renderer& renderer) {
 }
 
 void showNodeTransformInfo(Node& node, Renderer& renderer) {
+
+    ImGui::Text("Parent: %s", renderer.sceneGraph.getNode(node.parentIndex).name.c_str());
+
+    const char* currentParentName = renderer.sceneGraph.getNode(node.parentIndex).name.c_str();
+    if (ImGui::BeginCombo("Change Parent", currentParentName)) {
+        auto& nodes = renderer.sceneGraph.getNodes();
+        for (uint32_t i = SceneGraph::ROOT_INDEX; i <= renderer.sceneGraph.getLastNode(); i++) {
+            if (i == node.nodeIndex || i == node.parentIndex) continue;
+            // Skip descendants to prevent cycles
+            bool isDescendant = false;
+            for (uint32_t p = nodes[i].parentIndex; p != 0; p = nodes[p].parentIndex) {
+                if (p == node.nodeIndex) { isDescendant = true; break; }
+            }
+            if (isDescendant) continue;
+
+            if (ImGui::Selectable(nodes[i].name.c_str(), false)) {
+                renderer.sceneGraph.reparent(node.nodeIndex, i, true);
+            }
+        }
+        ImGui::EndCombo();
+    }
+
     ImGui::Text("position: ");
     ImGui::SetNextItemWidth(80);
     ImGui::DragFloat("Pos X", &node.relativePosition.x, 0.1);

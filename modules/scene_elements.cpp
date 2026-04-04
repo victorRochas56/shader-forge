@@ -11,6 +11,7 @@ GPU allocation, tree linking, and transform sync are handled by SceneGraph/Trans
 Node::Node(uint32_t arrayIndex, uint32_t parentIdx, glm::vec3 position, glm::quat rotation, glm::vec3 scale) {
 
     unsigned long long nodeSize = sizeof(Node);
+    name = "empty_"+std::to_string(arrayIndex);
     nodeIndex = arrayIndex;
     parentIndex = parentIdx;
 

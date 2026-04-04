@@ -198,7 +198,7 @@ class Renderer {
     float                               ssrRoughnessThreshold = 0.9f;
     int                                 ssrMaxSteps = 16; 
     float                               ssrThickness = 0.015f;
-    float                               ssrTemporalBlend = 0.1f;
+    float                               ssrTemporalBlend = 0.333f;
 
   private:
     // Temporary texture for gaussian blur (mipmapped for per-mip blur passes)
@@ -277,6 +277,8 @@ class Renderer {
     void toggleBBOXes();
 
     void setSkyBox(uint32_t skyboxIndex);
+
+    const std::vector<DrawIndexedIndirectCommand>& getIndirectCommands() const { return indirectCommands; }
 #pragma endregion
 
     void handleSwapchainResize();

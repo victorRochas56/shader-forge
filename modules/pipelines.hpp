@@ -165,7 +165,30 @@ class PipelineManager {
         };
 
         switch (pipelineCategory) {
-        case PipelineCategory::SHADOW:
+        case PipelineCategory::SHADOW: {
+            depthFormat = vk::Format::eD32Sfloat;
+            pipelineRenderingCreateInfo = {.colorAttachmentCount = 0, .pColorAttachmentFormats = nullptr, .depthAttachmentFormat = depthFormat};
+            inputAssembly = {.topology = topology};
+            rasterizer = {.depthClampEnable = vk::False,
+                          .rasterizerDiscardEnable = vk::False,
+                          .polygonMode = vk::PolygonMode::eFill,
+                          .cullMode = cullMode,
+                          .frontFace = vk::FrontFace::eCounterClockwise,
+                          .depthBiasEnable = vk::False,
+                          .depthBiasSlopeFactor = 1.0f};
+            multisampling = {.rasterizationSamples = vk::SampleCountFlagBits::e1, .sampleShadingEnable = vk::False};
+            depthStencil = {.depthTestEnable = depthTestEnable,
+                            .depthWriteEnable = depthWriteEnable,
+                            .depthCompareOp = vk::CompareOp::eLessOrEqual,
+                            .depthBoundsTestEnable = vk::False,
+                            .stencilTestEnable = vk::False};
+            colorBlending = {.logicOpEnable = vk::False, .attachmentCount = 0, .pAttachments = nullptr};
+            pushConstantRange = {.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, .offset = 0, .size = sizeof(T)};
+            vk::PipelineLayoutCreateInfo pipelineLayoutInfo{
+                .setLayoutCount = 1, .pSetLayouts = &*setLayout, .pushConstantRangeCount = 1, .pPushConstantRanges = &pushConstantRange};
+            pipeline->layout = vk::raii::PipelineLayout(device.getDevice(), pipelineLayoutInfo);
+            break;
+        }
         case PipelineCategory::BEFORE_GEOMETRY: {
             // Only sets depth format if depth testing is enabled for this specific pipeline
             if (depthTestEnable == vk::True) {

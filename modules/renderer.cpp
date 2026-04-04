@@ -22,6 +22,10 @@
 #include "swapchain.hpp"
 
 // TODO gpu side material data
+// TODO clustered lights? (forward +)
+// TODO point, spot and area lights
+// TODO node parenting
+// TODO other stuff idk
 // with a vis-buffer
 static const std::vector validationLayers = {"VK_LAYER_KHRONOS_validation"};
 
@@ -1343,8 +1347,10 @@ void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light) {
     TextureResource* shadowMap = nullptr;
     uint32_t shadowMapResolution = light.shadowResolution;
 
-    // Ensure depth buffer matches the shadow map resolution
-    createShadowDepthBuffer(shadowMapResolution);
+    // Non-directional lights still need the separate depth buffer for their color-attachment shadow maps
+    if (light.type != LightType::Directional) {
+        createShadowDepthBuffer(shadowMapResolution);
+    }
     if (light.type == LightType::Directional) {
         cascadeCount = light.numCascades;
     } else {
@@ -1386,26 +1392,19 @@ void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light) {
         if (light.type == LightType::Directional) {
             shadowMap = &descriptorSet->getTextureResource(light.cascades[i].shadowMapIndex);
         }
-        resourceManager->transitionImageLayout(&cmd, *shadowMap->image, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
-
-        vk::ClearValue clearDepthValue{.color = vk::ClearColorValue(std::array<float, 4>{1.0f, 0.0f, 0.0f, 0.0f})};
-        vk::RenderingAttachmentInfo colorAttachment{.imageView = *shadowMap->imageView,
-                                                    .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-                                                    .loadOp = vk::AttachmentLoadOp::eClear,
-                                                    .storeOp = vk::AttachmentStoreOp::eStore,
-                                                    .clearValue = clearDepthValue};
+        resourceManager->transitionImageLayout(&cmd, *shadowMap->image, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
 
         vk::ClearValue clearDepth{.depthStencil = vk::ClearDepthStencilValue{1.0f, 0}};
-        vk::RenderingAttachmentInfo depthAttachment{.imageView = *shadowDepth.view,
+        vk::RenderingAttachmentInfo depthAttachment{.imageView = *shadowMap->imageView,
                                                     .imageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
                                                     .loadOp = vk::AttachmentLoadOp::eClear,
-                                                    .storeOp = vk::AttachmentStoreOp::eDontCare,
+                                                    .storeOp = vk::AttachmentStoreOp::eStore,
                                                     .clearValue = clearDepth};
 
         vk::RenderingInfo renderInfo{.renderArea = {{0, 0}, {shadowMapResolution, shadowMapResolution}},
                                      .layerCount = 1,
-                                     .colorAttachmentCount = 1,
-                                     .pColorAttachments = &colorAttachment,
+                                     .colorAttachmentCount = 0,
+                                     .pColorAttachments = nullptr,
                                      .pDepthAttachment = &depthAttachment};
 
         cmd.beginRendering(renderInfo);
@@ -1431,7 +1430,7 @@ void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light) {
         cmd.endRendering();
 
         // Transition shadow map back to shader read-only for fragment shader sampling
-        resourceManager->transitionImageLayout(&cmd, *shadowMap->image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+        resourceManager->transitionImageLayout(&cmd, *shadowMap->image, vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
     }
 }
 

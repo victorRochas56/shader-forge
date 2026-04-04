@@ -27,6 +27,8 @@ class SceneGraph {
 
     std::vector<Node>& getNodes() { return nodes; }
 
+    const Node& getNode(uint32_t idx) { return nodes[idx]; }
+
     uint32_t addNode(uint32_t parentIndex = ROOT_INDEX, glm::vec3 position = glm::vec3(0.0f), glm::quat rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
                      glm::vec3 scale = glm::vec3(1.0f));
 
@@ -53,6 +55,58 @@ class SceneGraph {
         nodes[childIdx].parentIndex = parentIdx;
         nodes[childIdx].nextSibling = nodes[parentIdx].firstChild;
         nodes[parentIdx].firstChild = childIdx;
+    }
+
+    // Unlink a node from its current parent's child list
+    void unlinkChild(uint32_t childIdx) {
+        uint32_t parentIdx = nodes[childIdx].parentIndex;
+        if (parentIdx == 0) return;
+        Node& parent = nodes[parentIdx];
+        if (parent.firstChild == childIdx) {
+            parent.firstChild = nodes[childIdx].nextSibling;
+        } else {
+            uint32_t sib = parent.firstChild;
+            while (sib != 0 && nodes[sib].nextSibling != childIdx) {
+                sib = nodes[sib].nextSibling;
+            }
+            if (sib != 0) {
+                nodes[sib].nextSibling = nodes[childIdx].nextSibling;
+            }
+        }
+        nodes[childIdx].nextSibling = 0;
+        nodes[childIdx].parentIndex = 0;
+    }
+
+    // Reparent a node under a new parent. If keepWorldTransform is true,
+    // the node's relative transform is adjusted to preserve its world position/rotation/scale.
+    void reparent(uint32_t childIdx, uint32_t newParentIdx, bool keepWorldTransform = true) {
+        Node& child = nodes[childIdx];
+        if (child.parentIndex == newParentIdx) return;
+
+        glm::mat4 savedWorldTransform = child.worldTransform;
+
+        unlinkChild(childIdx);
+        linkChild(newParentIdx, childIdx);
+
+        if (keepWorldTransform) {
+            Node& newParent = nodes[newParentIdx];
+            glm::mat4 newLocal = glm::inverse(newParent.worldTransform) * savedWorldTransform;
+
+            child.relativePosition = glm::vec3(newLocal[3]);
+
+            child.relativeScale.x = glm::length(glm::vec3(newLocal[0]));
+            child.relativeScale.y = glm::length(glm::vec3(newLocal[1]));
+            child.relativeScale.z = glm::length(glm::vec3(newLocal[2]));
+
+            glm::mat3 rotMat;
+            rotMat[0] = glm::vec3(newLocal[0]) / child.relativeScale.x;
+            rotMat[1] = glm::vec3(newLocal[1]) / child.relativeScale.y;
+            rotMat[2] = glm::vec3(newLocal[2]) / child.relativeScale.z;
+            child.relativeRotation = glm::quat_cast(rotMat);
+            child.relativeRotationEuler = glm::eulerAngles(child.relativeRotation);
+        }
+
+        TransformSystem::recomputeTransforms(child, nodes);
     }
 
     // Iterate children of a node by index via callback: fn(Node& child)

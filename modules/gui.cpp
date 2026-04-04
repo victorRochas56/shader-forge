@@ -447,6 +447,12 @@ void showBufferAllocs(Renderer* renderer){
     ImGui::Text("%d meshes | Verts: %.2f MB | Idx: %.2f MB | Total: %.2f MB", meshCount, vertMB, idxMB, vertMB + idxMB);
 
     ImGui::Separator();
+    uint32_t totalTris = 0;
+    for (const auto& cmd : renderer->getIndirectCommands())
+        totalTris += cmd.indexCount / 3;
+    ImGui::Text("Triangles: %u (%u draws)", totalTris, (uint32_t)renderer->getIndirectCommands().size());
+
+    ImGui::Separator();
     float grandTotalMB = grandTotal / (1024.0f * 1024.0f);
     grandTotal += totalVertexBytes + totalIndexBytes;
     ImGui::Text("Total GPU Memory: ~%.2f MB", grandTotalMB);
