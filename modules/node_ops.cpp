@@ -50,22 +50,36 @@ void assignLight(Node& node, Light light, Renderer& renderer) {
 
     ResourceManager& resourceManager = renderer.getResourceManager();
 
-    // shadow mapping (PCF - Percentage Closer Filtering)
     if (light.castsShadows == 1) {
-        for (int i = 0; i < light.numCascades; i++) {
-            vk::raii::Image shadowMapImage = nullptr;
-            vk::raii::DeviceMemory shadowMapMemory = nullptr;
-            resourceManager.createImage(light.shadowResolution, light.shadowResolution, 1, vk::SampleCountFlagBits::e1, vk::Format::eD32Sfloat, vk::ImageTiling::eOptimal,
-                                         vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, shadowMapImage,
-                                         shadowMapMemory, 1);
-            vk::raii::ImageView shadowMapImageView = resourceManager.createImageView(shadowMapImage, vk::Format::eD32Sfloat, vk::ImageAspectFlagBits::eDepth);
-            resourceManager.transitionImageLayout(nullptr, shadowMapImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal);
-            resourceManager.transitionImageLayout(nullptr, shadowMapImage, vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
 
-            light.cascades[i].shadowMapIndex = renderer.getDescriptorSet().allocateTexture(std::move(shadowMapImage), std::move(shadowMapMemory), std::move(shadowMapImageView),"internal/"+node.name+"/csm_"+std::to_string(i));
+        switch (light.type) {
+        case (LightType::Directional):
+            for (int i = 0; i < light.numCascades; i++) {
+                vk::raii::Image shadowMapImage = nullptr;
+                vk::raii::DeviceMemory shadowMapMemory = nullptr;
+                resourceManager.createImage(light.shadowResolution, light.shadowResolution, 1, vk::SampleCountFlagBits::e1, vk::Format::eD32Sfloat,
+                                            vk::ImageTiling::eOptimal,
+                                            vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled,
+                                            vk::MemoryPropertyFlagBits::eDeviceLocal, shadowMapImage, shadowMapMemory, 1);
+                vk::raii::ImageView shadowMapImageView =
+                    resourceManager.createImageView(shadowMapImage, vk::Format::eD32Sfloat, vk::ImageAspectFlagBits::eDepth);
+                resourceManager.transitionImageLayout(nullptr, shadowMapImage, vk::ImageLayout::eUndefined,
+                                                      vk::ImageLayout::eDepthStencilAttachmentOptimal);
+                resourceManager.transitionImageLayout(nullptr, shadowMapImage, vk::ImageLayout::eDepthStencilAttachmentOptimal,
+                                                      vk::ImageLayout::eShaderReadOnlyOptimal);
+
+                light.cascades[i].shadowMapIndex =
+                    renderer.getDescriptorSet().allocateTexture(std::move(shadowMapImage), std::move(shadowMapMemory), std::move(shadowMapImageView),
+                                                                "internal/" + node.name + "/csm_" + std::to_string(i));
+            }
+            break;
+            
+        case (LightType::Point):
+            break;
         }
     }
-    node.lightIndex = renderer.getDescriptorSet().allocateFixedBuffer<Light>(renderer.getLightBufferIndex(), light);
+
+    node.lightIndex = renderer.getDescriptorSet().allocateFixedBuffer<GPULight>(renderer.getLightBufferIndex(), light.toGPU());
     renderer.addLight(node.lightIndex, light);
     std::cout << "added light at index : " << node.lightIndex << std::endl;
     TransformSystem::updateAll(node, renderer.sceneGraph.getNodes(), renderer.getDescriptorSet(), renderer.getModelMatrixBufferIndex(),

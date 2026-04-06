@@ -368,7 +368,7 @@ struct SubMesh {
 
 enum class LightType { Point, Directional, Spot, Area, COUNT };
 
-struct Cascade {
+struct GPUCascade {
     glm::mat4 lightSpaceMatrix;
     uint32_t shadowMapIndex;
     float splitDistance;
@@ -376,13 +376,44 @@ struct Cascade {
     float worldTexelSize;
 };
 
+struct GPUPointFace {
+    glm::mat4 lightSpaceMatrix;
+    uint32_t shadowMapIndex;
+};
+
+struct GPULight {
+    uint32_t type = 0;              // offset 0
+    uint32_t modelMatrixIndex = 0;  // offset 4
+    float range = 10.0f;            // offset 8
+    float intensity = 1.0f;         // offset 12
+    glm::vec4 color = glm::vec4(0, 0, 0, 1); // offset 16 (vec4-aligned)
+    int castsShadows = 0;           // offset 32
+    int showCascades = 0;           // offset 36
+    uint32_t numCascades = 3;       // offset 40
+    uint32_t padding0 = 0;          // offset 44 (align cascades to 16 bytes)
+    GPUCascade cascades[3];         // offset 48 (mat4-aligned)
+    GPUPointFace pointFaces[6];
+};
+
+struct Cascade {
+    glm::mat4 lightSpaceMatrix;
+    uint32_t shadowMapIndex = 0xFFFFFFFF;
+    float splitDistance = 0.0f;
+    float texelSize = 0.0f;
+    float worldTexelSize = 0.0f;
+};
+
+struct PointShadowFace {
+    glm::mat4 lightSpaceMatrix;
+    uint32_t shadowMapIndex = 0xFFFFFFFF;
+};
+
 struct Light {
     LightType type = LightType::Point;
     uint32_t modelMatrixIndex = 0;
     uint32_t nodeIndex = 0;
-    uint32_t padding1;
-    float range = 10.0;
-    float intensity = 1.0;
+    float range = 10.0f;
+    float intensity = 1.0f;
     uint32_t shadowMapIndex = 0xFFFFFFFF;
     uint32_t shadowResolution = DEFAULT_SHADOW_RESOLUTION;
     glm::vec4 color = glm::vec4(0, 0, 0, 1);
@@ -390,10 +421,29 @@ struct Light {
     glm::vec3 direction = glm::vec3(1, 0, 0);
     int castsShadows = 0;
     int showCascades = 0;
-    uint32_t padding3;
-    uint32_t padding4;
     uint32_t numCascades = 3;
     std::array<Cascade, 3> cascades;
+    std::array<PointShadowFace,6> cubeMapIndices;
+
+    GPULight toGPU() const {
+        GPULight gpu;
+        gpu.type = static_cast<uint32_t>(type);
+        gpu.modelMatrixIndex = modelMatrixIndex;
+        gpu.range = range;
+        gpu.intensity = intensity;
+        gpu.color = color;
+        gpu.castsShadows = castsShadows;
+        gpu.showCascades = showCascades;
+        gpu.numCascades = numCascades;
+        for (uint32_t i = 0; i < 3; i++) {
+            gpu.cascades[i].lightSpaceMatrix = cascades[i].lightSpaceMatrix;
+            gpu.cascades[i].shadowMapIndex = cascades[i].shadowMapIndex;
+            gpu.cascades[i].splitDistance = cascades[i].splitDistance;
+            gpu.cascades[i].texelSize = cascades[i].texelSize;
+            gpu.cascades[i].worldTexelSize = cascades[i].worldTexelSize;
+        }
+        return gpu;
+    }
 
     bool operator==(const Light& other) const {
         return type == other.type && modelMatrixIndex == other.modelMatrixIndex && range == other.range && intensity == other.intensity && shadowMapIndex == other.shadowMapIndex &&

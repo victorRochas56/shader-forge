@@ -37,7 +37,7 @@ struct LitPass {
     uint padding2;
     float4x4 viewProjection;
     float4x4 prevViewProjection;
-}
+};
 
 struct Cascade {
     float4x4 lightSpaceMatrix;
@@ -47,25 +47,24 @@ struct Cascade {
     float worldTexelSize;
 };
 
+struct PointFace {
+    float4x4 lightSpaceMatrix;
+    uint shadowMapIndex;
+};
+
 struct Light {
     uint type;
     uint modelMatrixIndex;
-    uint padding;
-    uint padding1;
     float range;
     float intensity;
-    uint shadowMapIndex;
-    uint shadowResolution;
     float4 color;
-    float4x4 lightSpaceMatrix;
-    float3 direction;
     int castsShadows;
-    uint showCascades;
-    uint padding3;
-    uint padding4;
+    int showCascades;
     uint numCascades;
+    uint padding0;
     Cascade cascades[3];
-}
+    PointFace pointFaces[6];
+};
 
 struct Vertex
 {

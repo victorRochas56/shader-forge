@@ -9,13 +9,11 @@ struct SkyBoxConstants
 };
 
 struct Light {
-    int type;
-    int modelMatrixIndex;
-    int padding;
-    int padding1;
-    float4 color;
+    uint type;
+    uint modelMatrixIndex;
     float range;
     float intensity;
+    float4 color;
 }
 
 [[vk::push_constant]]

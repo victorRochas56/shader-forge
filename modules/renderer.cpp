@@ -23,10 +23,10 @@
 
 // TODO gpu side material data
 // TODO clustered lights? (forward +)
+//      pass the N nearest lights to the lit shader
 // TODO point, spot and area lights
-// TODO node parenting
+// TODO node deletion
 // TODO other stuff idk
-// with a vis-buffer
 static const std::vector validationLayers = {"VK_LAYER_KHRONOS_validation"};
 
 Renderer::Renderer() = default;
@@ -65,7 +65,7 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
 
     // these buffers store the data once per frame in flight since they are usually accessed every frame by the CPU
     modelMatrixBufferIndex = descriptorSet->createFixedBuffer<glm::mat4>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
-    lightBufferIndex = descriptorSet->createFixedBuffer<Light>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
+    lightBufferIndex = descriptorSet->createFixedBuffer<GPULight>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
     shadowDrawDataBufferIndex = descriptorSet->createFixedBuffer<ShadowDrawData>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
     litPassDataBufferIndex = descriptorSet->createFixedBuffer<LitPassData>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
     ssrPassDataBufferIndex = descriptorSet->createFixedBuffer<SSRPassData>(MAX_FRAMES_IN_FLIGHT, true);
@@ -254,7 +254,7 @@ void Renderer::drawFrame() {
         if (light.castsShadows == 1) {
             if (light.type == LightType::Directional) {
                 NodeOps::calculateCascadedLightSpaceMatrices(light, activeCamera, this);
-                descriptorSet->updateFixedBufferWithOffset<Light>(lightBufferIndex, id, light, currentFrame);
+                descriptorSet->updateFixedBufferWithOffset<GPULight>(lightBufferIndex, id, light.toGPU(), currentFrame);
             }
         }
     }
@@ -972,7 +972,7 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
 
         LitPushConstants pushConstants = {.vertexBufferAddress  = descriptorSet->getVariableBuffers()[vertexBufferIndex]->address,
                                           .modelMatricesAddress = descriptorSet->getFixedBuffers()[modelMatrixBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(glm::mat4),
-                                          .lightsAddress        = descriptorSet->getFixedBuffers()[lightBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(Light),
+                                          .lightsAddress        = descriptorSet->getFixedBuffers()[lightBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(GPULight),
                                           .litDrawDataAddress   = descriptorSet->getFixedBuffers()[litDrawDataBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(LitDrawData),
                                           .litPassDataAddress   = descriptorSet->getFixedBuffers()[litPassDataBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(LitPassData)
                                         };
@@ -1087,7 +1087,7 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
 
         LitPushConstants pushConstants = {.vertexBufferAddress  = descriptorSet->getVariableBuffers()[vertexBufferIndex]->address,
                                           .modelMatricesAddress = descriptorSet->getFixedBuffers()[modelMatrixBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(glm::mat4),
-                                          .lightsAddress        = descriptorSet->getFixedBuffers()[lightBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(Light),
+                                          .lightsAddress        = descriptorSet->getFixedBuffers()[lightBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(GPULight),
                                           .litDrawDataAddress   = descriptorSet->getFixedBuffers()[litDrawDataBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(LitDrawData),
                                           .litPassDataAddress   = descriptorSet->getFixedBuffers()[litPassDataBufferIndex]->address + static_cast<vk::DeviceSize>(currentFrame) * MAX_FIXED_BUFFER * sizeof(LitPassData)
                                         };

@@ -228,7 +228,7 @@ void showNodeLightInfo(Node& node, Renderer& renderer) {
         }
         // Update light in all frame sections of the buffer
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-            renderer.getDescriptorSet().updateFixedBufferWithOffset(renderer.getLightBufferIndex(), node.lightIndex, light, i);
+            renderer.getDescriptorSet().updateFixedBufferWithOffset<GPULight>(renderer.getLightBufferIndex(), node.lightIndex, light.toGPU(), i);
         }
     } else if (ImGui::Button("Add Light")) {
         Light light = {.type = LightType::Point, .range = 10, .intensity = 1, .color = glm::vec4(1, 1, 1, 1)};

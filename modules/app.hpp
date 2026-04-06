@@ -85,6 +85,7 @@ class App {
             Tracer::startTrace("frame time");
 
             glfwPollEvents();
+            InputManager::tickInputState();
 
             drawGui();
 
@@ -98,7 +99,6 @@ class App {
             renderer.drawFrame();
 
             renderer.activeCamera.updatePrevVPM(); // kinda ulgy to put here .. TODO: find a place for it
-            InputManager::tickInputState();
 
             Tracer::endTrace("frame time");
         }
