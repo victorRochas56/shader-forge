@@ -306,6 +306,7 @@ class Renderer {
     void createMotionVectorResources(uint32_t width, uint32_t height);
     void createSSRResources(uint32_t width, uint32_t height);
     void createHiZResources(uint32_t width, uint32_t height);
+    void createSDFResources(uint32_t width, uint32_t height);
     void createSyncObjects();
 #pragma endregion
 

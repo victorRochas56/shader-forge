@@ -106,6 +106,7 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     createColorResolveResources(startWidth, startHeight);
     createSSRResources(ssrW, ssrH);
     createHiZResources(startWidth, startHeight);
+    createSDFResources(startWidth,startHeight);
     createSyncObjects();
 
 #if DEBUG == 1
@@ -409,6 +410,7 @@ void Renderer::handleSwapchainResize() {
         createColorResolveResources(width, height);
         createSSRResources(ssrW, ssrH);
         createHiZResources(width, height);
+        createSDFResources(width,height);
     }
     activeCamera.aspectRatio = static_cast<float>(width) / static_cast<float>(height);
     activeCamera.calculateViewProjectionMatrix();
@@ -735,6 +737,10 @@ void Renderer::createHiZResources(uint32_t width, uint32_t height) {
             PipelineCategory::BEFORE_GEOMETRY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone,
             vk::False, vk::False, "shaders/hiz_reduce.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
     }
+}
+
+void Renderer::createSDFResources(uint32_t width, uint32_t height) {
+
 }
 
 void Renderer::createSyncObjects() {
