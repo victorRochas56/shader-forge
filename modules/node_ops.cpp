@@ -44,39 +44,64 @@ void assignMaterial(Node& node, uint32_t submeshIndex, uint32_t materialIndex, R
     }
 }
 
+uint32_t allocateShadowMap(Light& light, const std::string& name, Renderer& renderer) {
+    ResourceManager& resourceManager = renderer.getResourceManager();
+    vk::raii::Image image = nullptr;
+    vk::raii::DeviceMemory memory = nullptr;
+    resourceManager.createImage(light.shadowResolution, light.shadowResolution, 1, vk::SampleCountFlagBits::e1, vk::Format::eD32Sfloat,
+                                vk::ImageTiling::eOptimal,
+                                vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled,
+                                vk::MemoryPropertyFlagBits::eDeviceLocal, image, memory, 1);
+    vk::raii::ImageView imageView = resourceManager.createImageView(image, vk::Format::eD32Sfloat, vk::ImageAspectFlagBits::eDepth);
+    resourceManager.transitionImageLayout(nullptr, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal);
+    resourceManager.transitionImageLayout(nullptr, image, vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+    return renderer.getDescriptorSet().allocateTexture(std::move(image), std::move(memory), std::move(imageView), name);
+}
+
+void enableLightShadows(Light& light, const std::string& nodeName, Renderer& renderer) {
+    light.castsShadows = 1;
+    light.shadowDirty = true;
+    switch (light.type) {
+    case LightType::Directional:
+        for (int i = 0; i < light.numCascades; i++) {
+            light.cascades[i].shadowMapIndex = allocateShadowMap(light, "internal/" + nodeName + "/csm_" + std::to_string(i), renderer);
+        }
+        break;
+    case LightType::Point:
+        for (int i = 0; i < 6; i++) {
+            light.cubeMapIndices[i].shadowMapIndex = allocateShadowMap(light, "internal/" + nodeName + "/point_" + std::to_string(i), renderer);
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+void disableLightShadows(Light& light, Renderer& renderer) {
+    light.castsShadows = 0;
+    switch (light.type) {
+    case LightType::Directional:
+        for (int i = 0; i < light.numCascades; i++) {
+            renderer.getDescriptorSet().freeTexture(light.cascades[i].shadowMapIndex);
+        }
+        break;
+    case LightType::Point:
+        for (int i = 0; i < 6; i++) {
+            renderer.getDescriptorSet().freeTexture(light.cubeMapIndices[i].shadowMapIndex);
+        }
+        break;
+    default:
+        break;
+    }
+}
+
 void assignLight(Node& node, Light light, Renderer& renderer) {
     light.nodeIndex = node.nodeIndex;
     light.modelMatrixIndex = node.modelMatrixIndices[0];
 
-    ResourceManager& resourceManager = renderer.getResourceManager();
-
     if (light.castsShadows == 1) {
-
-        switch (light.type) {
-        case (LightType::Directional):
-            for (int i = 0; i < light.numCascades; i++) {
-                vk::raii::Image shadowMapImage = nullptr;
-                vk::raii::DeviceMemory shadowMapMemory = nullptr;
-                resourceManager.createImage(light.shadowResolution, light.shadowResolution, 1, vk::SampleCountFlagBits::e1, vk::Format::eD32Sfloat,
-                                            vk::ImageTiling::eOptimal,
-                                            vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled,
-                                            vk::MemoryPropertyFlagBits::eDeviceLocal, shadowMapImage, shadowMapMemory, 1);
-                vk::raii::ImageView shadowMapImageView =
-                    resourceManager.createImageView(shadowMapImage, vk::Format::eD32Sfloat, vk::ImageAspectFlagBits::eDepth);
-                resourceManager.transitionImageLayout(nullptr, shadowMapImage, vk::ImageLayout::eUndefined,
-                                                      vk::ImageLayout::eDepthStencilAttachmentOptimal);
-                resourceManager.transitionImageLayout(nullptr, shadowMapImage, vk::ImageLayout::eDepthStencilAttachmentOptimal,
-                                                      vk::ImageLayout::eShaderReadOnlyOptimal);
-
-                light.cascades[i].shadowMapIndex =
-                    renderer.getDescriptorSet().allocateTexture(std::move(shadowMapImage), std::move(shadowMapMemory), std::move(shadowMapImageView),
-                                                                "internal/" + node.name + "/csm_" + std::to_string(i));
-            }
-            break;
-            
-        case (LightType::Point):
-            break;
-        }
+        light.castsShadows = 0; // reset so enableLightShadows sets it
+        enableLightShadows(light, node.name, renderer);
     }
 
     node.lightIndex = renderer.getDescriptorSet().allocateFixedBuffer<GPULight>(renderer.getLightBufferIndex(), light.toGPU());
@@ -93,6 +118,35 @@ glm::mat4 calculateLightSpaceMatrix(Light& light, Camera& camera) {
     glm::vec3 lightPos = camera.position - light.direction * 0.5f * camera.farPlane;
     glm::mat4 lightView = glm::lookAt(lightPos, lightPos + light.direction, glm::vec3(0.0f, 1.0f, 0.0f));
     return lightProjection * lightView;
+}
+
+void calculatePointLightFaceMatrices(Light& light, const glm::vec3& lightPos) {
+    float nearPlane = 0.1f;
+    float farPlane = light.range;
+    glm::mat4 projection = glm::perspective(glm::radians(90.0f), 1.0f, nearPlane, farPlane);
+
+    // 6 cubemap faces: +X, -X, +Y, -Y, +Z, -Z
+    const glm::vec3 directions[6] = {
+        { 1.0f,  0.0f,  0.0f},  // +X
+        {-1.0f,  0.0f,  0.0f},  // -X
+        { 0.0f,  1.0f,  0.0f},  // +Y
+        { 0.0f, -1.0f,  0.0f},  // -Y
+        { 0.0f,  0.0f,  1.0f},  // +Z
+        { 0.0f,  0.0f, -1.0f},  // -Z
+    };
+    const glm::vec3 ups[6] = {
+        { 0.0f, -1.0f,  0.0f},  // +X
+        { 0.0f, -1.0f,  0.0f},  // -X
+        { 0.0f,  0.0f,  1.0f},  // +Y
+        { 0.0f,  0.0f, -1.0f},  // -Y
+        { 0.0f, -1.0f,  0.0f},  // +Z
+        { 0.0f, -1.0f,  0.0f},  // -Z
+    };
+
+    for (int i = 0; i < 6; i++) {
+        glm::mat4 view = glm::lookAt(lightPos, lightPos + directions[i], ups[i]);
+        light.cubeMapIndices[i].lightSpaceMatrix = projection * view;
+    }
 }
 
 void calculateCascadedLightSpaceMatrices(Light& light, Camera& camera, Renderer* renderer) {

@@ -41,6 +41,7 @@ namespace TransformSystem {
         // Update light direction if node has a light
         if (node.lightIndex != MAX_LIGHTS && lights.contains(node.lightIndex)) {
             lights[node.lightIndex].direction = glm::normalize(node.worldTransform[0]);
+            lights[node.lightIndex].shadowDirty = true;
         }
 
         // Update world-space bounding box if node has a mesh

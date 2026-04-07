@@ -5,7 +5,8 @@ struct LineVertex{
 
 struct LinePushConstants {
     LineVertex* lineVerts;
-    uint64_t padding0;
+    uint depthTextureIndex;
+    uint depthSamplerIndex;
     float4x4 viewProjection;
 };
 
@@ -51,6 +52,15 @@ struct FragmentOutput
 FragmentOutput fragMain(VertexOutput input)
 {
     FragmentOutput output;
-    output.color = input.color;
+
+    uint depthW, depthH;
+    textures[pc.depthTextureIndex].GetDimensions(depthW, depthH);
+    float2 screenUV = input.position.xy / float2(depthW, depthH);
+    float sceneDepth = textures[pc.depthTextureIndex].Sample(samplers[pc.depthSamplerIndex], screenUV).r;
+    float lineDepth = input.position.z;
+
+    float occluded = lineDepth > sceneDepth ? 1.0 : 0.0;
+    output.color = float4(input.color.rgb * lerp(1.0, 0.25, occluded), input.color.a);
+
     return output;
 }

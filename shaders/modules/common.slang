@@ -61,7 +61,7 @@ struct Light {
     int castsShadows;
     int showCascades;
     uint numCascades;
-    uint padding0;
+    uint shadowResolution;
     Cascade cascades[3];
     PointFace pointFaces[6];
 };

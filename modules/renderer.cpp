@@ -94,7 +94,7 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     descriptorSet->createDescriptorSet();
 
     swapchain->create(*window, vSync);
-    createShadowDepthBuffer(DEFAULT_SHADOW_RESOLUTION);
+    createShadowDepthBuffer(DEFAULT_CSM_SHADOW_RESOLUTION);
     uint32_t ssaoW = std::max(1u, static_cast<uint32_t>(startWidth * ssaoResolutionScale));
     uint32_t ssaoH = std::max(1u, static_cast<uint32_t>(startHeight * ssaoResolutionScale));
     uint32_t ssrW = std::max(1u, static_cast<uint32_t>(startWidth * ssrResolutionScale));
@@ -253,7 +253,13 @@ void Renderer::drawFrame() {
     for (auto& [id, light] : lights) {
         if (light.castsShadows == 1) {
             if (light.type == LightType::Directional) {
+                // CSM depends on camera — always recalculate
                 NodeOps::calculateCascadedLightSpaceMatrices(light, activeCamera, this);
+                descriptorSet->updateFixedBufferWithOffset<GPULight>(lightBufferIndex, id, light.toGPU(), currentFrame);
+            } else if (light.type == LightType::Point && light.shadowDirty) {
+                glm::mat4 modelMatrix = sceneGraph.getNodes()[light.nodeIndex].worldTransform;
+                glm::vec3 lightPos = glm::vec3(modelMatrix[3]);
+                NodeOps::calculatePointLightFaceMatrices(light, lightPos);
                 descriptorSet->updateFixedBufferWithOffset<GPULight>(lightBufferIndex, id, light.toGPU(), currentFrame);
             }
         }
@@ -759,8 +765,11 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
 
     Tracer::startTrace("record shadow pass");
     for (auto& [lightId, light] : lights) {
-        if (light.castsShadows == 1)
-            recordShadowPass(cmd, light);
+        if (light.castsShadows != 1) continue;
+        // Skip point lights whose shadow maps are already up to date
+        if (light.type == LightType::Point && !light.shadowDirty) continue;
+        recordShadowPass(cmd, light);
+        if (light.type == LightType::Point) light.shadowDirty = false;
     }
     Tracer::endTrace("record shadow pass");
 
@@ -1156,7 +1165,10 @@ void Renderer::recordOverlayPass(vk::raii::CommandBuffer& cmd, uint32_t imageInd
     }
     auto& gizmoPipeline = pipelineManager->getPostProcessPipelines()[gizmoPipelineIndex];
     bindPipeline(cmd, *gizmoPipeline);
-    LinePushConstants lineConstants = {.lineVertsAddress = Gizmos::getLineBufferAddress(), .viewProjection = activeCamera.viewProjection};
+    LinePushConstants lineConstants = {.lineVertsAddress = Gizmos::getLineBufferAddress(),
+                                       .depthTextureIndex = swapchain->getDepthResolveIndex(),
+                                       .depthSamplerIndex = depthSamplerIndex,
+                                       .viewProjection = activeCamera.viewProjection};
     cmd.pushConstants<LinePushConstants>(*gizmoPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, lineConstants);
     cmd.draw(Gizmos::getVertexCount(), 1, 0, 0);
 
@@ -1343,26 +1355,14 @@ void Renderer::recordImageVisPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
 
 void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light) {
 
-    uint32_t cascadeCount = 1;
-    TextureResource* shadowMap = nullptr;
     uint32_t shadowMapResolution = light.shadowResolution;
-
-    // Non-directional lights still need the separate depth buffer for their color-attachment shadow maps
-    if (light.type != LightType::Directional) {
-        createShadowDepthBuffer(shadowMapResolution);
-    }
-    if (light.type == LightType::Directional) {
-        cascadeCount = light.numCascades;
-    } else {
-        shadowMap = &descriptorSet->getTextureResource(light.shadowMapIndex);
-    }
 
     auto& currentPipeline = pipelineManager->getBeforeGeoPipelines()[shadowPipelineIndex];
     vk::Buffer indexBufferHandle = descriptorSet->getVariableBuffer(indexBufferIndex);
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, currentPipeline->pipeline);
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, currentPipeline->layout, 0, {*currentPipeline->descriptorSet}, {});
 
-    // Build indirect draw commands once — identical across all cascades since culling is off
+    // Build indirect draw commands once — identical across all faces/cascades since culling is off
     std::array<Plane, 6> dummyPlanes{};
     drawDataList.clear();
     buildGeometryDrawCommands(dummyPlanes, false, [&](const auto& subMesh, auto& node, const auto& material) {
@@ -1374,7 +1374,7 @@ void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light) {
 
     vk::DeviceSize frameByteOffset = currentFrame * MAX_INDIRECT_COMMANDS * sizeof(DrawIndexedIndirectCommand);
 
-    // Upload indirect commands and draw data once for all cascades
+    // Upload indirect commands and draw data once
     if (!indirectCommands.empty()) {
         memcpy(static_cast<char*>(indirectDrawBufferMapped) + frameByteOffset, indirectCommands.data(), indirectCommands.size() * sizeof(DrawIndexedIndirectCommand));
 
@@ -1387,11 +1387,26 @@ void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light) {
         }
     }
 
-    //CSM shadows
-    for (int i = 0; i < cascadeCount; i++) {
+    // Determine face count and get shadow map + matrix per face
+    uint32_t faceCount = 0;
+    if (light.type == LightType::Directional) {
+        faceCount = light.numCascades;
+    } else if (light.type == LightType::Point) {
+        faceCount = 6;
+    }
+
+    for (uint32_t i = 0; i < faceCount; i++) {
+        TextureResource* shadowMap = nullptr;
+        glm::mat4 lightSpaceMatrix;
+
         if (light.type == LightType::Directional) {
             shadowMap = &descriptorSet->getTextureResource(light.cascades[i].shadowMapIndex);
+            lightSpaceMatrix = light.cascades[i].lightSpaceMatrix;
+        } else if (light.type == LightType::Point) {
+            shadowMap = &descriptorSet->getTextureResource(light.cubeMapIndices[i].shadowMapIndex);
+            lightSpaceMatrix = light.cubeMapIndices[i].lightSpaceMatrix;
         }
+
         resourceManager->transitionImageLayout(&cmd, *shadowMap->image, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
 
         vk::ClearValue clearDepth{.depthStencil = vk::ClearDepthStencilValue{1.0f, 0}};
@@ -1411,11 +1426,6 @@ void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light) {
         cmd.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(shadowMapResolution), static_cast<float>(shadowMapResolution), 0.0f, 1.0f));
         cmd.setScissor(0, vk::Rect2D({0, 0}, {shadowMapResolution, shadowMapResolution}));
 
-        glm::mat4 lightSpaceMatrix = light.lightSpaceMatrix;
-        if (light.type == LightType::Directional) {
-            lightSpaceMatrix = light.cascades[i].lightSpaceMatrix;
-        }
-
         if (!indirectCommands.empty()) {
             ShadowPushConstants pushConstants = {
                 .vertexBufferAddress   = descriptorSet->getVariableBuffers()[vertexBufferIndex]->address,
@@ -1429,7 +1439,6 @@ void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light) {
         }
         cmd.endRendering();
 
-        // Transition shadow map back to shader read-only for fragment shader sampling
         resourceManager->transitionImageLayout(&cmd, *shadowMap->image, vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
     }
 }

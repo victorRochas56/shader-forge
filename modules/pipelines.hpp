@@ -174,8 +174,9 @@ class PipelineManager {
                           .polygonMode = vk::PolygonMode::eFill,
                           .cullMode = cullMode,
                           .frontFace = vk::FrontFace::eCounterClockwise,
-                          .depthBiasEnable = vk::False,
-                          .depthBiasSlopeFactor = 1.0f};
+                          .depthBiasEnable = vk::True,
+                          .depthBiasConstantFactor = 1.25f,
+                          .depthBiasSlopeFactor = 1.75f};
             multisampling = {.rasterizationSamples = vk::SampleCountFlagBits::e1, .sampleShadingEnable = vk::False};
             depthStencil = {.depthTestEnable = depthTestEnable,
                             .depthWriteEnable = depthWriteEnable,

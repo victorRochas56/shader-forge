@@ -56,7 +56,8 @@ struct PushConstants {
 
 struct LinePushConstants {
     uint64_t lineVertsAddress;
-    uint64_t padding0;
+    uint32_t depthTextureIndex;
+    uint32_t depthSamplerIndex;
     glm::mat4 viewProjection;
 };
 
@@ -390,7 +391,7 @@ struct GPULight {
     int castsShadows = 0;           // offset 32
     int showCascades = 0;           // offset 36
     uint32_t numCascades = 3;       // offset 40
-    uint32_t padding0 = 0;          // offset 44 (align cascades to 16 bytes)
+    uint32_t shadowResolution = DEFAULT_SHADOW_RESOLUTION; // offset 44
     GPUCascade cascades[3];         // offset 48 (mat4-aligned)
     GPUPointFace pointFaces[6];
 };
@@ -408,6 +409,7 @@ struct PointShadowFace {
     uint32_t shadowMapIndex = 0xFFFFFFFF;
 };
 
+// TODO: mark light dirty when geometry in its range moves (not just when the light itself moves)
 struct Light {
     LightType type = LightType::Point;
     uint32_t modelMatrixIndex = 0;
@@ -424,6 +426,7 @@ struct Light {
     uint32_t numCascades = 3;
     std::array<Cascade, 3> cascades;
     std::array<PointShadowFace,6> cubeMapIndices;
+    bool shadowDirty = true;
 
     GPULight toGPU() const {
         GPULight gpu;
@@ -435,12 +438,17 @@ struct Light {
         gpu.castsShadows = castsShadows;
         gpu.showCascades = showCascades;
         gpu.numCascades = numCascades;
+        gpu.shadowResolution = shadowResolution;
         for (uint32_t i = 0; i < 3; i++) {
             gpu.cascades[i].lightSpaceMatrix = cascades[i].lightSpaceMatrix;
             gpu.cascades[i].shadowMapIndex = cascades[i].shadowMapIndex;
             gpu.cascades[i].splitDistance = cascades[i].splitDistance;
             gpu.cascades[i].texelSize = cascades[i].texelSize;
             gpu.cascades[i].worldTexelSize = cascades[i].worldTexelSize;
+        }
+        for (uint32_t i = 0; i < 6; i++) {
+            gpu.pointFaces[i].lightSpaceMatrix = cubeMapIndices[i].lightSpaceMatrix;
+            gpu.pointFaces[i].shadowMapIndex = cubeMapIndices[i].shadowMapIndex;
         }
         return gpu;
     }

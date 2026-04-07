@@ -171,7 +171,7 @@ FragmentOutput fragMain(VertexOutput input)
 
 
 
-float calculateShadow(float3 fragWorldPos, float3 cameraPos, float3 cameraForward, float3 geometricNormal, float3 L, Light light)
+float calculateDirectionalShadow(float3 fragWorldPos, float3 cameraPos, float3 cameraForward, float3 geometricNormal, float3 L, Light light)
 {
     float viewDepth = dot(fragWorldPos - cameraPos, cameraForward);
 
@@ -205,13 +205,9 @@ float calculateShadow(float3 fragWorldPos, float3 cameraPos, float3 cameraForwar
 
     float currentDepth = projCoords.z - 0.0001f;
 
-    //float depthBias = max(0.001, cascade.texelSize * 0);
-    //currentDepth -= depthBias;
-
     float shadow = 0.0;
     float texelSize = cascade.texelSize;
-    int samplesPerSide = 3;
-    int totalSamples = samplesPerSide * samplesPerSide;
+    int totalSamples = 9;
 
     for (int x = -1; x <= 1; x++) {
         for (int y = -1; y <= 1; y++) {
@@ -230,4 +226,73 @@ float calculateShadow(float3 fragWorldPos, float3 cameraPos, float3 cameraForwar
 
     shadow /= float(totalSamples);
     return 1.0 - shadow;
+}
+
+float calculatePointShadow(float3 fragWorldPos, float3 lightPos, float3 geometricNormal, float3 L, Light light)
+{
+    float3 fragToLight = fragWorldPos - lightPos;
+    float3 absDir = abs(fragToLight);
+
+    // Determine dominant cubemap face from the direction vector
+    int faceIndex;
+    if (absDir.x >= absDir.y && absDir.x >= absDir.z) {
+        faceIndex = fragToLight.x > 0.0 ? 0 : 1; // +X or -X
+    } else if (absDir.y >= absDir.x && absDir.y >= absDir.z) {
+        faceIndex = fragToLight.y > 0.0 ? 2 : 3; // +Y or -Y
+    } else {
+        faceIndex = fragToLight.z > 0.0 ? 4 : 5; // +Z or -Z
+    }
+
+    PointFace face = light.pointFaces[faceIndex];
+
+    // Normal offset for grazing angles — scales up as surface becomes edge-on to light
+    float NdotL = saturate(abs(dot(geometricNormal, L)));
+    float normalOffset = (1.0 - NdotL) * light.range / float(light.shadowResolution) * 3.0;
+    float3 biasedPos = fragWorldPos + geometricNormal * normalOffset;
+
+    float4 fragPosLightSpace = mul(face.lightSpaceMatrix, float4(biasedPos, 1.0));
+    float3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
+    projCoords.x = projCoords.x * 0.5 + 0.5;
+    projCoords.y = projCoords.y * 0.5 + 0.5;
+
+    if (projCoords.x < 0.0 || projCoords.x > 1.0 ||
+        projCoords.y < 0.0 || projCoords.y > 1.0 ||
+        projCoords.z < 0.0 || projCoords.z > 1.0) {
+        return 0.0;
+    }
+
+    float currentDepth = projCoords.z;
+
+    float shadow = 0.0;
+    int totalSamples = 9;
+    float texelSize = 1.0 / float(light.shadowResolution);
+
+    for (int x = -1; x <= 1; x++) {
+        for (int y = -1; y <= 1; y++) {
+            float2 sampleCoords = projCoords.xy + float2(x, y) * texelSize;
+
+            float shadowMapDepth = textures[face.shadowMapIndex].Sample(
+                samplers[pc.litPassData.shadowSamplerIndex],
+                sampleCoords
+            ).r;
+
+            if (currentDepth < shadowMapDepth) {
+                shadow += 1.0;
+            }
+        }
+    }
+
+    shadow /= float(totalSamples);
+    return 1.0 - shadow;
+}
+
+float calculateShadow(float3 fragWorldPos, float3 cameraPos, float3 cameraForward, float3 geometricNormal, float3 L, Light light)
+{
+    if (light.type == 1) {
+        return calculateDirectionalShadow(fragWorldPos, cameraPos, cameraForward, geometricNormal, L, light);
+    } else if (light.type == 0) {
+        float3 lightPos = getPosFromMM(light.modelMatrixIndex);
+        return calculatePointShadow(fragWorldPos, lightPos, geometricNormal, L, light);
+    }
+    return 0.0;
 }

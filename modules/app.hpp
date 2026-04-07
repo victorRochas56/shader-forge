@@ -87,10 +87,11 @@ class App {
             glfwPollEvents();
             InputManager::tickInputState();
 
-            drawGui();
-
             //gizmos are used in "immediate mode" so cleared every frame
             Gizmos::clearLineBuffer();
+
+            drawGui();
+
             //draw axes visualization for every node
             for (int i = 1; i <= renderer.sceneGraph.getNodeCount(); i++) {
                 Gizmos::drawAxes(renderer.sceneGraph.getNodes()[i].getTransform(), 0.15);

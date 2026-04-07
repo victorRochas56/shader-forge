@@ -194,35 +194,15 @@ void showNodeLightInfo(Node& node, Renderer& renderer) {
                 cascadeLabel += std::to_string(i);
                 ImGui::DragFloat(cascadeLabel.c_str(), &light.cascades[i].splitDistance);
             }
+        }
+
+        if (light.type == LightType::Directional || light.type == LightType::Point) {
             state.lightShadow = light.castsShadows;
             if (ImGui::Checkbox("Enable Shadows", &state.lightShadow)) {
-                light.castsShadows = state.lightShadow ? 1 : 0;
-                if (light.castsShadows == 1) {
-
-                    for (int i = 0; i < light.numCascades; i++) {
-
-                        vk::raii::Image shadowMapImage = nullptr;
-                        vk::raii::DeviceMemory shadowMapMemory = nullptr;
-                        // PCF uses R32F format to store raw depth values
-                        renderer.getResourceManager().createImage(light.shadowResolution, light.shadowResolution, 1, vk::SampleCountFlagBits::e1,
-                                                                  vk::Format::eR32Sfloat, vk::ImageTiling::eOptimal,
-                                                                  vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
-                                                                  vk::MemoryPropertyFlagBits::eDeviceLocal, shadowMapImage, shadowMapMemory, 1);
-                        vk::raii::ImageView shadowMapImageView =
-                            renderer.getResourceManager().createImageView(shadowMapImage, vk::Format::eR32Sfloat, vk::ImageAspectFlagBits::eColor);
-
-                        // Initial layout transition from undefined to shader read optimal
-                        renderer.getResourceManager().transitionImageLayout(nullptr, shadowMapImage, vk::ImageLayout::eUndefined,
-                                                                            vk::ImageLayout::eShaderReadOnlyOptimal);
-
-                        light.cascades[i].shadowMapIndex = renderer.getDescriptorSet().allocateTexture(
-                            std::move(shadowMapImage), std::move(shadowMapMemory), std::move(shadowMapImageView),
-                            "internal/" + node.name + "/csm_" + std::to_string(i));
-                    }
+                if (state.lightShadow) {
+                    NodeOps::enableLightShadows(light, node.name, renderer);
                 } else {
-                    for (int i = 0; i < light.numCascades; i++) {
-                        renderer.getDescriptorSet().freeTexture(light.cascades[i].shadowMapIndex);
-                    }
+                    NodeOps::disableLightShadows(light, renderer);
                 }
             }
         }
@@ -230,10 +210,15 @@ void showNodeLightInfo(Node& node, Renderer& renderer) {
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
             renderer.getDescriptorSet().updateFixedBufferWithOffset<GPULight>(renderer.getLightBufferIndex(), node.lightIndex, light.toGPU(), i);
         }
+        
+        Gizmos::drawSphere(node.getWorldPosition(),light.range, glm::vec4(1,1,0,1));
+
+
     } else if (ImGui::Button("Add Light")) {
         Light light = {.type = LightType::Point, .range = 10, .intensity = 1, .color = glm::vec4(1, 1, 1, 1)};
         NodeOps::assignLight(node, light, renderer);
     }
+
 }
 
 void showNodeTransformInfo(Node& node, Renderer& renderer) {

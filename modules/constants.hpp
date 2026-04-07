@@ -20,7 +20,8 @@ constexpr uint32_t MAX_FIXED_BUFFER = 2048;
 constexpr uint32_t MAX_VARIABLE_BUFFER = 2048;
 constexpr uint32_t MAX_INDIRECT_COMMANDS = 10000; // per frame slot count for indirect draw buffers
 
-constexpr uint32_t DEFAULT_SHADOW_RESOLUTION = 1024;
+constexpr uint32_t DEFAULT_CSM_SHADOW_RESOLUTION = 1024;
+constexpr uint32_t DEFAULT_SHADOW_RESOLUTION = 512;
 const float CASCADE_OVERLAP_FACTOR = 1.1f; 
 const float FOV_EDGE_PADDING = 1.15f; 
 

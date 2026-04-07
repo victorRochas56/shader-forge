@@ -149,6 +149,26 @@ class Gizmos {
         g.addLineToBuffer({.startPoint = corners[3], .endPoint = corners[7], .color = color});
     }
 
+    static void drawSphere(glm::vec3 center, float radius, glm::vec4 color, int segments = 32) {
+        auto& g = instance();
+        float step = glm::two_pi<float>() / static_cast<float>(segments);
+        for (int i = 0; i < segments; i++) {
+            float a0 = step * i;
+            float a1 = step * (i + 1);
+            float c0 = glm::cos(a0), s0 = glm::sin(a0);
+            float c1 = glm::cos(a1), s1 = glm::sin(a1);
+            // XY ring
+            g.addLineToBuffer({.startPoint = center + glm::vec3(c0, s0, 0.0f) * radius,
+                                .endPoint   = center + glm::vec3(c1, s1, 0.0f) * radius, .color = color});
+            // XZ ring
+            g.addLineToBuffer({.startPoint = center + glm::vec3(c0, 0.0f, s0) * radius,
+                                .endPoint   = center + glm::vec3(c1, 0.0f, s1) * radius, .color = color});
+            // YZ ring
+            g.addLineToBuffer({.startPoint = center + glm::vec3(0.0f, c0, s0) * radius,
+                                .endPoint   = center + glm::vec3(0.0f, c1, s1) * radius, .color = color});
+        }
+    }
+
     static void drawGrid(glm::vec3 origin, glm::vec3 normal, float spacing) {}
     static void drawWireFrame(Mesh mesh) {}
     static void drawWireFrame(SubMesh mesh) {}
