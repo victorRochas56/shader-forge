@@ -205,6 +205,27 @@ struct SSRApplyPushConstants {
     uint32_t ssrTextureIndex;
 };
 
+struct SDF {
+    glm::mat4 worldTransform;
+    glm::mat4 invWorldTransform;
+    glm::vec4 color;
+    uint32_t type;
+    float radius;
+    float height;
+};
+
+
+struct SDFPushConstants {
+    uint64_t sdfDataAddress;
+    uint32_t sdfCount;
+    uint32_t depthTextureIndex;
+    uint32_t depthSamplerIndex;
+    uint32_t padding;
+    glm::vec3 cameraPos;
+    float padding1;
+    glm::mat4 invViewProjection;
+};
+
 struct LitDrawData {
     uint32_t vertexAllocationIndex;
     uint32_t vertexOffset;

@@ -63,6 +63,7 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     indexBufferIndex = descriptorSet->createVariableBuffer(128 * 1024 * 1024, vk::BufferUsageFlagBits::eIndexBuffer); // index buffer (128 MB)
     assetManager.init(resourceManager.get(), descriptorSet.get(), vertexBufferIndex, indexBufferIndex);
 
+    sdfPassDataBufferIndex = descriptorSet->createFixedBuffer<SDF>(MAX_FIXED_BUFFER);
     // these buffers store the data once per frame in flight since they are usually accessed every frame by the CPU
     modelMatrixBufferIndex = descriptorSet->createFixedBuffer<glm::mat4>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
     lightBufferIndex = descriptorSet->createFixedBuffer<GPULight>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
@@ -172,6 +173,10 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     imageViewPipelineIndex =
         pipelineManager->createPipeline<ImageVisPushConstants>(PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
                                                                vk::False, "shaders/image_view.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
+
+    sdfPipelineIndex = 
+        pipelineManager->createPipeline<SDFPushConstants>(PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
+                                                           vk::False, "shaders/sdf.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
 
     // default litshader / material
     fallbackLitShader = Shader{.sourceFile = "shaders/lit.spv", .pipelineIndex = litPipelineIndex};
@@ -740,7 +745,7 @@ void Renderer::createHiZResources(uint32_t width, uint32_t height) {
 }
 
 void Renderer::createSDFResources(uint32_t width, uint32_t height) {
-
+    createOrResizeRenderTarget(sdfTextureIndex,width,height,swapchain->getSwapChainImageFormat(),"internal/sdf");
 }
 
 void Renderer::createSyncObjects() {
@@ -792,6 +797,9 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
     if (enableSSAO && ssaoPipelineIndex != 0xFFFFFFFF)
         recordSSAOPass(cmd, imageIndex);
     Tracer::endTrace("record ssao pass");
+
+    if(sdfPipelineIndex != 0xFFFFFFFF)
+        recordSDFPass(cmd, imageIndex);
 
     Tracer::startTrace("record image vis pass");
     if (imageVisIndex != 0xFFFFFFFF)
@@ -1447,6 +1455,31 @@ void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light) {
 
         resourceManager->transitionImageLayout(&cmd, *shadowMap->image, vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
     }
+}
+
+void Renderer::recordSDFPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
+    if (sdfTextureIndex == 0xFFFFFFFF)  
+        return;
+
+    uint32_t testSphere = descriptorSet->allocateFixedBuffer(sdfPassDataBufferIndex,SDF{.worldTransform = glm::mat4(1),
+                                                                                        .invWorldTransform = glm::mat4(1),
+                                                                                        .color = glm::vec4(1,0,0,1),
+                                                                                        .type = 0,
+                                                                                        .radius = 1,
+                                                                                        .height = 1}
+                                                                                      );
+    auto extent = swapchain->getSwapChainExtent();
+
+    drawFullscreenPass(cmd,*pipelineManager->getPostProcessPipelines()[sdfPipelineIndex], *swapchain->getSwapChainImageViews()[imageIndex],
+                       extent,
+                       SDFPushConstants{.sdfDataAddress = descriptorSet->getFixedBuffers()[sdfPassDataBufferIndex]->address,
+                                        .sdfCount = 1,
+                                        .depthTextureIndex = swapchain->getDepthResolveIndex(),
+                                        .depthSamplerIndex = depthSamplerIndex,
+                                        .cameraPos = activeCamera.position,
+                                        .invViewProjection = glm::inverse(activeCamera.viewProjection)
+                                        }, vk::AttachmentLoadOp::eLoad);
+    descriptorSet->freeFixedBuffer(sdfPassDataBufferIndex,testSphere);
 }
 
 void Renderer::createOrResizeRenderTarget(uint32_t& index, uint32_t width, uint32_t height, vk::Format format, const char* debugName,

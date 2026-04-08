@@ -186,6 +186,11 @@ class Renderer {
     uint32_t                            hiZPipelineIndex = 0xFFFFFFFF;
     std::vector<vk::raii::ImageView>    hiZMipViews;
 
+    // SDF rendering
+    uint32_t                            sdfPipelineIndex = 0xFFFFFFFF;
+    uint32_t                            sdfTextureIndex = 0xFFFFFFFF;
+    uint32_t                            sdfPassDataBufferIndex = 0xFFFFFFFF;
+
   public:
     bool                                enableSSAO = true;
     float                               ssaoRadius = 0.3f;
@@ -327,6 +332,7 @@ class Renderer {
     void recordSSRPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex);
     void recordImageVisPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex);
     void recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light);
+    void recordSDFPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex);
 
     void createOrResizeRenderTarget(uint32_t& index, uint32_t width, uint32_t height,
                                      vk::Format format, const char* debugName,
