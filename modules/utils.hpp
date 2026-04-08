@@ -140,7 +140,7 @@ static void decomposeTransform(const glm::mat4& matrix, glm::vec3& translation, 
     rotation = glm::quat_cast(rotMatrix);
 }
 
-static glm::mat4 makeTransform( glm::vec3 translation, glm::quat rotation, glm::vec3 scale) {
+static glm::mat4 makeTransform( glm::vec3 translation, glm::quat rotation = glm::quat(1,0,0,0), glm::vec3 scale = glm::vec3(1.0f)) {
     glm::mat4 T = glm::translate(glm::mat4(1.0f), translation);
     glm::mat4 R = glm::mat4_cast(rotation);
     glm::mat4 S = glm::scale(glm::mat4(1.0f), scale);

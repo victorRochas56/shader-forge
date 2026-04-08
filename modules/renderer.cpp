@@ -80,16 +80,18 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
         descriptorSet->setBufferFrameOffset(ssrPassDataBufferIndex,i,i);
     }
 
-    Gizmos::init(MAX_GIZMO_LINES, &*descriptorSet);
-
+    
     litDrawDataBufferIndex = descriptorSet->createFixedBuffer<LitDrawData>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         descriptorSet->setBufferFrameOffset(litDrawDataBufferIndex, i, MAX_FIXED_BUFFER * i);
     }
-
+    
     // indirect draw buffers (separate for shadow and lit passes)
     std::tie(indirectDrawBuffer, indirectDrawBufferMemory, indirectDrawBufferMapped)       = resourceManager->createIndirectDrawBuffer();
     std::tie(litIndirectDrawBuffer, litIndirectDrawBufferMemory, litIndirectDrawBufferMapped) = resourceManager->createIndirectDrawBuffer();
+    
+    //init gizmos
+    Gizmos::init(MAX_GIZMO_LINES, &*descriptorSet, sdfPassDataBufferIndex);
 
     // after having created all our desire buffers we can initialize the descriptor set
     descriptorSet->createDescriptorSet();
@@ -173,10 +175,6 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     imageViewPipelineIndex =
         pipelineManager->createPipeline<ImageVisPushConstants>(PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
                                                                vk::False, "shaders/image_view.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
-
-    sdfPipelineIndex = 
-        pipelineManager->createPipeline<SDFPushConstants>(PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
-                                                           vk::False, "shaders/sdf.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
 
     // default litshader / material
     fallbackLitShader = Shader{.sourceFile = "shaders/lit.spv", .pipelineIndex = litPipelineIndex};
@@ -746,6 +744,18 @@ void Renderer::createHiZResources(uint32_t width, uint32_t height) {
 
 void Renderer::createSDFResources(uint32_t width, uint32_t height) {
     createOrResizeRenderTarget(sdfTextureIndex,width,height,swapchain->getSwapChainImageFormat(),"internal/sdf");
+
+    if (sdfPipelineIndex == 0xFFFFFFFF) {
+        sdfPipelineIndex = 
+        pipelineManager->createPipeline<SDFPushConstants>(PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
+                                                           vk::False, "shaders/sdf.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
+    }
+    // SDF apply pipeline
+    if (sdfApplyPipelineIndex == 0xFFFFFFFF) {
+        sdfApplyPipelineIndex = pipelineManager->createPipeline<SDFApplyPushConstants>(
+            PipelineCategory::POSTPROCESS_ALPHA_BLEND, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone,
+            vk::False, vk::False, "shaders/sdf_apply.spv", descriptorSet->getDescriptorSetLayout(), descriptorSet->getDescriptorSet());
+    }
 }
 
 void Renderer::createSyncObjects() {
@@ -798,8 +808,10 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
         recordSSAOPass(cmd, imageIndex);
     Tracer::endTrace("record ssao pass");
 
+    Tracer::startTrace("record SDF pass");
     if(sdfPipelineIndex != 0xFFFFFFFF)
         recordSDFPass(cmd, imageIndex);
+    Tracer::endTrace("record SDF pass");
 
     Tracer::startTrace("record image vis pass");
     if (imageVisIndex != 0xFFFFFFFF)
@@ -1461,25 +1473,31 @@ void Renderer::recordSDFPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) 
     if (sdfTextureIndex == 0xFFFFFFFF)  
         return;
 
-    uint32_t testSphere = descriptorSet->allocateFixedBuffer(sdfPassDataBufferIndex,SDF{.worldTransform = glm::mat4(1),
-                                                                                        .invWorldTransform = glm::mat4(1),
-                                                                                        .color = glm::vec4(1,0,0,1),
-                                                                                        .type = 0,
-                                                                                        .radius = 1,
-                                                                                        .height = 1}
-                                                                                      );
     auto extent = swapchain->getSwapChainExtent();
 
-    drawFullscreenPass(cmd,*pipelineManager->getPostProcessPipelines()[sdfPipelineIndex], *swapchain->getSwapChainImageViews()[imageIndex],
+    auto& sdfAllocations = descriptorSet->getFixedBufferAllocations(sdfPassDataBufferIndex);
+    uint32_t sdfCount = 0;
+    for (const auto& alloc : sdfAllocations) {
+        if (alloc.inUse) sdfCount++;
+    }
+
+    if (sdfCount == 0) return;
+
+    drawFullscreenPass(cmd,*pipelineManager->getPostProcessPipelines()[sdfPipelineIndex], *descriptorSet->getTextureResource(sdfTextureIndex).imageView,
                        extent,
                        SDFPushConstants{.sdfDataAddress = descriptorSet->getFixedBuffers()[sdfPassDataBufferIndex]->address,
-                                        .sdfCount = 1,
+                                        .sdfCount = sdfCount,
                                         .depthTextureIndex = swapchain->getDepthResolveIndex(),
                                         .depthSamplerIndex = depthSamplerIndex,
                                         .cameraPos = activeCamera.position,
                                         .invViewProjection = glm::inverse(activeCamera.viewProjection)
-                                        }, vk::AttachmentLoadOp::eLoad);
-    descriptorSet->freeFixedBuffer(sdfPassDataBufferIndex,testSphere);
+                                        }, vk::AttachmentLoadOp::eClear);
+
+    drawFullscreenPass(cmd,*pipelineManager->getPostProcessPipelines()[sdfApplyPipelineIndex], *swapchain->getSwapChainImageViews()[imageIndex],
+                       extent,
+                       SDFApplyPushConstants{.sdfTextureIndex = sdfTextureIndex,
+                                             .samplerIndex = defaultSamplerIndex},
+                                            vk::AttachmentLoadOp::eLoad);
 }
 
 void Renderer::createOrResizeRenderTarget(uint32_t& index, uint32_t width, uint32_t height, vk::Format format, const char* debugName,

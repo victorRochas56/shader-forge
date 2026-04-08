@@ -89,12 +89,13 @@ class App {
 
             //gizmos are used in "immediate mode" so cleared every frame
             Gizmos::clearLineBuffer();
+            Gizmos::clearSDFBuffer();
 
             drawGui();
 
             //draw axes visualization for every node
             for (int i = 1; i <= renderer.sceneGraph.getNodeCount(); i++) {
-                Gizmos::drawAxes(renderer.sceneGraph.getNodes()[i].getTransform(), 0.15);
+                Gizmos::drawAxes(renderer.sceneGraph.getNodes()[i].getTransform(), 0.1f);
             }
             //main draw loop
             renderer.drawFrame();

@@ -23,7 +23,7 @@ BEFORE_GEOMETRY is only used by shadow rendering
 GEOMETRY is the main pass with 2 color attachments (color + roughness/metallic)
 POSTPROCESS are passes that process color attachments
 */
-enum class PipelineCategory { BEFORE_GEOMETRY, GEOMETRY, POSTPROCESS, POSTPROCESS_MULTIPLY, SHADOW, DEPTH_PREPASS };
+enum class PipelineCategory { BEFORE_GEOMETRY, GEOMETRY, POSTPROCESS, POSTPROCESS_MULTIPLY, POSTPROCESS_ALPHA_BLEND, SHADOW, DEPTH_PREPASS };
 
 class PipelineManager;
 
@@ -271,9 +271,11 @@ class PipelineManager {
             pipeline->layout = vk::raii::PipelineLayout(device.getDevice(), pipelineLayoutInfo);
             break;
         }
+        case PipelineCategory::POSTPROCESS_ALPHA_BLEND:
         case PipelineCategory::POSTPROCESS_MULTIPLY:
         case PipelineCategory::POSTPROCESS: {
             bool multiply = (pipelineCategory == PipelineCategory::POSTPROCESS_MULTIPLY);
+            bool alphaBlend = (pipelineCategory == PipelineCategory::POSTPROCESS_ALPHA_BLEND);
             inputAssembly = {.topology = topology};
             rasterizer = {.depthClampEnable = vk::False,
                           .rasterizerDiscardEnable = vk::False,
@@ -284,20 +286,32 @@ class PipelineManager {
                           .lineWidth = 1.0f};
             multisampling = {.rasterizationSamples = vk::SampleCountFlagBits::e1,
                              .sampleShadingEnable = vk::False};
-            depthStencil = {.depthTestEnable = multiply ? vk::False : depthTestEnable,
-                            .depthWriteEnable = multiply ? vk::False : depthWriteEnable,
+            depthStencil = {.depthTestEnable = (multiply || alphaBlend) ? vk::False : depthTestEnable,
+                            .depthWriteEnable = (multiply || alphaBlend) ? vk::False : depthWriteEnable,
                             .depthCompareOp = vk::CompareOp::eNever,
                             .depthBoundsTestEnable = vk::False,
                             .stencilTestEnable = vk::False};
-            colorBlendAttachment = {.blendEnable = multiply ? vk::True : vk::False,
-                                    .srcColorBlendFactor = vk::BlendFactor::eDstColor,
-                                    .dstColorBlendFactor = vk::BlendFactor::eZero,
-                                    .colorBlendOp = vk::BlendOp::eAdd,
-                                    .srcAlphaBlendFactor = vk::BlendFactor::eOne,
-                                    .dstAlphaBlendFactor = vk::BlendFactor::eZero,
-                                    .alphaBlendOp = vk::BlendOp::eAdd,
-                                    .colorWriteMask =
-                                        vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA};
+            if (alphaBlend) {
+                colorBlendAttachment = {.blendEnable = vk::True,
+                                        .srcColorBlendFactor = vk::BlendFactor::eSrcAlpha,
+                                        .dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha,
+                                        .colorBlendOp = vk::BlendOp::eAdd,
+                                        .srcAlphaBlendFactor = vk::BlendFactor::eOne,
+                                        .dstAlphaBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha,
+                                        .alphaBlendOp = vk::BlendOp::eAdd,
+                                        .colorWriteMask =
+                                            vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA};
+            } else {
+                colorBlendAttachment = {.blendEnable = multiply ? vk::True : vk::False,
+                                        .srcColorBlendFactor = vk::BlendFactor::eDstColor,
+                                        .dstColorBlendFactor = vk::BlendFactor::eZero,
+                                        .colorBlendOp = vk::BlendOp::eAdd,
+                                        .srcAlphaBlendFactor = vk::BlendFactor::eOne,
+                                        .dstAlphaBlendFactor = vk::BlendFactor::eZero,
+                                        .alphaBlendOp = vk::BlendOp::eAdd,
+                                        .colorWriteMask =
+                                            vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA};
+            }
             colorBlending = {.logicOpEnable = vk::False, .attachmentCount = 1, .pAttachments = &colorBlendAttachment};
             pushConstantRange = {.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, .offset = 0, .size = sizeof(T)};
             vk::PipelineLayoutCreateInfo pipelineLayoutInfo{
@@ -356,6 +370,7 @@ class PipelineManager {
             return &geometryPipelines;
         case PipelineCategory::POSTPROCESS:
         case PipelineCategory::POSTPROCESS_MULTIPLY:
+        case PipelineCategory::POSTPROCESS_ALPHA_BLEND:
             return &postProcessPipelines;
         default:
             return nullptr;

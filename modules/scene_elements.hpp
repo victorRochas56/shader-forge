@@ -53,6 +53,13 @@ class Node {
         return rotation;
     }
     glm::quat getRelativeRotation() { return relativeRotation; }
+
+    glm::vec3 right()   { return  glm::normalize(glm::vec3(worldTransform[0])); }
+    glm::vec3 left()    { return -glm::normalize(glm::vec3(worldTransform[0])); }
+    glm::vec3 up()      { return  glm::normalize(glm::vec3(worldTransform[1])); }
+    glm::vec3 down()    { return -glm::normalize(glm::vec3(worldTransform[1])); }
+    glm::vec3 forward() { return  glm::normalize(glm::vec3(worldTransform[2])); }
+    glm::vec3 back()    { return -glm::normalize(glm::vec3(worldTransform[2])); }
     glm::vec3 getWorldRotationEuler() { return glm::eulerAngles(getWorldRotation()); }
     glm::vec3 getRelativeRotationEuler() { return relativeRotationEuler; }
 

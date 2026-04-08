@@ -190,6 +190,7 @@ class Renderer {
     uint32_t                            sdfPipelineIndex = 0xFFFFFFFF;
     uint32_t                            sdfTextureIndex = 0xFFFFFFFF;
     uint32_t                            sdfPassDataBufferIndex = 0xFFFFFFFF;
+    uint32_t                            sdfApplyPipelineIndex = 0xFFFFFFFF;
 
   public:
     bool                                enableSSAO = true;

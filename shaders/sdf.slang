@@ -4,6 +4,7 @@ enum SDFType : uint {
     SPHERE,
     CYLINDER,
     CONE,
+    PYRAMID
 };
 
 struct SDF {
@@ -39,7 +40,6 @@ VSOutput vertMain(uint vertexID : SV_VertexID) {
     VSOutput output;
     float2 uv = float2((vertexID << 1) & 2, vertexID & 2);
     output.texCoord = uv;
-    output.texCoord.y = 1.0 - output.texCoord.y;
     output.position = float4(uv * 2.0 - 1.0, 0.0, 1.0);
     return output;
 }
@@ -50,26 +50,53 @@ float sdSphere(float3 p, float radius) {
     return length(p) - radius;
 }
 
-float sdCylinder(float3 p, float radius, float height) {
-    float2 d = float2(length(p.xz) - radius, abs(p.y) - height * 0.5);
-    return min(max(d.x, d.y), 0.0) + length(max(d, 0.0));
+float sdCylinder(float3 p, float radius, float height)
+{
+  float2 d = abs(float2(length(p.xz),p.y)) - float2(radius,height);
+  return min(max(d.x,d.y),0.0) + length(max(d,0.0));
 }
 
 float sdCone(float3 p, float radius, float height) {
     float2 q = float2(length(p.xz), p.y);
+
+    // Cone: base at y=0 with given radius, tip at y=height
     float2 tip = float2(0.0, height);
-    float2 base = float2(radius, 0.0);
-    float2 e = base - tip;
+    float2 baseEdge = float2(radius, 0.0);
+    float2 e = baseEdge - tip;
+
+    // Distance to cone surface (line segment from tip to base edge in 2D)
     float2 w = q - tip;
     float t = clamp(dot(w, e) / dot(e, e), 0.0, 1.0);
-    float2 closest = tip + e * t;
-    float d = length(w - (closest - tip));
-    float sign = (q.x * e.y - q.y * e.x > 0.0) ? 1.0 : -1.0;
-    // cap the base
-    float baseDist = q.y; // distance below base plane
-    float baseRadial = length(p.xz) - radius;
-    float capDist = max(-baseDist, baseRadial);
-    return (baseDist < 0.0) ? max(capDist, -d) : sign * d;
+    float surfaceDist = length(q - (tip + e * t));
+
+    // Distance to base cap (line segment from origin to base edge along y=0)
+    float2 closestOnBase = float2(clamp(q.x, 0.0, radius), 0.0);
+    float baseDist = length(q - closestOnBase);
+
+    float d = min(surfaceDist, baseDist);
+
+    // Inside test: above base, below tip, and within the cone's taper
+    bool inside = (q.y >= 0.0) && (q.y <= height) && (q.x <= radius * (height - q.y) / height);
+
+    return inside ? -d : d;
+}
+
+float sdPyramid( float3 p, float h )
+{
+  float m2 = h*h + 0.25;
+    
+  p.xz = abs(p.xz);
+  p.xz = (p.z>p.x) ? p.zx : p.xz;
+  p.xz -= 0.5;
+
+  float3 q = float3( p.z, h*p.y - 0.5*p.x, h*p.x + 0.5*p.y);
+  float s = max(-q.x,0.0);
+  float t = clamp( (q.y-0.5*p.z)/(m2+0.25), 0.0, 1.0 );
+  float a = m2*(q.x+s)*(q.x+s) + q.y*q.y;
+  float b = m2*(q.x+0.5*t)*(q.x+0.5*t) + (q.y-m2*t)*(q.y-m2*t);
+    
+  float d2 = min(q.y,-q.x*m2-q.y*0.5) > 0.0 ? 0.0 : min(a,b);
+  return sqrt( (d2+q.z*q.z)/m2 ) * sign(max(q.z,-p.y));
 }
 
 float evalSDF(float3 worldPos, SDF shape) {
@@ -83,6 +110,8 @@ float evalSDF(float3 worldPos, SDF shape) {
         return sdCylinder(localPos, shape.radius, shape.height);
     case SDFType.CONE:
         return sdCone(localPos, shape.radius, shape.height);
+    case SDFType.PYRAMID:
+        return sdPyramid(localPos, shape.height);
     default:
         return 1e10;
     }
@@ -138,23 +167,30 @@ FragmentOutput fragMain(VSOutput input) {
     float sceneDepth = textures[sdfPC.depthTextureIndex].Sample(samplers[sdfPC.depthSamplerIndex], depthUV).r;
     float4 depthWorld = mul(sdfPC.invViewProjection, float4(ndc, sceneDepth, 1.0));
     depthWorld.xyz /= depthWorld.w;
-    float maxDist = length(depthWorld.xyz - rayOrigin);
-
+    float surfaceDist = length(depthWorld.xyz - rayOrigin);
+    float maxDist = 128.0f;
     // Raymarch
     float t = 0.0;
     uint hitIndex = 0;
     const int MAX_STEPS = 128;
     const float HIT_THRESHOLD = 0.001;
 
+    float alphaMult = 1.0f;
     for (int step = 0; step < MAX_STEPS; step++) {
         float3 p = rayOrigin + rayDir * t;
         float d = sceneSDF(p, hitIndex);
 
+        if (t > surfaceDist)
+            alphaMult = 0.2f;
         if (d < HIT_THRESHOLD) {
             float3 normal = calcNormal(p, hitIndex);
             float3 lightDir = normalize(float3(1.0, 1.0, -1.0));
             float diffuse = max(dot(normal, lightDir), 0.0) * 0.8 + 0.2;
-            output.color = float4(sdfPC.drawData[hitIndex].color.rgb * diffuse, sdfPC.drawData[hitIndex].color.a);
+
+            SDF hitShape = sdfPC.drawData[hitIndex];
+            float3 baseColor = hitShape.color.rgb;
+
+            output.color = float4(baseColor * diffuse, hitShape.color.a * alphaMult);
             return output;
         }
 
@@ -162,7 +198,6 @@ FragmentOutput fragMain(VSOutput input) {
         if (t > maxDist) break;
     }
 
-    discard;
     output.color = float4(0, 0, 0, 0);
     return output;
 }

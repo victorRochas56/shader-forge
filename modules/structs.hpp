@@ -205,6 +205,13 @@ struct SSRApplyPushConstants {
     uint32_t ssrTextureIndex;
 };
 
+enum SDFType {
+    SPHERE,
+    CYLINDER,
+    CONE,
+    PYRAMID
+};
+
 struct SDF {
     glm::mat4 worldTransform;
     glm::mat4 invWorldTransform;
@@ -212,6 +219,7 @@ struct SDF {
     uint32_t type;
     float radius;
     float height;
+    float padding;
 };
 
 
@@ -221,9 +229,16 @@ struct SDFPushConstants {
     uint32_t depthTextureIndex;
     uint32_t depthSamplerIndex;
     uint32_t padding;
+    uint32_t _align[2];          // std430 aligns float3 to 16 bytes
     glm::vec3 cameraPos;
     float padding1;
     glm::mat4 invViewProjection;
+};
+
+struct SDFApplyPushConstants {
+    uint32_t sdfTextureIndex;
+    uint32_t samplerIndex;
+    uint32_t padding[2];
 };
 
 struct LitDrawData {
