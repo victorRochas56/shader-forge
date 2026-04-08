@@ -136,7 +136,9 @@ FragmentOutput fragMain(VSOutput input) {
     textures[sdfPC.depthTextureIndex].GetDimensions(depthW, depthH);
     float2 depthUV = input.position.xy / float2(depthW, depthH);
     float sceneDepth = textures[sdfPC.depthTextureIndex].Sample(samplers[sdfPC.depthSamplerIndex], depthUV).r;
-    float maxDist = length(farWorld.xyz - nearWorld.xyz) * sceneDepth;
+    float4 depthWorld = mul(sdfPC.invViewProjection, float4(ndc, sceneDepth, 1.0));
+    depthWorld.xyz /= depthWorld.w;
+    float maxDist = length(depthWorld.xyz - rayOrigin);
 
     // Raymarch
     float t = 0.0;
