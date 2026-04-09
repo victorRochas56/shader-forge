@@ -168,11 +168,11 @@ FragmentOutput fragMain(VSOutput input) {
     float4 depthWorld = mul(sdfPC.invViewProjection, float4(ndc, sceneDepth, 1.0));
     depthWorld.xyz /= depthWorld.w;
     float surfaceDist = length(depthWorld.xyz - rayOrigin);
-    float maxDist = 128.0f;
+    float maxDist = 50.0f;
     // Raymarch
     float t = 0.0;
     uint hitIndex = 0;
-    const int MAX_STEPS = 128;
+    const int MAX_STEPS = 64;
     const float HIT_THRESHOLD = 0.001;
 
     float alphaMult = 1.0f;
