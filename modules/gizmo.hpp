@@ -233,9 +233,8 @@ class Gizmos {
     }
 
     static void drawSDFCone(glm::vec3 origin, glm::quat rotation, float radius, float height, glm::vec4 color) {
-
         auto& g = instance();
-        glm::mat4 worldTransform = makeTransform(origin);
+        glm::mat4 worldTransform = makeTransform(origin, rotation);
         g.descriptorSet->allocateFixedBuffer(g.sdfBufferIndex, SDF {.worldTransform = worldTransform,
                                                                     .invWorldTransform = glm::inverse(worldTransform),
                                                                     .color = color,
@@ -244,10 +243,21 @@ class Gizmos {
                                                                     .height = height});
     }
 
-    static void drawSDFArrow(glm::vec3 origin, glm::vec3 direction, glm::vec3 length, glm::vec3 radius, glm::vec4 color) {
+    static void drawSDFArrow(glm::vec3 origin, glm::vec3 axis, float radius, float length, glm::vec4 color) {
         auto& g = instance();
-
-        
+        glm::vec3 from = glm::vec3(0, 1, 0);
+        glm::quat rotation;
+        float d = glm::dot(from, axis);
+        if (d > 0.9999f) {
+            rotation = glm::quat(1, 0, 0, 0);
+        } else if (d < -0.9999f) {
+            rotation = glm::angleAxis(glm::pi<float>(), glm::vec3(1, 0, 0));
+        } else {
+            glm::vec3 cross = glm::cross(from, axis);
+            rotation = glm::normalize(glm::quat(1.0f + d, cross.x, cross.y, cross.z));
+        }
+        drawSDFCone(origin + axis * 0.5f * length, rotation, radius * 1.5f, length * 0.25f, color);
+        drawSDFCylinder(origin, axis, radius, length * 0.5f, color);
     }
 
     static void clearLineBuffer() {

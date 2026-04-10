@@ -223,9 +223,9 @@ void showNodeLightInfo(Node& node, Renderer& renderer) {
 
 void showNodeTransformInfo(Node& node, Renderer& renderer) {
 
-    Gizmos::drawSDFCylinder(node.getWorldPosition(),node.right(),0.01f,0.25f,glm::vec4(1,0,0,1));
-    Gizmos::drawSDFCylinder(node.getWorldPosition(),node.up(),0.01f,0.25f,glm::vec4(0,1,0,1));
-    Gizmos::drawSDFCylinder(node.getWorldPosition(),node.forward(),0.01f,0.25f,glm::vec4(0,0,1,1));
+    Gizmos::drawSDFArrow(node.getWorldPosition(),node.right(),0.01f,0.25f,glm::vec4(1,0,0,1));
+    Gizmos::drawSDFArrow(node.getWorldPosition(),node.up(),0.01f,0.25f,glm::vec4(0,1,0,1));
+    Gizmos::drawSDFArrow(node.getWorldPosition(),node.forward(),0.01f,0.25f,glm::vec4(0,0,1,1));
 
     ImGui::Text("Parent: %s", renderer.sceneGraph.getNode(node.parentIndex).name.c_str());
 
