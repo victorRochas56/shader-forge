@@ -45,6 +45,8 @@ class SceneGraph {
     uint32_t getNodeCount() { return lastNode; } // excludes null node at 0
     uint32_t getLastNode() { return lastNode; }
 
+    bool isNodeValid(uint32_t idx) { return idx > 0 && idx <= lastNode; }
+
     void resetLastNode() {
         lastNode = 0;
         selectedNode = 0;

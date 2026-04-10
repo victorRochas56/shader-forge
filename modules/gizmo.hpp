@@ -244,6 +244,12 @@ class Gizmos {
                                                                     .height = height});
     }
 
+    static void drawSDFArrow(glm::vec3 origin, glm::vec3 direction, glm::vec3 length, glm::vec3 radius, glm::vec4 color) {
+        auto& g = instance();
+
+        
+    }
+
     static void clearLineBuffer() {
         auto& g = instance();
         g.descriptorSet->clearFixedBuffer(g.lineBufferIndex);
