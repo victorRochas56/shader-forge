@@ -24,7 +24,7 @@
 class Renderer; // forward declaration for free functions below
 class SceneGraph;
 
-class Node {
+class Node { // need to be able to hide nodes from tree for internal logic
   public:
     std::string name = "empty";
 

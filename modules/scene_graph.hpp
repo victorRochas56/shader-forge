@@ -27,7 +27,8 @@ class SceneGraph {
 
     std::vector<Node>& getNodes() { return nodes; }
 
-    const Node& getNode(uint32_t idx) { return nodes[idx]; }
+    Node& getNode(uint32_t idx) { return nodes[idx]; }
+    const Node& getNode(uint32_t idx) const { return nodes[idx]; }
 
     uint32_t addNode(uint32_t parentIndex = ROOT_INDEX, glm::vec3 position = glm::vec3(0.0f), glm::quat rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
                      glm::vec3 scale = glm::vec3(1.0f));
