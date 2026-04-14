@@ -375,32 +375,28 @@ struct Image {
 
 struct Mesh {
     std::string sourceFile;
-    std::vector<uint32_t> subMeshes;
-    std::vector<int> originalMaterialIds; // Original material ID from OBJ file for each submesh
-    std::vector<std::string> originalMaterialNames; // Original material name from OBJ file for each submesh
-    glm::vec3 boundingBoxMin = glm::vec3(0.0f); // AABB in local/model space
-    glm::vec3 boundingBoxMax = glm::vec3(0.0f);
-    bool freed; // set when the vertex allocation is freed, should be checked before trying to render a mesh
-    uint32_t refCount = 0;
-};
 
-struct SubMesh {
-    uint32_t vertexAllocationIndex;
-    vk::DeviceSize vertexOffset;
-    uint32_t vertexCount;
-    uint32_t vertexStride;
+    // GPU vertex/index data (previously in SubMesh)
+    uint32_t vertexAllocationIndex = 0;
+    vk::DeviceSize vertexOffset = 0;
+    uint32_t vertexCount = 0;
+    uint32_t vertexStride = 0;
 
-    uint32_t indexAllocationIndex;
-    uint32_t indexOffset;
-    uint32_t indexCount;
+    uint32_t indexAllocationIndex = 0;
+    uint32_t indexOffset = 0;
+    uint32_t indexCount = 0;
 
-    // Local-space AABB for per-submesh culling
+    // Local-space AABB
     glm::vec3 boundingBoxMin = glm::vec3(0.0f);
     glm::vec3 boundingBoxMax = glm::vec3(0.0f);
+    glm::vec3 center = glm::vec3(0.0f);
 
     // CPU-side geometry for raycasting
     std::vector<glm::vec3> cpuPositions;
     std::vector<uint32_t> cpuIndices;
+
+    bool freed = false;
+    uint32_t refCount = 0;
 };
 
 enum class LightType { Point, Directional, Spot, Area, COUNT };

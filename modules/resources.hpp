@@ -22,11 +22,16 @@
 #include "structs.hpp"
 #include "utils.hpp"
 
+struct MeshEntry {
+    std::vector<Vertex> vertices;
+    std::vector<uint32_t> indices;
+    int materialId = -1;
+    std::string materialName = "default_material";
+    std::string shapeName;
+};
+
 struct MeshData {
-    std::vector<std::vector<Vertex>> subMeshes;
-    std::vector<std::vector<uint32_t>> subMeshIndices;
-    std::vector<int> materialIds;           // Material ID for each submesh (-1 if no material)
-    std::vector<std::string> materialNames; // Material name for each submesh
+    std::vector<MeshEntry> entries; // one per material group per shape
 };
 
 /*
@@ -554,30 +559,31 @@ class ResourceManager {
         if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, meshPath.c_str(), mtlBaseDir.c_str())) {
             throw std::runtime_error(warn + err);
         }
-
         MeshData meshData = {};
 
         // Process each shape and split by material
         for (const auto& shape : shapes) {
+            
             // Group faces by material ID
             std::map<int, std::vector<size_t>> facesPerMaterial;
-
-            // Group face indices by material
             size_t numFaces = shape.mesh.material_ids.size();
             for (size_t faceIdx = 0; faceIdx < numFaces; faceIdx++) {
                 int matId = shape.mesh.material_ids.empty() ? -1 : shape.mesh.material_ids[faceIdx];
                 facesPerMaterial[matId].push_back(faceIdx);
             }
 
-            // Create a submesh for each material group
+            // Create a mesh entry for each material group
             for (const auto& [matId, faceIndices] : facesPerMaterial) {
+                MeshEntry entry;
+                entry.materialId = matId;
+                entry.shapeName = shape.name;
                 std::unordered_map<Vertex, uint32_t> uniqueVertices{};
-                std::vector<Vertex> vertices;
-                std::vector<uint32_t> indices;
 
-                // Process each face in this material group
+                if (matId >= 0 && matId < static_cast<int>(materials.size())) {
+                    entry.materialName = materials[matId].name;
+                }
+
                 for (size_t faceIdx : faceIndices) {
-                    // Each face has 3 indices (assuming triangulated mesh)
                     for (size_t v = 0; v < 3; v++) {
                         size_t indexIdx = faceIdx * 3 + v;
                         if (indexIdx >= shape.mesh.indices.size())
@@ -586,96 +592,79 @@ class ResourceManager {
                         const auto& index = shape.mesh.indices[indexIdx];
                         Vertex vertex{};
 
-                        if (index.vertex_index >= 0 && index.vertex_index < attrib.vertices.size() / 3) {
+                        if (index.vertex_index >= 0 && index.vertex_index < static_cast<int>(attrib.vertices.size() / 3)) {
                             vertex.position = {attrib.vertices[3 * index.vertex_index + 0], attrib.vertices[3 * index.vertex_index + 1],
                                                attrib.vertices[3 * index.vertex_index + 2]};
                         }
 
-                        if (index.normal_index >= 0 && index.normal_index < attrib.normals.size() / 3) {
+                        if (index.normal_index >= 0 && index.normal_index < static_cast<int>(attrib.normals.size() / 3)) {
                             vertex.normal = {attrib.normals[3 * index.normal_index + 0], attrib.normals[3 * index.normal_index + 1], attrib.normals[3 * index.normal_index + 2]};
                         } else {
                             vertex.normal = {0.0f, 1.0f, 0.0f};
                         }
 
-                        if (index.texcoord_index >= 0 && index.texcoord_index < attrib.texcoords.size() / 2) {
+                        if (index.texcoord_index >= 0 && index.texcoord_index < static_cast<int>(attrib.texcoords.size() / 2)) {
                             vertex.texCoord = {attrib.texcoords[2 * index.texcoord_index + 0], 1.0f - attrib.texcoords[2 * index.texcoord_index + 1]};
                         } else {
                             vertex.texCoord = {0.0f, 0.0f};
                         }
 
                         if (uniqueVertices.count(vertex) == 0) {
-                            uniqueVertices[vertex] = static_cast<uint32_t>(vertices.size());
-                            vertices.push_back(vertex);
+                            uniqueVertices[vertex] = static_cast<uint32_t>(entry.vertices.size());
+                            entry.vertices.push_back(vertex);
                         }
 
-                        indices.push_back(uniqueVertices[vertex]);
+                        entry.indices.push_back(uniqueVertices[vertex]);
                     }
                 }
 
-                // Add this submesh to mesh data
-                meshData.subMeshes.push_back(vertices);
-                meshData.subMeshIndices.push_back(indices);
-                meshData.materialIds.push_back(matId);
-
-                // Store material name
-                if (matId >= 0 && matId < materials.size()) {
-                    meshData.materialNames.push_back(materials[matId].name);
-                } else {
-                    meshData.materialNames.push_back("default_material");
-                }
-            }
-        }
-
-        // Calculate tangents
-        for (size_t meshIdx = 0; meshIdx < meshData.subMeshes.size(); meshIdx++) {
-            auto& vertices = meshData.subMeshes[meshIdx];
-            auto& indices = meshData.subMeshIndices[meshIdx];
-
-            for (auto& vertex : vertices) {
-                vertex.tangent = glm::vec3(0.0f);
-            }
-
-            for (size_t i = 0; i < indices.size(); i += 3) {
-                uint32_t idx0 = indices[i];
-                uint32_t idx1 = indices[i + 1];
-                uint32_t idx2 = indices[i + 2];
-
-                Vertex& v0 = vertices[idx0];
-                Vertex& v1 = vertices[idx1];
-                Vertex& v2 = vertices[idx2];
-
-                glm::vec3 edge1 = v1.position - v0.position;
-                glm::vec3 edge2 = v2.position - v0.position;
-
-                glm::vec2 deltaUV1 = v1.texCoord - v0.texCoord;
-                glm::vec2 deltaUV2 = v2.texCoord - v0.texCoord;
-
-                float denominator = deltaUV1.x * deltaUV2.y - deltaUV2.x * deltaUV1.y;
-
-                glm::vec3 tangent;
-                if (abs(denominator) < 0.0001f) {
-                    tangent = glm::vec3(1.0f, 0.0f, 0.0f);
-                } else {
-                    float f = 1.0f / denominator;
-                    tangent.x = f * (deltaUV2.y * edge1.x - deltaUV1.y * edge2.x);
-                    tangent.y = f * (deltaUV2.y * edge1.y - deltaUV1.y * edge2.y);
-                    tangent.z = f * (deltaUV2.y * edge1.z - deltaUV1.y * edge2.z);
-                    tangent = normalize(tangent);
+                // Calculate tangents for this entry
+                for (auto& vertex : entry.vertices) {
+                    vertex.tangent = glm::vec3(0.0f);
                 }
 
-                // Accumulate tangents (for averaging at shared vertices)
-                v0.tangent += tangent;
-                v1.tangent += tangent;
-                v2.tangent += tangent;
-            }
+                for (size_t i = 0; i < entry.indices.size(); i += 3) {
+                    uint32_t idx0 = entry.indices[i];
+                    uint32_t idx1 = entry.indices[i + 1];
+                    uint32_t idx2 = entry.indices[i + 2];
 
-            // Normalize accumulated tangents
-            for (auto& vertex : vertices) {
-                if (glm::length(vertex.tangent) > 0.0001f) {
-                    vertex.tangent = normalize(vertex.tangent);
-                } else {
-                    vertex.tangent = glm::vec3(1.0f, 0.0f, 0.0f);
+                    Vertex& v0 = entry.vertices[idx0];
+                    Vertex& v1 = entry.vertices[idx1];
+                    Vertex& v2 = entry.vertices[idx2];
+
+                    glm::vec3 edge1 = v1.position - v0.position;
+                    glm::vec3 edge2 = v2.position - v0.position;
+
+                    glm::vec2 deltaUV1 = v1.texCoord - v0.texCoord;
+                    glm::vec2 deltaUV2 = v2.texCoord - v0.texCoord;
+
+                    float denominator = deltaUV1.x * deltaUV2.y - deltaUV2.x * deltaUV1.y;
+
+                    glm::vec3 tangent;
+                    if (abs(denominator) < 0.0001f) {
+                        tangent = glm::vec3(1.0f, 0.0f, 0.0f);
+                    } else {
+                        float f = 1.0f / denominator;
+                        tangent.x = f * (deltaUV2.y * edge1.x - deltaUV1.y * edge2.x);
+                        tangent.y = f * (deltaUV2.y * edge1.y - deltaUV1.y * edge2.y);
+                        tangent.z = f * (deltaUV2.y * edge1.z - deltaUV1.y * edge2.z);
+                        tangent = normalize(tangent);
+                    }
+
+                    v0.tangent += tangent;
+                    v1.tangent += tangent;
+                    v2.tangent += tangent;
                 }
+
+                for (auto& vertex : entry.vertices) {
+                    if (glm::length(vertex.tangent) > 0.0001f) {
+                        vertex.tangent = normalize(vertex.tangent);
+                    } else {
+                        vertex.tangent = glm::vec3(1.0f, 0.0f, 0.0f);
+                    }
+                }
+
+                meshData.entries.push_back(std::move(entry));
             }
         }
 

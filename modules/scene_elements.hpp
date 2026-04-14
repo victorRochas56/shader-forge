@@ -68,7 +68,7 @@ class Node { // need to be able to hide nodes from tree for internal logic
 
     uint32_t getMeshIndex() { return meshIndex; }
     uint32_t getLightIndex() { return lightIndex; }
-    std::vector<uint32_t>& getMaterialIndices() {return materialIndices; }
+    uint32_t getMaterialIndex() { return materialIndex; }
 
     // Bounding box getters for frustum culling
     glm::vec3 getBoundingBoxMin() const { return boundingBoxMin; }
@@ -92,8 +92,7 @@ class Node { // need to be able to hide nodes from tree for internal logic
     glm::mat4 localTransform; // relative to parent
 
     uint32_t meshIndex = MAX_MESHES;
-    std::vector<uint32_t> materialIndices;
-    uint32_t materialIndexCount = 0;
+    uint32_t materialIndex = 0xFFFFFFFF;
     uint32_t lightIndex = MAX_LIGHTS;
 
     // Bounding box for frustum culling (in world space)

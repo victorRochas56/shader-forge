@@ -173,7 +173,6 @@ class Gizmos {
 
     static void drawGrid(glm::vec3 origin, glm::vec3 normal, float spacing) {}
     static void drawWireFrame(Mesh mesh) {}
-    static void drawWireFrame(SubMesh mesh) {}
 
     static void drawSDFSphere(glm::vec3 origin, float radius, glm::vec4 color) {
 

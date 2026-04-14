@@ -344,26 +344,26 @@ uint32_t Renderer::addMaterial(Material material) {
     materials.push_back(material);
     return materials.size() - 1;
 }
-void Renderer::addMeshToShader(Node* node, uint32_t submeshIndex, Shader shader, Material material) {
+void Renderer::addMeshToShader(Node* node, Shader shader, Material material) {
     uint32_t matIdx = 0;
     for (uint32_t i = 0; i < materials.size(); i++) {
         if (materials[i] == material) { matIdx = i; break; }
     }
     for (const auto& e : renderEntries) {
-        if (e.node == node && e.submeshIndex == submeshIndex &&
+        if (e.node == node &&
             e.materialIndex == matIdx && e.shaderPipelineIndex == shader.pipelineIndex)
             return;
     }
-    renderEntries.push_back({node, submeshIndex, matIdx, shader.pipelineIndex});
+    renderEntries.push_back({node, matIdx, shader.pipelineIndex});
     renderListDirty = true;
 }
-void Renderer::removeMeshFromShader(Node* node, uint32_t subMeshIndex, Shader shader, Material material) {
+void Renderer::removeMeshFromShader(Node* node, Shader shader, Material material) {
     uint32_t matIdx = 0;
     for (uint32_t i = 0; i < materials.size(); i++) {
         if (materials[i] == material) { matIdx = i; break; }
     }
     for (auto it = renderEntries.begin(); it != renderEntries.end(); ++it) {
-        if (it->node == node && it->submeshIndex == subMeshIndex &&
+        if (it->node == node &&
             it->materialIndex == matIdx && it->shaderPipelineIndex == shader.pipelineIndex) {
             *it = renderEntries.back();
             renderEntries.pop_back();
@@ -824,8 +824,8 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
     cmd.end();
 }
 
-template <typename PerSubMeshFn>
-void Renderer::buildGeometryDrawCommands(const std::array<Plane, 6>& frustumPlanes, bool doCulling, PerSubMeshFn&& perSubMeshFn) {
+template <typename PerMeshFn>
+void Renderer::buildGeometryDrawCommands(const std::array<Plane, 6>& frustumPlanes, bool doCulling, PerMeshFn&& perMeshFn) {
     if (renderListDirty) {
         std::sort(renderEntries.begin(), renderEntries.end(), [](const RenderEntry& a, const RenderEntry& b) {
             return a.shaderPipelineIndex < b.shaderPipelineIndex;
@@ -843,49 +843,43 @@ void Renderer::buildGeometryDrawCommands(const std::array<Plane, 6>& frustumPlan
         Node* node = entry.node;
         uint32_t meshIdx = node->getMeshIndex();
 
-        if (assetManager.meshes[meshIdx].freed) {
+        auto& mesh = assetManager.meshes[meshIdx];
+
+        if (mesh.freed) {
             if (freedMeshes.insert(meshIdx).second) {
-                for (uint32_t subMesh : assetManager.meshes[meshIdx].subMeshes) {
-                    descriptorSet->freeVariableBuffer(vertexBufferIndex, assetManager.subMeshes[subMesh].vertexAllocationIndex);
-                    descriptorSet->freeVariableBuffer(indexBufferIndex, assetManager.subMeshes[subMesh].indexAllocationIndex);
-                    assetManager.freeSubMeshes.push(subMesh);
-                }
+                descriptorSet->freeVariableBuffer(vertexBufferIndex, mesh.vertexAllocationIndex);
+                descriptorSet->freeVariableBuffer(indexBufferIndex, mesh.indexAllocationIndex);
                 assetManager.freeMeshes.push(meshIdx);
             }
             continue;
         }
 
         if (node->isBoundingBoxValid() && doCulling) {
-            if (!isAABBInFrustum(node->getBoundingBoxMin(), node->getBoundingBoxMax(), frustumPlanes))
+            glm::vec3 worldMin, worldMax;
+            transformAABBToWorldSpace(mesh.boundingBoxMin, mesh.boundingBoxMax, node->getTransform(), worldMin, worldMax);
+            if (!isAABBInFrustum(worldMin, worldMax, frustumPlanes)) {
+                culledCount++;
                 continue;
+            }
+
+            if (showBBOXes)
+                Gizmos::drawBox(worldMin, worldMax, glm::vec4(1.0f, 1.0f, 0.0f, 1.0f));
         }
-
-        const auto& subMesh = assetManager.subMeshes[entry.submeshIndex];
-
-        glm::vec3 subWorldMin, subWorldMax;
-        transformAABBToWorldSpace(subMesh.boundingBoxMin, subMesh.boundingBoxMax, node->getTransform(), subWorldMin, subWorldMax);
-        if (!isAABBInFrustum(subWorldMin, subWorldMax, frustumPlanes) && doCulling) {
-            culledCount++;
-            continue;
-        }
-
-        if (showBBOXes && doCulling)
-            Gizmos::drawBox(subWorldMin, subWorldMax, glm::vec4(1.0f, 1.0f, 0.0f, 1.0f));
 
         if (entry.shaderPipelineIndex != currentPipelineIdx) {
             currentPipelineIdx = entry.shaderPipelineIndex;
             shaderDrawRanges.push_back({currentPipelineIdx, static_cast<uint32_t>(indirectCommands.size()), 0});
         }
 
-        indirectCommands.push_back({.indexCount    = subMesh.indexCount,
+        indirectCommands.push_back({.indexCount    = mesh.indexCount,
                                     .instanceCount = 1,
-                                    .firstIndex    = static_cast<uint32_t>(subMesh.indexOffset / sizeof(uint32_t)),
+                                    .firstIndex    = static_cast<uint32_t>(mesh.indexOffset / sizeof(uint32_t)),
                                     .vertexOffset  = 0,
                                     .firstInstance = 0});
         shaderDrawRanges.back().commandCount++;
 
         const Material& material = materials[entry.materialIndex];
-        perSubMeshFn(subMesh, *node, material);
+        perMeshFn(mesh, *node, material);
     }
 }
 
@@ -963,10 +957,10 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
     std::array<Plane, 6> frustumPlanes = extractFrustumPlanes(fakeCam.viewProjection);
     culledCount = 0;
     litDrawDataList.clear();
-    buildGeometryDrawCommands(frustumPlanes, true, [&](const auto& subMesh, auto& node, const auto& material) {
-        litDrawDataList.push_back({.vertexAllocationIndex = subMesh.vertexAllocationIndex,
-                                   .vertexOffset          = static_cast<uint32_t>(subMesh.vertexOffset),
-                                   .vertexStride          = subMesh.vertexStride,
+    buildGeometryDrawCommands(frustumPlanes, true, [&](const auto& mesh, auto& node, const auto& material) {
+        litDrawDataList.push_back({.vertexAllocationIndex = mesh.vertexAllocationIndex,
+                                   .vertexOffset          = static_cast<uint32_t>(mesh.vertexOffset),
+                                   .vertexStride          = mesh.vertexStride,
                                    .modelMatrixIndex      = node.getModelMatrixIndex(),
                                    .albedoTextureIndex    = material.albedoTextureIndex,
                                    .roughnessTextureIndex = material.roughnessTextureIndex,
@@ -1391,10 +1385,10 @@ void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light) {
     // Build indirect draw commands once — identical across all faces/cascades since culling is off
     std::array<Plane, 6> dummyPlanes{};
     drawDataList.clear();
-    buildGeometryDrawCommands(dummyPlanes, false, [&](const auto& subMesh, auto& node, const auto& material) {
-        drawDataList.push_back({.vertexAllocationIndex = subMesh.vertexAllocationIndex,
-                                .vertexOffset = static_cast<uint32_t>(subMesh.vertexOffset),
-                                .vertexStride = subMesh.vertexStride,
+    buildGeometryDrawCommands(dummyPlanes, false, [&](const auto& mesh, auto& node, const auto& material) {
+        drawDataList.push_back({.vertexAllocationIndex = mesh.vertexAllocationIndex,
+                                .vertexOffset = static_cast<uint32_t>(mesh.vertexOffset),
+                                .vertexStride = mesh.vertexStride,
                                 .modelMatrixIndex = node.getModelMatrixIndex()});
     });
 

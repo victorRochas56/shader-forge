@@ -48,27 +48,40 @@ void showNodeMeshInfo(Node& node, Renderer& renderer) {
         browseButton("mesh", state.textBuffer, sizeof(state.textBuffer));
 
         if (ImGui::Button("Confirm")) {
-            // remove old mesh from render queue for shader
-            auto& matIndices = node.getMaterialIndices();
-            for (int i = 0; i < node.materialIndexCount; i++) {
-                int index = matIndices[i];
-                for (int subMeshIdx = 0; subMeshIdx < renderer.assetManager.meshes[node.meshIndex].subMeshes.size(); subMeshIdx++) {
-                    renderer.removeMeshFromShader(&node, renderer.assetManager.meshes[node.meshIndex].subMeshes[subMeshIdx],
-                                                  renderer.getMaterials()[index].shaderSource, renderer.getMaterials()[index]);
+            uint32_t thisNodeIndex = node.nodeIndex; // capture before any vector reallocation
+
+            // remove old mesh from render queue
+            if (node.meshIndex < renderer.assetManager.meshes.size() && node.materialIndex != 0xFFFFFFFF) {
+                renderer.removeMeshFromShader(&node, renderer.getMaterials()[node.materialIndex].shaderSource,
+                                               renderer.getMaterials()[node.materialIndex]);
+            }
+
+            auto meshIndices = renderer.assetManager.loadMeshFromFile(std::string(state.textBuffer));
+
+            if (meshIndices.size() == 1) {
+                // Single mesh — assign directly to this node
+                auto& n = renderer.sceneGraph.getNodes()[thisNodeIndex];
+                NodeOps::assignMesh(n, meshIndices[0], renderer);
+                NodeOps::assignMaterial(n, renderer.getFallBackMaterial(), renderer);
+            } else if (meshIndices.size() > 1) {
+                // Multiple mesh entries — create child nodes for each
+                for (size_t i = 0; i < meshIndices.size(); i++) {
+                    uint32_t childIdx = renderer.sceneGraph.addNode(false, thisNodeIndex);
+                    // re-fetch after addNode since nodes vector may have reallocated
+                    Node& childNode = renderer.sceneGraph.getNodes()[childIdx];
+                    childNode.name = renderer.sceneGraph.getNodes()[thisNodeIndex].name + "_part" + std::to_string(i);
+                    childNode.relativePosition = renderer.assetManager.meshes[meshIndices[i]].center;
+                    TransformSystem::recomputeTransforms(childNode,renderer.sceneGraph.getNodes());
+                    NodeOps::assignMesh(childNode, meshIndices[i], renderer);
+                    NodeOps::assignMaterial(childNode, renderer.getFallBackMaterial(), renderer);
                 }
             }
-            // load new mesh
-            node.meshIndex = renderer.assetManager.loadMeshFromFile(std::string(state.textBuffer));
-            state.materialList.clear();
-            state.selectedMaterials.clear();
-            node.materialIndexCount = 0;
-            for (int i = 0; i < renderer.assetManager.meshes[node.meshIndex].subMeshes.size(); i++) {
-                NodeOps::assignMaterial(node, i, renderer.getFallBackMaterial(), renderer);
-            }
 #if DEBUG == 1
-            std::cout << "mesh index " << node.meshIndex << std::endl;
+            std::cout << "loaded " << meshIndices.size() << " mesh(es)" << std::endl;
 #endif
             state.changingMesh = false;
+            // node reference is now potentially invalid — return early
+            return;
         }
         ImGui::SameLine();
         if (ImGui::Button("Cancel")) {
@@ -87,72 +100,34 @@ void showNodeMaterialDialog(Node& node, Renderer& renderer) {
 
     if (state.materialList.size() != renderer.getMaterials().size()) {
         state.materialList.clear();
-        state.selectedMaterials.clear();
-
         for (int i = 0; i < renderer.getMaterials().size(); i++) {
             const auto& material = renderer.getMaterials()[i];
             std::string textOption = material.name.empty() ? ("Material " + std::to_string(i)) : material.name;
             state.materialList.push_back(textOption);
         }
-
-        for (int n = 0; n < renderer.assetManager.meshes[node.meshIndex].subMeshes.size(); n++) {
-            state.selectedMaterials.push_back(node.materialIndices[n]);
-        }
     }
 
     ImGui::Begin("Change Material");
 
-    // Group submeshes by their original material ID from the OBJ file
-    std::map<int, std::vector<uint32_t>> originalMatIdToSubmeshes;
-    const auto& mesh = renderer.assetManager.meshes[node.meshIndex];
+    uint32_t currentMatIdx = node.materialIndex != 0xFFFFFFFF ? node.materialIndex : 0;
+    std::string currentMatName = state.materialList[currentMatIdx];
 
-    for (int i = 0; i < mesh.subMeshes.size(); i++) {
-        int originalMatId = (i < mesh.originalMaterialIds.size()) ? mesh.originalMaterialIds[i] : -1;
-        originalMatIdToSubmeshes[originalMatId].push_back(i);
-    }
-
-    // Show one material slot per unique original material
-    for (const auto& [originalMatId, submeshIndices] : originalMatIdToSubmeshes) {
-        // Use the first submesh's current material as the representative
-        uint32_t firstSubmeshIdx = submeshIndices[0];
-        uint32_t currentMatIdx = node.materialIndices[firstSubmeshIdx];
-
-        // Get the original material name from the OBJ file
-        std::string originalMatName = (firstSubmeshIdx < mesh.originalMaterialNames.size()) ? mesh.originalMaterialNames[firstSubmeshIdx]
-                                                                                            : ("Material_" + std::to_string(originalMatId));
-
-        std::string displayText = originalMatName;
-        if (submeshIndices.size() > 1) {
-            displayText += " (" + std::to_string(submeshIndices.size()) + " submeshes)";
-        }
-
-        ImGui::SetNextItemWidth(200);
-
-        if (ImGui::BeginCombo(displayText.c_str(), state.materialList[currentMatIdx].c_str())) {
-            for (int n = 0; n < state.materialList.size(); n++) {
-                bool is_selected = (currentMatIdx == n);
-                if (ImGui::Selectable(state.materialList[n].c_str(), is_selected)) {
-                    // Check if selection changed
-                    if (n != currentMatIdx) {
-                        // Update all submeshes that share this original material ID
-                        for (uint32_t subMeshIdx : submeshIndices) {
-                            renderer.removeMeshFromShader(&node, mesh.subMeshes[subMeshIdx],
-                                                          renderer.getMaterials()[node.materialIndices[subMeshIdx]].shaderSource,
-                                                          renderer.getMaterials()[node.materialIndices[subMeshIdx]]);
-                            node.materialIndices[subMeshIdx] = n;
-                            renderer.addMeshToShader(&node, mesh.subMeshes[subMeshIdx], renderer.getMaterials()[n].shaderSource,
-                                                     renderer.getMaterials()[n]);
-                            state.selectedMaterials[subMeshIdx] = n;
-                        }
-                    }
-                }
-                if (is_selected) {
-                    ImGui::SetItemDefaultFocus();
+    ImGui::SetNextItemWidth(200);
+    if (ImGui::BeginCombo("Material", currentMatName.c_str())) {
+        for (int n = 0; n < state.materialList.size(); n++) {
+            bool is_selected = (currentMatIdx == static_cast<uint32_t>(n));
+            if (ImGui::Selectable(state.materialList[n].c_str(), is_selected)) {
+                if (static_cast<uint32_t>(n) != currentMatIdx) {
+                    NodeOps::assignMaterial(node, n, renderer);
                 }
             }
-            ImGui::EndCombo();
+            if (is_selected) {
+                ImGui::SetItemDefaultFocus();
+            }
         }
+        ImGui::EndCombo();
     }
+
     ImGui::End();
 }
 
@@ -210,7 +185,7 @@ void showNodeLightInfo(Node& node, Renderer& renderer) {
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
             renderer.getDescriptorSet().updateFixedBufferWithOffset<GPULight>(renderer.getLightBufferIndex(), node.lightIndex, light.toGPU(), i);
         }
-        
+
         Gizmos::drawSphere(node.getWorldPosition(),light.range, glm::vec4(1,1,0,1));
 
 

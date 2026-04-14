@@ -16,7 +16,6 @@ namespace Raycast {
 
 struct MeshHit {
     uint32_t nodeIndex = 0;
-    uint32_t submeshLocalIndex = 0;
     float distance = std::numeric_limits<float>::max();
 };
 
@@ -76,9 +75,9 @@ inline std::vector<uint32_t> castNodes(glm::vec3 origin, glm::vec3 direction, st
     return foundNodes;
 }
 
-// Raycast against actual mesh triangles, returns closest hit with node and submesh indices
+// Raycast against actual mesh triangles, returns closest hit with node index
 inline MeshHit castMeshes(glm::vec3 origin, glm::vec3 direction, std::vector<Node>& nodes, uint32_t lastNode,
-                          std::vector<Mesh>& meshes, std::vector<SubMesh>& subMeshes) {
+                          std::vector<Mesh>& meshes) {
 
     glm::vec3 dir = glm::normalize(direction);
     MeshHit result;
@@ -94,49 +93,44 @@ inline MeshHit castMeshes(glm::vec3 origin, glm::vec3 direction, std::vector<Nod
         auto& mesh = meshes[meshIdx];
         if (mesh.freed)
             continue;
+        if (mesh.cpuIndices.empty() || mesh.cpuPositions.empty())
+            continue;
 
         glm::mat4 worldTransform = node.getTransform();
 
-        for (uint32_t subMeshIdx = 0; subMeshIdx < mesh.subMeshes.size(); subMeshIdx++) {
-            auto& sub = subMeshes[mesh.subMeshes[subMeshIdx]];
-            if (sub.cpuIndices.empty() || sub.cpuPositions.empty())
-                continue;
+        // AABB early-out in world space
+        glm::vec3 worldMin(std::numeric_limits<float>::max());
+        glm::vec3 worldMax(std::numeric_limits<float>::lowest());
+        glm::vec3 corners[8] = {
+            {mesh.boundingBoxMin.x, mesh.boundingBoxMin.y, mesh.boundingBoxMin.z},
+            {mesh.boundingBoxMax.x, mesh.boundingBoxMin.y, mesh.boundingBoxMin.z},
+            {mesh.boundingBoxMin.x, mesh.boundingBoxMax.y, mesh.boundingBoxMin.z},
+            {mesh.boundingBoxMax.x, mesh.boundingBoxMax.y, mesh.boundingBoxMin.z},
+            {mesh.boundingBoxMin.x, mesh.boundingBoxMin.y, mesh.boundingBoxMax.z},
+            {mesh.boundingBoxMax.x, mesh.boundingBoxMin.y, mesh.boundingBoxMax.z},
+            {mesh.boundingBoxMin.x, mesh.boundingBoxMax.y, mesh.boundingBoxMax.z},
+            {mesh.boundingBoxMax.x, mesh.boundingBoxMax.y, mesh.boundingBoxMax.z},
+        };
+        for (auto& c : corners) {
+            glm::vec3 wc = glm::vec3(worldTransform * glm::vec4(c, 1.0f));
+            worldMin = glm::min(worldMin, wc);
+            worldMax = glm::max(worldMax, wc);
+        }
+        if (!rayIntersectsAABB(origin, dir, worldMin, worldMax))
+            continue;
 
-            // AABB early-out in world space
-            glm::vec3 worldMin(std::numeric_limits<float>::max());
-            glm::vec3 worldMax(std::numeric_limits<float>::lowest());
-            glm::vec3 corners[8] = {
-                {sub.boundingBoxMin.x, sub.boundingBoxMin.y, sub.boundingBoxMin.z},
-                {sub.boundingBoxMax.x, sub.boundingBoxMin.y, sub.boundingBoxMin.z},
-                {sub.boundingBoxMin.x, sub.boundingBoxMax.y, sub.boundingBoxMin.z},
-                {sub.boundingBoxMax.x, sub.boundingBoxMax.y, sub.boundingBoxMin.z},
-                {sub.boundingBoxMin.x, sub.boundingBoxMin.y, sub.boundingBoxMax.z},
-                {sub.boundingBoxMax.x, sub.boundingBoxMin.y, sub.boundingBoxMax.z},
-                {sub.boundingBoxMin.x, sub.boundingBoxMax.y, sub.boundingBoxMax.z},
-                {sub.boundingBoxMax.x, sub.boundingBoxMax.y, sub.boundingBoxMax.z},
-            };
-            for (auto& c : corners) {
-                glm::vec3 wc = glm::vec3(worldTransform * glm::vec4(c, 1.0f));
-                worldMin = glm::min(worldMin, wc);
-                worldMax = glm::max(worldMax, wc);
-            }
-            if (!rayIntersectsAABB(origin, dir, worldMin, worldMax))
-                continue;
+        for (uint32_t idx = 0; idx + 2 < mesh.cpuIndices.size(); idx += 3) {
+            glm::vec3 v0 = glm::vec3(worldTransform * glm::vec4(mesh.cpuPositions[mesh.cpuIndices[idx]], 1.0f));
+            glm::vec3 v1 = glm::vec3(worldTransform * glm::vec4(mesh.cpuPositions[mesh.cpuIndices[idx + 1]], 1.0f));
+            glm::vec3 v2 = glm::vec3(worldTransform * glm::vec4(mesh.cpuPositions[mesh.cpuIndices[idx + 2]], 1.0f));
 
-            for (uint32_t idx = 0; idx + 2 < sub.cpuIndices.size(); idx += 3) {
-                glm::vec3 v0 = glm::vec3(worldTransform * glm::vec4(sub.cpuPositions[sub.cpuIndices[idx]], 1.0f));
-                glm::vec3 v1 = glm::vec3(worldTransform * glm::vec4(sub.cpuPositions[sub.cpuIndices[idx + 1]], 1.0f));
-                glm::vec3 v2 = glm::vec3(worldTransform * glm::vec4(sub.cpuPositions[sub.cpuIndices[idx + 2]], 1.0f));
-
-                float triHit = rayTriangle(origin, dir, v0, v1, v2);
-                if (triHit > 0.0f && triHit < result.distance) {
-                    result.distance = triHit;
-                    result.nodeIndex = i;
-                    result.submeshLocalIndex = subMeshIdx;
-                    resV0 = v0;
-                    resV1 = v1;
-                    resV2 = v2;
-                }
+            float triHit = rayTriangle(origin, dir, v0, v1, v2);
+            if (triHit > 0.0f && triHit < result.distance) {
+                result.distance = triHit;
+                result.nodeIndex = i;
+                resV0 = v0;
+                resV1 = v1;
+                resV2 = v2;
             }
         }
     }

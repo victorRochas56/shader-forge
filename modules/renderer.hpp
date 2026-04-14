@@ -104,7 +104,6 @@ class Renderer {
 
     struct RenderEntry {
         Node*    node;
-        uint32_t submeshIndex;
         uint32_t materialIndex;       // index into materials vector
         uint32_t shaderPipelineIndex;
     };
@@ -261,8 +260,8 @@ class Renderer {
     std::vector<Material>& getMaterials();
     uint32_t addMaterial(Material material);
 
-    void addMeshToShader(Node* node, uint32_t submeshIndex, Shader shader, Material material);
-    void removeMeshFromShader(Node* node, uint32_t subMeshIndex, Shader shader, Material material);
+    void addMeshToShader(Node* node, Shader shader, Material material);
+    void removeMeshFromShader(Node* node, Shader shader, Material material);
 
     Shader getFallBackShader();
     uint32_t getFallBackMaterial();
@@ -323,8 +322,8 @@ class Renderer {
 #pragma region RENDERING
     void recordCommandBuffer(uint32_t imageIndex);
 
-    template <typename PerSubMeshFn>
-    void buildGeometryDrawCommands(const std::array<Plane, 6>& frustumPlanes, bool doCulling, PerSubMeshFn&& perSubMeshFn);
+    template <typename PerMeshFn>
+    void buildGeometryDrawCommands(const std::array<Plane, 6>& frustumPlanes, bool doCulling, PerMeshFn&& perMeshFn);
 
     void recordHiZPass(vk::raii::CommandBuffer& cmd);
     void recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex);

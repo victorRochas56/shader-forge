@@ -171,11 +171,11 @@ class App {
         //scenes.hpp
         ImGui::Begin("Scene Manager");
         if(ImGui::Button("Save Scene")){
-            sceneManager.saveScene("scene.txt", renderer);
+            sceneManager.saveScene("scene.scn", renderer);
         }
         ImGui::SameLine();
         if(ImGui::Button("Load Scene")){
-            sceneManager.loadScene("scene.txt", renderer);
+            sceneManager.loadScene("scene.scn", renderer);
         }
         ImGui::SameLine();
         if(ImGui::Button("Clear Scene")){

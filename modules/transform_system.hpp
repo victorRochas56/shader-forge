@@ -34,8 +34,9 @@ namespace TransformSystem {
     void syncToGPU(Node& node, std::vector<Node>& nodes, DescriptorSet& ds, uint32_t modelMatrixBufferIndex,
                    const MeshArray& meshes, std::map<uint32_t, Light>& lights) {
         // Update model matrix for all frames
+        glm::mat4 offsetTransform = makeTransform(node.getWorldPosition(), node.getWorldRotation(), node.getWorldScale());
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-            ds.updateFixedBufferWithOffset(modelMatrixBufferIndex, node.modelMatrixIndices[i], node.worldTransform, i);
+            ds.updateFixedBufferWithOffset(modelMatrixBufferIndex, node.modelMatrixIndices[i], offsetTransform, i);
         }
 
         // Update light direction if node has a light

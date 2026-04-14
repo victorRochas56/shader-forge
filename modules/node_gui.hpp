@@ -9,7 +9,6 @@ struct NodeGuiState {
     bool changingMaterials = false;
     char textBuffer[256] = {};
     std::vector<std::string> materialList;
-    std::vector<uint32_t> selectedMaterials;
     bool lightShadow = false;
 };
 

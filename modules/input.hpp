@@ -81,11 +81,11 @@ class InputManager {
 
             if (inst.materialPickMode) {
                 auto hit = Raycast::castMeshes(origin, direction, inst.renderer->sceneGraph.getNodes(), inst.renderer->sceneGraph.getLastNode(),
-                                               inst.renderer->assetManager.meshes, inst.renderer->assetManager.subMeshes);
+                                               inst.renderer->assetManager.meshes);
                 if (hit.nodeIndex != 0) {
                     auto& node = inst.renderer->sceneGraph.getNodes()[hit.nodeIndex];
-                    if (hit.submeshLocalIndex < node.materialIndexCount) {
-                        inst.pickedMaterialIndex = static_cast<int>(node.getMaterialIndices()[hit.submeshLocalIndex]);
+                    if (node.getMaterialIndex() != 0xFFFFFFFF) {
+                        inst.pickedMaterialIndex = static_cast<int>(node.getMaterialIndex());
                     }
                 }
                 inst.materialPickMode = false;

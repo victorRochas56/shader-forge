@@ -21,7 +21,7 @@ inline const std::unordered_map<std::string, NodeProperty>& getNodePropertyMap()
         {"firstChild",            {offsetof(Node, firstChild),            ValueType::UINT32}},
         {"nextSibling",           {offsetof(Node, nextSibling),           ValueType::UINT32}},
         {"meshIndex",             {offsetof(Node, meshIndex),             ValueType::UINT32}},
-        {"materialIndexCount",    {offsetof(Node, materialIndexCount),    ValueType::UINT32}},
+        {"materialIndex",         {offsetof(Node, materialIndex),         ValueType::UINT32}},
         {"lightIndex",            {offsetof(Node, lightIndex),            ValueType::UINT32}},
     };
     return map;

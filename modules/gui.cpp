@@ -291,17 +291,12 @@ void showMaterialEditor(MaterialEditorState& state, Renderer* renderer) {
             // update shader mappings for all nodes using this material
             auto& nodes = renderer->sceneGraph.getNodes();
             for (uint32_t i = 1; i <= renderer->sceneGraph.getNodeCount(); i++) {
-                auto& matIndices = nodes[i].getMaterialIndices();
                 auto meshIdx = nodes[i].getMeshIndex();
                 if (meshIdx >= renderer->assetManager.meshes.size()) continue;
 
-                for (size_t j = 0; j < matIndices.size(); j++) {
-                    if(matIndices[j] == 0xFFFFFFFF) break;
-                    if (matIndices[j] == static_cast<uint32_t>(state.selectedIndex)) {
-                        uint32_t subMeshIndex = renderer->assetManager.meshes[meshIdx].subMeshes[j];
-                        renderer->removeMeshFromShader(&nodes[i], subMeshIndex, oldMat.shaderSource, oldMat);
-                        renderer->addMeshToShader(&nodes[i], subMeshIndex, existingMat.shaderSource, existingMat);
-                    }
+                if (nodes[i].getMaterialIndex() == static_cast<uint32_t>(state.selectedIndex)) {
+                    renderer->removeMeshFromShader(&nodes[i], oldMat.shaderSource, oldMat);
+                    renderer->addMeshToShader(&nodes[i], existingMat.shaderSource, existingMat);
                 }
             }
 
@@ -438,11 +433,8 @@ void showBufferAllocs(Renderer* renderer){
     for (const auto& mesh : renderer->assetManager.meshes) {
         if (mesh.freed) continue;
         meshCount++;
-        for (uint32_t subIdx : mesh.subMeshes) {
-            const auto& sub = renderer->assetManager.subMeshes[subIdx];
-            totalVertexBytes += (vk::DeviceSize)sub.vertexCount * sub.vertexStride;
-            totalIndexBytes += (vk::DeviceSize)sub.indexCount * sizeof(uint32_t);
-        }
+        totalVertexBytes += (vk::DeviceSize)mesh.vertexCount * mesh.vertexStride;
+        totalIndexBytes += (vk::DeviceSize)mesh.indexCount * sizeof(uint32_t);
     }
     float vertMB = totalVertexBytes / (1024.0f * 1024.0f);
     float idxMB = totalIndexBytes / (1024.0f * 1024.0f);

@@ -6,9 +6,9 @@ namespace NodeOps {
 
 void assignMesh(Node& node, uint32_t meshIndex, Renderer& renderer) {
     if (node.meshIndex < renderer.assetManager.meshes.size()) {
-        renderer.assetManager.meshes[meshIndex].refCount--;
-        if (renderer.assetManager.meshes[meshIndex].refCount <= 0) {
-            renderer.assetManager.meshes[meshIndex].freed = true;
+        renderer.assetManager.meshes[node.meshIndex].refCount--;
+        if (renderer.assetManager.meshes[node.meshIndex].refCount <= 0) {
+            renderer.assetManager.meshes[node.meshIndex].freed = true;
         }
     }
     node.meshIndex = meshIndex;
@@ -33,15 +33,18 @@ void assignMesh(Node& node, uint32_t meshIndex, Renderer& renderer) {
     node.boundingBoxValid = true;
 }
 
-void assignMaterial(Node& node, uint32_t submeshIndex, uint32_t materialIndex, Renderer& renderer) {
-    if (submeshIndex >= renderer.assetManager.meshes[node.meshIndex].subMeshes.size()) {
-        throw std::runtime_error("tried adding material to invalid material slot on node mesh!");
-    } else {
-        renderer.addMeshToShader(&node, renderer.assetManager.meshes[node.meshIndex].subMeshes[submeshIndex], renderer.getMaterials()[materialIndex].shaderSource,
-                                  renderer.getMaterials()[materialIndex]);
-        node.materialIndices.push_back(materialIndex);
-        node.materialIndexCount++;
+void assignMaterial(Node& node, uint32_t materialIndex, Renderer& renderer) {
+    if (node.meshIndex >= renderer.assetManager.meshes.size()) {
+        throw std::runtime_error("tried assigning material to a node without a mesh!");
     }
+    // Remove old shader mapping if a material was previously assigned
+    if (node.materialIndex != 0xFFFFFFFF) {
+        renderer.removeMeshFromShader(&node, renderer.getMaterials()[node.materialIndex].shaderSource,
+                                       renderer.getMaterials()[node.materialIndex]);
+    }
+    node.materialIndex = materialIndex;
+    renderer.addMeshToShader(&node, renderer.getMaterials()[materialIndex].shaderSource,
+                              renderer.getMaterials()[materialIndex]);
 }
 
 uint32_t allocateShadowMap(Light& light, const std::string& name, Renderer& renderer) {

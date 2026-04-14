@@ -6,7 +6,7 @@ class Renderer;
 namespace NodeOps {
 
     void assignMesh(Node& node, uint32_t meshIndex, Renderer& renderer);
-    void assignMaterial(Node& node, uint32_t submeshIndex, uint32_t materialIndex, Renderer& renderer);
+    void assignMaterial(Node& node, uint32_t materialIndex, Renderer& renderer);
     void assignLight(Node& node, Light light, Renderer& renderer);
     void enableLightShadows(Light& light, const std::string& nodeName, Renderer& renderer);
     void disableLightShadows(Light& light, Renderer& renderer);
