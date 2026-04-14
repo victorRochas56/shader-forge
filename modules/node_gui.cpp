@@ -234,6 +234,8 @@ void showNodeTransformInfo(Node& node, Renderer& renderer) {
         auto& nodes = renderer.sceneGraph.getNodes();
         for (uint32_t i = SceneGraph::ROOT_INDEX; i <= renderer.sceneGraph.getLastNode(); i++) {
             if (i == node.nodeIndex || i == node.parentIndex) continue;
+            // Skip non user-facing nodes
+            if(nodes[i].internal) continue;
             // Skip descendants to prevent cycles
             bool isDescendant = false;
             for (uint32_t p = nodes[i].parentIndex; p != 0; p = nodes[p].parentIndex) {

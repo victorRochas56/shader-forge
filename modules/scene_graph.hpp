@@ -30,7 +30,7 @@ class SceneGraph {
     Node& getNode(uint32_t idx) { return nodes[idx]; }
     const Node& getNode(uint32_t idx) const { return nodes[idx]; }
 
-    uint32_t addNode(uint32_t parentIndex = ROOT_INDEX, glm::vec3 position = glm::vec3(0.0f), glm::quat rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
+    uint32_t addNode(bool internal = false, uint32_t parentIndex = ROOT_INDEX, glm::vec3 position = glm::vec3(0.0f), glm::quat rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
                      glm::vec3 scale = glm::vec3(1.0f));
 
     void removeNode(uint32_t index) { throw std::runtime_error("remove node not implemented!"); }

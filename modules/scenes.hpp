@@ -413,7 +413,7 @@ class SceneManager {
         }
 
         // Create the node
-        uint32_t nodeIndex = renderer.sceneGraph.addNode(parentIndex, position, rotation, scale);
+        uint32_t nodeIndex = renderer.sceneGraph.addNode(false, parentIndex, position, rotation, scale);
         Node& newNode = renderer.sceneGraph.getNodes()[nodeIndex];
         newNode.name = name;
 

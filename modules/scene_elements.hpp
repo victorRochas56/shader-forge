@@ -28,8 +28,8 @@ class Node { // need to be able to hide nodes from tree for internal logic
   public:
     std::string name = "empty";
 
-    Node(uint32_t arrayIndex, uint32_t parentIndex = 0, glm::vec3 position = glm::vec3(0.0f), glm::quat rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
-         glm::vec3 scale = glm::vec3(1.0f));
+    Node(uint32_t arrayIndex, bool internal = true, uint32_t parentIndex = 0, glm::vec3 position = glm::vec3(0.0f), glm::quat rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
+         glm::vec3 scale = glm::vec3(1.0f), std::string nodeName = "empty");
     glm::vec3 getWorldPosition() { return glm::vec3(worldTransform[3]); }
     glm::vec3 getRelativePosition() { return relativePosition; }
     glm::mat4 getTransform() { return worldTransform; }
@@ -100,6 +100,7 @@ class Node { // need to be able to hide nodes from tree for internal logic
     glm::vec3 boundingBoxMin = glm::vec3(0.0f);
     glm::vec3 boundingBoxMax = glm::vec3(0.0f);
     bool boundingBoxValid = false;
+    bool internal = false;
 };
 
 struct Camera {

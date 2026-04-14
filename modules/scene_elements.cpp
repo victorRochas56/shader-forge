@@ -8,10 +8,10 @@ Node constructor - pure data initialization, no renderer dependency.
 GPU allocation, tree linking, and transform sync are handled by SceneGraph/TransformSystem.
 */
 
-Node::Node(uint32_t arrayIndex, uint32_t parentIdx, glm::vec3 position, glm::quat rotation, glm::vec3 scale) {
+Node::Node(uint32_t arrayIndex, bool internal, uint32_t parentIdx, glm::vec3 position, glm::quat rotation, glm::vec3 scale, std::string nodeName) {
 
     unsigned long long nodeSize = sizeof(Node);
-    name = "empty_"+std::to_string(arrayIndex);
+    name = nodeName+"_"+std::to_string(arrayIndex);
     nodeIndex = arrayIndex;
     parentIndex = parentIdx;
 

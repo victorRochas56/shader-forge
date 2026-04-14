@@ -88,15 +88,17 @@ void traverseNodeTree(Node& node, uint32_t level, uint32_t selectedNode, Rendere
     for (int i = 0; i < level; i++) {
         displayText += " ";
     }
-    if (node.getIndex() == selectedNode) {
-        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(200, 200, 0, 255));
-        displayText += "|_[" + node.name + "]";
-    } else {
-        displayText += "|_ " + node.name;
-    }
-    ImGui::Text(displayText.c_str());
-    if (node.getIndex() == selectedNode) {
-        ImGui::PopStyleColor();
+    if(!node.internal) {
+        if (node.getIndex() == selectedNode) {
+            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(200, 200, 0, 255));
+            displayText += "|_[" + node.name + "]";
+        } else {
+            displayText += "|_ " + node.name;
+        }
+        ImGui::Text(displayText.c_str());
+        if (node.getIndex() == selectedNode) {
+            ImGui::PopStyleColor();
+        }
     }
     auto& nodes = renderer->sceneGraph.getNodes();
     uint32_t child = node.firstChild;
@@ -371,7 +373,7 @@ void showActionMenu(uint32_t context, Renderer* renderer, float posX, float posY
         int width = 0, height = 0;
         glfwGetWindowSize(renderer->getWindow(), &width, &height);
         renderer->activeCamera.rayFromScreenCoords((posX / width) * 2.0 - 1.0, (posY / height) * 2.0 - 1.0, &origin, &direction);
-        renderer->sceneGraph.addNode(SceneGraph::ROOT_INDEX, origin + direction);
+        renderer->sceneGraph.addNode(false, SceneGraph::ROOT_INDEX, origin + direction);
     }
 
     ImGui::End();
