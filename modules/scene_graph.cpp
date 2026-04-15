@@ -19,7 +19,7 @@ uint32_t SceneGraph::addNode(bool internal,uint32_t parentIndex, glm::vec3 posit
 
     if (!freeSlots.empty()) {
         newIndex = freeSlots.front();
-        freeSlots.pop_front();
+        freeSlots.pop();
         nodes[newIndex] = Node(newIndex, internal, parentIndex, position, rotation, scale);
     } else {
         newIndex = static_cast<uint32_t>(nodes.size());
@@ -57,7 +57,7 @@ void SceneGraph::killNode(uint32_t idx) {
     node.firstChild = 0;
     node.nextSibling = 0;
 
-    freeSlots.push_back(idx);
+    freeSlots.push(idx);
 }
 
 void SceneGraph::removeNode(uint32_t idx) {

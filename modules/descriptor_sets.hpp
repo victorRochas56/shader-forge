@@ -6,7 +6,6 @@
 #define VULKAN_HPP_NO_CONSTRUCTORS 1
 #endif
 
-#include <deque>
 #include <optional>
 #include <queue>
 #include <vector>
@@ -86,7 +85,7 @@ struct FixedBufferResourceBase {
     void* mappedData = nullptr;
     vk::DeviceSize bufferSize = 0;
     std::vector<FixedBufferAllocation> allocations;
-    std::deque<uint32_t> freeSlots;
+    std::queue<uint32_t> freeSlots;
     uint32_t maxSize = MAX_FIXED_BUFFER;
     bool perFrame;
     uint32_t elementSize = 0;  // Size of a single element
@@ -127,7 +126,7 @@ template <typename T> struct FixedBufferResource : FixedBufferResourceBase {
 
         if (!freeSlots.empty()) {
             index = freeSlots.front();
-            freeSlots.pop_front();
+            freeSlots.pop();
             allocations[index] = FixedBufferAllocation{.index = index, .inUse = true};
             data[index] = newData;
         } else {
@@ -424,7 +423,7 @@ class DescriptorSet {
         auto* basePtr = fixedBuffers[bufferIndex].get();
         if (index < basePtr->allocations.size() && basePtr->allocations[index].inUse) {
             basePtr->allocations[index].inUse = false;
-            basePtr->freeSlots.push_back(index);
+            basePtr->freeSlots.push(index);
         }
     }
 
@@ -436,10 +435,9 @@ class DescriptorSet {
         for (auto& allocation : basePtr->allocations) {
             allocation.inUse = false;
         }
-        std::deque<uint32_t> empty;
-        basePtr->freeSlots.swap(empty);
+        basePtr->freeSlots = {};
         for (uint32_t i = 0; i < basePtr->allocations.size(); i++) {
-            basePtr->freeSlots.push_back(i);
+            basePtr->freeSlots.push(i);
         }
     }
 

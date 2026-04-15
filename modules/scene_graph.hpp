@@ -1,7 +1,7 @@
 #pragma once
 #include <array>
-#include <deque>
 #include <optional>
+#include <queue>
 #include <stdexcept>
 
 #include <glm/glm.hpp>
@@ -52,7 +52,7 @@ class SceneGraph {
     void resetLastNode() {
         lastNode = 0;
         selectedNode = 0;
-        freeSlots.clear();
+        freeSlots = {};
     }
 
     // Link child into parent's sibling list (firstChild/nextSibling)
@@ -137,7 +137,7 @@ class SceneGraph {
     Renderer* renderer = nullptr;
     std::vector<Node> nodes;
     uint32_t lastNode = 0;
-    std::deque<uint32_t> freeSlots;
+    std::queue<uint32_t> freeSlots;
 
     // Allocate GPU model matrix buffer for a node
     void allocateNodeGPU(Node& node);
