@@ -343,31 +343,42 @@ uint32_t Renderer::addMaterial(Material material) {
     materials.push_back(material);
     return materials.size() - 1;
 }
-void Renderer::addMeshToShader(Node* node, Shader shader, Material material) {
+void Renderer::addMeshToShader(uint32_t nodeIndex, Shader shader, Material material) {
     uint32_t matIdx = 0;
     for (uint32_t i = 0; i < materials.size(); i++) {
         if (materials[i] == material) { matIdx = i; break; }
     }
     for (const auto& e : renderEntries) {
-        if (e.node == node &&
+        if (e.nodeIndex == nodeIndex &&
             e.materialIndex == matIdx && e.shaderPipelineIndex == shader.pipelineIndex)
             return;
     }
-    renderEntries.push_back({node, matIdx, shader.pipelineIndex});
+    renderEntries.push_back({nodeIndex, matIdx, shader.pipelineIndex});
     renderListDirty = true;
 }
-void Renderer::removeMeshFromShader(Node* node, Shader shader, Material material) {
+void Renderer::removeMeshFromShader(uint32_t nodeIndex, Shader shader, Material material) {
     uint32_t matIdx = 0;
     for (uint32_t i = 0; i < materials.size(); i++) {
         if (materials[i] == material) { matIdx = i; break; }
     }
     for (auto it = renderEntries.begin(); it != renderEntries.end(); ++it) {
-        if (it->node == node &&
+        if (it->nodeIndex == nodeIndex &&
             it->materialIndex == matIdx && it->shaderPipelineIndex == shader.pipelineIndex) {
             *it = renderEntries.back();
             renderEntries.pop_back();
             renderListDirty = true;
             return;
+        }
+    }
+}
+void Renderer::removeNodeFromRenderList(uint32_t nodeIndex) {
+    for (auto it = renderEntries.begin(); it != renderEntries.end();) {
+        if (it->nodeIndex == nodeIndex) {
+            *it = renderEntries.back();
+            renderEntries.pop_back();
+            renderListDirty = true;
+        } else {
+            ++it;
         }
     }
 }
@@ -839,7 +850,7 @@ void Renderer::buildGeometryDrawCommands(const std::array<Plane, 6>& frustumPlan
     uint32_t currentPipelineIdx = UINT32_MAX;
 
     for (const auto& entry : renderEntries) {
-        Node* node = entry.node;
+        Node* node = &sceneGraph.getNode(entry.nodeIndex);
         uint32_t meshIdx = node->getMeshIndex();
 
         auto& mesh = assetManager.meshes[meshIdx];

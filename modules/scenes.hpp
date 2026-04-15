@@ -78,6 +78,7 @@ class SceneManager {
   private:
     std::fstream ofs;
     std::unordered_set<uint32_t> savedMaterialIDs;
+    std::unordered_map<std::string, std::vector<uint32_t>> loadedMeshFiles; // sourceFile -> mesh indices
 
     // trims whitespace from line
     void trim(std::string& str) {
@@ -116,6 +117,7 @@ class SceneManager {
 
     void clearSceneInternal(Renderer& renderer) { // meshes and textures remain loaded in memory for reuse (TODO check on load for unused?)
         std::cout << "Clearing scene..." << std::endl;
+        loadedMeshFiles.clear();
 
         auto& nodes = renderer.sceneGraph.getNodes();
         Node& rootNode = renderer.sceneGraph.getRootNode();
@@ -154,7 +156,7 @@ class SceneManager {
         // Remove mesh from shader rendering
         if (node.getMeshIndex() != MAX_MESHES && node.getMaterialIndex() != 0xFFFFFFFF) {
             uint32_t matIndex = node.getMaterialIndex();
-            renderer.removeMeshFromShader(&node, renderer.getMaterials()[matIndex].shaderSource, renderer.getMaterials()[matIndex]);
+            renderer.removeMeshFromShader(node.getIndex(), renderer.getMaterials()[matIndex].shaderSource, renderer.getMaterials()[matIndex]);
         }
     }
 
@@ -319,11 +321,12 @@ class SceneManager {
         glm::quat rotation(1.0f, 0.0f, 0.0f, 0.0f);
         glm::vec3 scale(1.0f);
         std::string meshPath;
+        std::string meshName;
         std::vector<uint32_t> materialIDs;
         bool hasLight = false;
         Light light;
 
-        // Collect child node lines to parse after this node is created
+        // Collect child node stream positions to parse after this node is created
         std::vector<std::streampos> childNodePositions;
 
         std::string line;
@@ -338,12 +341,15 @@ class SceneManager {
             }
 
             if (line == "Node {") {
-                // Skip child node block — we'll parse children from the hierarchy
+                if (braceDepth == 0) {
+                    // Direct child — remember position to parse after this node is created
+                    childNodePositions.push_back(ifs.tellg());
+                }
                 braceDepth++;
                 continue;
             }
 
-            if (braceDepth > 0) continue; // inside a skipped child block
+            if (braceDepth > 0) continue; // inside a child block, skip for now
 
             std::string key, value;
             if (!parseKeyValue(line, key, value)) {
@@ -369,6 +375,8 @@ class SceneManager {
                 }
             } else if (key == "Mesh") {
                 meshPath = value;
+            } else if (key == "MeshName") {
+                meshName = value;
             } else if (key == "MaterialID") {
                 materialIDs.push_back(std::stoul(value));
             } else if (key == "Light") {
@@ -410,52 +418,55 @@ class SceneManager {
             }
         }
 
-        // Create the node
+        // Create the node with the saved transform
         uint32_t nodeIndex = renderer.sceneGraph.addNode(false, parentIndex, position, rotation, scale);
         renderer.sceneGraph.getNodes()[nodeIndex].name = name;
 
         std::cout << "created node: " << name << " at index " << nodeIndex << std::endl;
 
-        // Load mesh if specified — each mesh entry becomes its own node
+        // Load mesh if specified
         if (!meshPath.empty()) {
             try {
-                auto meshIndices = renderer.assetManager.loadMeshFromFile(meshPath);
-                if (meshIndices.size() == 1) {
-                    // Single mesh — assign directly to this node
-                    Node& n = renderer.sceneGraph.getNodes()[nodeIndex];
-                    NodeOps::assignMesh(n, meshIndices[0], renderer);
-                    uint32_t matIdx = renderer.getFallBackMaterial();
-                    if (!materialIDs.empty() && materialIDToIndex.find(materialIDs[0]) != materialIDToIndex.end()) {
-                        matIdx = materialIDToIndex[materialIDs[0]];
-                    }
-                    NodeOps::assignMaterial(n, matIdx, renderer);
-                } else {
-                    // Multiple mesh entries — create child nodes
-                    for (size_t i = 0; i < meshIndices.size(); i++) {
-                        uint32_t childIdx = renderer.sceneGraph.addNode(false, nodeIndex);
-                        // re-fetch after addNode — nodes vector may have reallocated
-                        Node& childNode = renderer.sceneGraph.getNodes()[childIdx];
-                        childNode.name = name + "_part" + std::to_string(i);
+                // Load the file once and cache the resulting mesh indices
+                if (loadedMeshFiles.find(meshPath) == loadedMeshFiles.end()) {
+                    loadedMeshFiles[meshPath] = renderer.assetManager.loadMeshFromFile(meshPath);
+                }
+                auto& meshIndices = loadedMeshFiles[meshPath];
 
-                        NodeOps::assignMesh(childNode, meshIndices[i], renderer);
-                        uint32_t matIdx = renderer.getFallBackMaterial();
-                        if (i < materialIDs.size() && materialIDToIndex.find(materialIDs[i]) != materialIDToIndex.end()) {
-                            matIdx = materialIDToIndex[materialIDs[i]];
+                // Find the specific sub-mesh by name, or fall back to the first one
+                uint32_t meshIdx = meshIndices[0];
+                if (!meshName.empty()) {
+                    for (uint32_t idx : meshIndices) {
+                        if (renderer.assetManager.getMeshes()[idx].name == meshName) {
+                            meshIdx = idx;
+                            break;
                         }
-                        NodeOps::assignMaterial(childNode, matIdx, renderer);
-                        std::cout << "  Created child mesh node: " << childNode.name << std::endl;
                     }
                 }
+
+                Node& n = renderer.sceneGraph.getNodes()[nodeIndex];
+                NodeOps::assignMesh(n, meshIdx, renderer);
+                uint32_t matIdx = renderer.getFallBackMaterial();
+                if (!materialIDs.empty() && materialIDToIndex.find(materialIDs[0]) != materialIDToIndex.end()) {
+                    matIdx = materialIDToIndex[materialIDs[0]];
+                }
+                NodeOps::assignMaterial(n, matIdx, renderer);
             } catch (const std::exception& e) {
                 std::cerr << "Failed to load mesh: " << meshPath << " - " << e.what() << std::endl;
             }
         }
 
-        // Add light if specified — re-fetch node since addNode calls above may have invalidated references
+        // Add light if specified
         if (hasLight) {
             Node& n = renderer.sceneGraph.getNodes()[nodeIndex];
             NodeOps::assignLight(n, light, renderer);
             std::cout << "Added light to node: " << name << std::endl;
+        }
+
+        // Now parse child nodes recursively
+        for (auto& pos : childNodePositions) {
+            ifs.seekg(pos);
+            parseNode(ifs, renderer, nodeIndex, materialIDToIndex);
         }
     }
 
@@ -554,6 +565,9 @@ class SceneManager {
         if (node.getMeshIndex() != MAX_MESHES) {
             Mesh& mesh = renderer.assetManager.meshes[node.getMeshIndex()];
             ofs << indent << "  Mesh : " << mesh.sourceFile << std::endl;
+            if (!mesh.name.empty()) {
+                ofs << indent << "  MeshName : " << mesh.name << std::endl;
+            }
 
             if (node.getMaterialIndex() != 0xFFFFFFFF) {
                 Material& mat = renderer.getMaterials()[node.getMaterialIndex()];

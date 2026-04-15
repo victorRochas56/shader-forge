@@ -39,11 +39,11 @@ void assignMaterial(Node& node, uint32_t materialIndex, Renderer& renderer) {
     }
     // Remove old shader mapping if a material was previously assigned
     if (node.materialIndex != 0xFFFFFFFF) {
-        renderer.removeMeshFromShader(&node, renderer.getMaterials()[node.materialIndex].shaderSource,
+        renderer.removeMeshFromShader(node.nodeIndex, renderer.getMaterials()[node.materialIndex].shaderSource,
                                        renderer.getMaterials()[node.materialIndex]);
     }
     node.materialIndex = materialIndex;
-    renderer.addMeshToShader(&node, renderer.getMaterials()[materialIndex].shaderSource,
+    renderer.addMeshToShader(node.nodeIndex, renderer.getMaterials()[materialIndex].shaderSource,
                               renderer.getMaterials()[materialIndex]);
 }
 

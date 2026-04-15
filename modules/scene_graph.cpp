@@ -15,8 +15,18 @@ void SceneGraph::init(Renderer* renderer) {
 }
 
 uint32_t SceneGraph::addNode(bool internal,uint32_t parentIndex, glm::vec3 position, glm::quat rotation, glm::vec3 scale) {
-    uint32_t newIndex = lastNode + 1;
-    nodes.push_back({newIndex, internal, parentIndex, position, rotation, scale});
+    uint32_t newIndex;
+
+    if (!freeSlots.empty()) {
+        newIndex = freeSlots.front();
+        freeSlots.pop_front();
+        nodes[newIndex] = Node(newIndex, internal, parentIndex, position, rotation, scale);
+    } else {
+        newIndex = static_cast<uint32_t>(nodes.size());
+        nodes.push_back({newIndex, internal, parentIndex, position, rotation, scale});
+        lastNode = newIndex;
+    }
+
     linkChild(parentIndex, newIndex);
 
     // Compute world transform from parent
@@ -27,19 +37,42 @@ uint32_t SceneGraph::addNode(bool internal,uint32_t parentIndex, glm::vec3 posit
     allocateNodeGPU(newNode);
     TransformSystem::updateAll(newNode, nodes, renderer->getDescriptorSet(), renderer->getModelMatrixBufferIndex(),
                                renderer->assetManager.meshes, renderer->getLightsMutable());
-    lastNode++;
-    assert(lastNode == nodes.size() - 1);
-    return lastNode;
+    return newIndex;
+}
+
+void SceneGraph::killNode(uint32_t idx) {
+    Node& node = nodes[idx];
+    if (!node.alive) return;
+
+    node.alive = false;
+    unlinkChild(idx);
+    deallocateNodeGPU(node);
+    renderer->removeNodeFromRenderList(idx);
+
+    // Clear selection if this node was selected
+    if (selectedNode == idx) deSelectNode();
+
+    // Reset tree links so nothing walks into dead nodes
+    node.parentIndex = 0;
+    node.firstChild = 0;
+    node.nextSibling = 0;
+
+    freeSlots.push_back(idx);
 }
 
 void SceneGraph::removeNode(uint32_t idx) {
-    throw std::runtime_error("remove node not implemented!");
+    if (!isNodeValid(idx)) return;
+    if (idx == ROOT_INDEX) return; // never delete root
 
-    //delete the node
-    // either 
-    //      mark the slot free and next add put new node(s) in free slot(s) (problem is making sure nothing points to the empty slot)
-    // cache coherency, when reparenting should children etc shift around ?? prob ugly
-    // are EVENTS and NODES the only things that hold indexes to point to between frames?
+    // Recursively kill children first (depth-first)
+    uint32_t child = nodes[idx].firstChild;
+    while (child != 0) {
+        uint32_t next = nodes[child].nextSibling; // capture before killNode clears it
+        removeNode(child);
+        child = next;
+    }
+
+    killNode(idx);
 }
 
 void SceneGraph::allocateNodeGPU(Node& node) {
@@ -47,4 +80,8 @@ void SceneGraph::allocateNodeGPU(Node& node) {
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         node.modelMatrixIndices[i] = singleIndex;
     }
+}
+
+void SceneGraph::deallocateNodeGPU(Node& node) {
+    renderer->getDescriptorSet().freeFixedBuffer(renderer->getModelMatrixBufferIndex(), node.modelMatrixIndices[0]);
 }

@@ -1,5 +1,6 @@
 #pragma once
 #include <array>
+#include <deque>
 #include <optional>
 #include <stdexcept>
 
@@ -36,7 +37,7 @@ class SceneGraph {
     void removeNode(uint32_t index);
 
     void selectNode(uint32_t nodeIndex) {
-        if (nodeIndex <= lastNode) {
+        if (isNodeValid(nodeIndex)) {
             selectedNode = nodeIndex;
         }
     }
@@ -46,11 +47,12 @@ class SceneGraph {
     uint32_t getNodeCount() { return lastNode; } // excludes null node at 0
     uint32_t getLastNode() { return lastNode; }
 
-    bool isNodeValid(uint32_t idx) { return idx > 0 && idx <= lastNode; }
+    bool isNodeValid(uint32_t idx) { return idx > 0 && idx < nodes.size() && nodes[idx].alive; }
 
     void resetLastNode() {
         lastNode = 0;
         selectedNode = 0;
+        freeSlots.clear();
     }
 
     // Link child into parent's sibling list (firstChild/nextSibling)
@@ -135,7 +137,12 @@ class SceneGraph {
     Renderer* renderer = nullptr;
     std::vector<Node> nodes;
     uint32_t lastNode = 0;
+    std::deque<uint32_t> freeSlots;
 
     // Allocate GPU model matrix buffer for a node
     void allocateNodeGPU(Node& node);
+    // Free GPU model matrix buffer for a node
+    void deallocateNodeGPU(Node& node);
+    // Kill a single node (mark dead, unlink, free GPU, remove from render list)
+    void killNode(uint32_t idx);
 };

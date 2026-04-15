@@ -94,7 +94,8 @@ class App {
             drawGui();
 
             //draw axes visualization for every node
-            for (int i = 1; i <= renderer.sceneGraph.getNodeCount(); i++) {
+            for (int i = 1; i <= renderer.sceneGraph.getLastNode(); i++) {
+                if (!renderer.sceneGraph.isNodeValid(i)) continue;
                 Gizmos::drawAxes(renderer.sceneGraph.getNodes()[i].getTransform(), 0.1f);
             }
             //main draw loop

@@ -61,6 +61,7 @@ inline std::vector<uint32_t> castNodes(glm::vec3 origin, glm::vec3 direction, st
     std::vector<uint32_t> foundNodes;
 
     for (uint32_t i = 1; i <= lastNode; i++) {
+        if (!nodes[i].alive) continue;
         glm::vec3 nodeWorldLoc = glm::vec3(nodes[i].getWorldPosition());
         glm::vec3 toNode = nodeWorldLoc - origin;
         float projectionLength = glm::dot(toNode, dir);
@@ -86,6 +87,7 @@ inline MeshHit castMeshes(glm::vec3 origin, glm::vec3 direction, std::vector<Nod
     glm::vec3 resV2;
 
     for (uint32_t i = 1; i <= lastNode; i++) {
+        if (!nodes[i].alive) continue;
         auto& node = nodes[i];
         uint32_t meshIdx = node.getMeshIndex();
         if (meshIdx >= meshes.size())

@@ -289,13 +289,14 @@ void showMaterialEditor(MaterialEditorState& state, Renderer* renderer) {
 
             // update shader mappings for all nodes using this material
             auto& nodes = renderer->sceneGraph.getNodes();
-            for (uint32_t i = 1; i <= renderer->sceneGraph.getNodeCount(); i++) {
+            for (uint32_t i = 1; i <= renderer->sceneGraph.getLastNode(); i++) {
+                if (!renderer->sceneGraph.isNodeValid(i)) continue;
                 auto meshIdx = nodes[i].getMeshIndex();
                 if (meshIdx >= renderer->assetManager.meshes.size()) continue;
 
                 if (nodes[i].getMaterialIndex() == static_cast<uint32_t>(state.selectedIndex)) {
-                    renderer->removeMeshFromShader(&nodes[i], oldMat.shaderSource, oldMat);
-                    renderer->addMeshToShader(&nodes[i], existingMat.shaderSource, existingMat);
+                    renderer->removeMeshFromShader(i, oldMat.shaderSource, oldMat);
+                    renderer->addMeshToShader(i, existingMat.shaderSource, existingMat);
                 }
             }
 

@@ -103,7 +103,7 @@ class Renderer {
     std::vector<Material>               materials;
 
     struct RenderEntry {
-        Node*    node;
+        uint32_t nodeIndex;
         uint32_t materialIndex;       // index into materials vector
         uint32_t shaderPipelineIndex;
     };
@@ -260,8 +260,9 @@ class Renderer {
     std::vector<Material>& getMaterials();
     uint32_t addMaterial(Material material);
 
-    void addMeshToShader(Node* node, Shader shader, Material material);
-    void removeMeshFromShader(Node* node, Shader shader, Material material);
+    void addMeshToShader(uint32_t nodeIndex, Shader shader, Material material);
+    void removeMeshFromShader(uint32_t nodeIndex, Shader shader, Material material);
+    void removeNodeFromRenderList(uint32_t nodeIndex);
 
     Shader getFallBackShader();
     uint32_t getFallBackMaterial();

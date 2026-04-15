@@ -23,6 +23,16 @@ void showNodeInfo(Node& node, Renderer& renderer) {
     showNodeTransformInfo(node, renderer);
     TransformSystem::updateAll(node, renderer.sceneGraph.getNodes(), renderer.getDescriptorSet(), renderer.getModelMatrixBufferIndex(), renderer.assetManager.meshes,
                                renderer.getLightsMutable());
+
+    ImGui::Separator();
+    if (ImGui::Button("Delete Node")) {
+        uint32_t idx = node.nodeIndex;
+        renderer.sceneGraph.deSelectNode();
+        renderer.sceneGraph.removeNode(idx);
+        ImGui::End();
+        return;
+    }
+
     ImGui::End();
 }
 
@@ -52,7 +62,7 @@ void showNodeMeshInfo(Node& node, Renderer& renderer) {
 
             // remove old mesh from render queue
             if (node.meshIndex < renderer.assetManager.meshes.size() && node.materialIndex != 0xFFFFFFFF) {
-                renderer.removeMeshFromShader(&node, renderer.getMaterials()[node.materialIndex].shaderSource,
+                renderer.removeMeshFromShader(node.nodeIndex, renderer.getMaterials()[node.materialIndex].shaderSource,
                                                renderer.getMaterials()[node.materialIndex]);
             }
 
@@ -208,6 +218,7 @@ void showNodeTransformInfo(Node& node, Renderer& renderer) {
     if (ImGui::BeginCombo("Change Parent", currentParentName)) {
         auto& nodes = renderer.sceneGraph.getNodes();
         for (uint32_t i = SceneGraph::ROOT_INDEX; i <= renderer.sceneGraph.getLastNode(); i++) {
+            if (!renderer.sceneGraph.isNodeValid(i)) continue;
             if (i == node.nodeIndex || i == node.parentIndex) continue;
             // Skip non user-facing nodes
             if(nodes[i].internal) continue;
