@@ -32,6 +32,16 @@ uint32_t SceneGraph::addNode(bool internal,uint32_t parentIndex, glm::vec3 posit
     return lastNode;
 }
 
+void SceneGraph::removeNode(uint32_t idx) {
+    throw std::runtime_error("remove node not implemented!");
+
+    //delete the node
+    // either 
+    //      mark the slot free and next add put new node(s) in free slot(s) (problem is making sure nothing points to the empty slot)
+    // cache coherency, when reparenting should children etc shift around ?? prob ugly
+    // are EVENTS and NODES the only things that hold indexes to point to between frames?
+}
+
 void SceneGraph::allocateNodeGPU(Node& node) {
     uint32_t singleIndex = renderer->getDescriptorSet().allocateFixedBuffer(renderer->getModelMatrixBufferIndex(), glm::mat4(1.0f));
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {

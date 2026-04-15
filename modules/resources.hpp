@@ -563,7 +563,7 @@ class ResourceManager {
 
         // Process each shape and split by material
         for (const auto& shape : shapes) {
-            
+
             // Group faces by material ID
             std::map<int, std::vector<size_t>> facesPerMaterial;
             size_t numFaces = shape.mesh.material_ids.size();

@@ -68,6 +68,7 @@ class AssetManager {
 
             Mesh mesh;
             mesh.sourceFile = filePath;
+            mesh.name = entry.shapeName;
             mesh.vertexAllocationIndex = vertexAllocIndex;
             mesh.vertexOffset = vertexAlloc.offset;
             mesh.vertexCount = vertexAlloc.count;

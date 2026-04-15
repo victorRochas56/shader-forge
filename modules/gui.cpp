@@ -84,27 +84,26 @@ void initIMGUI(Renderer* renderer) {
 }
 
 void traverseNodeTree(Node& node, uint32_t level, uint32_t selectedNode, Renderer* renderer) {
-    std::string displayText = " ";
-    for (int i = 0; i < level; i++) {
-        displayText += " ";
-    }
+    std::string displayText = "";
+    ImGuiTreeNodeFlags flag = ImGuiTreeNodeFlags_DefaultOpen;
     if(!node.internal) {
         if (node.getIndex() == selectedNode) {
-            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(200, 200, 0, 255));
-            displayText += "|_[" + node.name + "]";
-        } else {
-            displayText += "|_ " + node.name;
+            flag |= ImGuiTreeNodeFlags_Selected;
         }
-        ImGui::Text(displayText.c_str());
-        if (node.getIndex() == selectedNode) {
-            ImGui::PopStyleColor();
+        displayText += node.name;
+        if(node.firstChild == 0) flag |= ImGuiTreeNodeFlags_Leaf;
+        if(ImGui::TreeNodeEx(displayText.c_str(),flag)){
+            if(ImGui::IsItemClicked())
+                renderer->sceneGraph.selectNode(node.getIndex());
+                
+            auto& nodes = renderer->sceneGraph.getNodes();
+            uint32_t child = node.firstChild;
+            while (child != 0) {
+                traverseNodeTree(nodes[child], level + 1, selectedNode, renderer);
+                child = nodes[child].nextSibling;
+            }
+            ImGui::TreePop();
         }
-    }
-    auto& nodes = renderer->sceneGraph.getNodes();
-    uint32_t child = node.firstChild;
-    while (child != 0) {
-        traverseNodeTree(nodes[child], level + 1, selectedNode, renderer);
-        child = nodes[child].nextSibling;
     }
 }
 

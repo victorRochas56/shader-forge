@@ -375,6 +375,7 @@ struct Image {
 
 struct Mesh {
     std::string sourceFile;
+    std::string name = "";
 
     // GPU vertex/index data (previously in SubMesh)
     uint32_t vertexAllocationIndex = 0;

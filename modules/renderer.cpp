@@ -21,12 +21,11 @@
 #include "profiling.hpp"
 #include "swapchain.hpp"
 
-// TODO gpu side material data
 // TODO clustered lights? (forward +)
 //      pass the N nearest lights to the lit shader
-// TODO point, spot and area lights
+// TODO point(done), spot and area lights
 // TODO node deletion
-// TODO other stuff idk
+// TODO multithread command buffer recording
 static const std::vector validationLayers = {"VK_LAYER_KHRONOS_validation"};
 
 Renderer::Renderer() = default;

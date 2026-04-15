@@ -69,7 +69,7 @@ void showNodeMeshInfo(Node& node, Renderer& renderer) {
                     uint32_t childIdx = renderer.sceneGraph.addNode(false, thisNodeIndex);
                     // re-fetch after addNode since nodes vector may have reallocated
                     Node& childNode = renderer.sceneGraph.getNodes()[childIdx];
-                    childNode.name = renderer.sceneGraph.getNodes()[thisNodeIndex].name + "_part" + std::to_string(i);
+                    childNode.name = renderer.assetManager.getMeshes()[meshIndices[i]].name;
                     childNode.relativePosition = renderer.assetManager.meshes[meshIndices[i]].center;
                     TransformSystem::recomputeTransforms(childNode,renderer.sceneGraph.getNodes());
                     NodeOps::assignMesh(childNode, meshIndices[i], renderer);

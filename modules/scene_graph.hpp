@@ -33,7 +33,7 @@ class SceneGraph {
     uint32_t addNode(bool internal = false, uint32_t parentIndex = ROOT_INDEX, glm::vec3 position = glm::vec3(0.0f), glm::quat rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
                      glm::vec3 scale = glm::vec3(1.0f));
 
-    void removeNode(uint32_t index) { throw std::runtime_error("remove node not implemented!"); }
+    void removeNode(uint32_t index);
 
     void selectNode(uint32_t nodeIndex) {
         if (nodeIndex <= lastNode) {
