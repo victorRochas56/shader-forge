@@ -1,7 +1,15 @@
 #include "gui.hpp"
+#include "imgui_impl_glfw.h"
+#include "imgui_impl_vulkan.h"
+#include "renderer.hpp"
+#include "input.hpp"
+#include "profiling.hpp"
 #include "material_editor_state.hpp"
 #include "pipelines.hpp"
 #include "swapchain.hpp"
+#define GLFW_INCLUDE_NONE
+#define GLFW_INCLUDE_VULKAN
+#include <GLFW/glfw3.h>
 
 static void check_vk_result(VkResult err) {
     if (err == 0)

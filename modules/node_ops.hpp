@@ -10,8 +10,4 @@ namespace NodeOps {
     void assignLight(Node& node, Light light, Renderer& renderer);
     void enableLightShadows(Light& light, const std::string& nodeName, Renderer& renderer);
     void disableLightShadows(Light& light, Renderer& renderer);
-
-    glm::mat4 calculateLightSpaceMatrix(Light& light, Camera& camera);
-    void calculatePointLightFaceMatrices(Light& light, const glm::vec3& lightPos);
-    void calculateCascadedLightSpaceMatrices(Light& light, Camera& camera, Renderer* renderer);
 }

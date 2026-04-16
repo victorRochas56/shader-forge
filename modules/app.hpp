@@ -24,6 +24,7 @@
 #include "gizmo.hpp"
 #include "profiling.hpp"
 #include "events.hpp"
+#include "material_editor_state.hpp"
 
 #define GLM_FORCE_RADIANS
 #define GLM_DEPTH_ZERO_TO_ONE
