@@ -9,16 +9,14 @@
                 "kind": "build",
                 "isDefault": true
             },
-            "problemMatcher": ["$msCompile"],
-            "dependsOn": ["CMake Configure"]
+            "problemMatcher": ["$msCompile"]
         },
         {
             "label": "CMake Build Debug",
             "type": "shell",
             "command": "cmake --build build --config Debug",
             "group": "build",
-            "problemMatcher": ["$msCompile"],
-            "dependsOn": ["CMake Configure"]
+            "problemMatcher": ["$msCompile"]
         },
         {
             "label": "CMake Configure",

@@ -24,6 +24,7 @@
 #include "gizmo.hpp"
 #include "profiling.hpp"
 #include "events.hpp"
+#include "material_editor_state.hpp"
 
 #define GLM_FORCE_RADIANS
 #define GLM_DEPTH_ZERO_TO_ONE
@@ -54,9 +55,7 @@ class App {
         renderer.getMaterials()[renderer.getFallBackMaterial()].environmentMapIndex = cubeMapIndex;
         renderer.setSkyBox(cubeMapIndex);
 
-        listen = EventSystem::addListener(renderer.sceneGraph.getRootNode().nodeIndex,"isSelected",ListenerBehaviour::CHANGED, ListenerPersistence::TOGGLE);
-        effect = EventSystem::addEffector(renderer.sceneGraph.getRootNode().nodeIndex,"relativePosition",EffectorBehaviour::ADD,&InputManager::getCurrentState().normalizedMouseDelta, false);
-        EventSystem::addEvent(EventTriggerBehaviour::FIRST,{listen},{effect},0);
+        printf("SIZE OF NODE : %zu",sizeof(Node));
         //start of render loop
         mainLoop();
     }

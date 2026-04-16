@@ -1,20 +1,7 @@
 #pragma once
-#ifndef VULKAN_HPP_DISPATCH_LOADER_DYNAMIC
-#define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1 // for raii
-#endif
-#ifndef VULKAN_HPP_NO_CONSTRUCTORS
-#define VULKAN_HPP_NO_CONSTRUCTORS 1 // for structs constructors
-#endif
 #include "imgui.h"
-#include "imgui_impl_glfw.h"
-#include "imgui_impl_vulkan.h"
-#include "renderer.hpp"
-#include "input.hpp"
-#include "profiling.hpp"
-#define GLFW_INCLUDE_NONE
-#define GLFW_INCLUDE_VULKAN
-#include <GLFW/glfw3.h>
 
+#include <string>
 #include <filesystem>
 
 #ifdef _WIN32
@@ -24,6 +11,11 @@
 #include <windows.h>
 #include <commdlg.h>
 #endif
+
+// Forward declarations
+class Renderer;
+class Node;
+struct MaterialEditorState;
 
 //helper functions for IMGUI
 
@@ -57,9 +49,6 @@ static void browseButton(const char* id, char* pathBuffer, size_t bufferSize) {
     }
 }
 #endif
-
-//forward declarations
-struct MaterialEditorState;
 void initIMGUI(Renderer* renderer);
 void traverseNodeTree(Node& node, uint32_t level, uint32_t selectedNode, Renderer* renderer);
 void showMaterialEditor(MaterialEditorState& state, Renderer* renderer);

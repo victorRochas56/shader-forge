@@ -3,6 +3,7 @@
 #include "input.hpp"
 #include "node_ops.hpp"
 #include "renderer.hpp"
+#include "gizmo.hpp"
 
 static std::unordered_map<uint32_t, NodeGuiState> guiStates;
 

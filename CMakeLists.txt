@@ -176,13 +176,17 @@ add_executable(shader-forge
     ${CMAKE_CURRENT_SOURCE_DIR}/modules/gui.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/modules/node_gui.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/modules/node_ops.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/input.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/material_editor_state.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/modules/scene_graph.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/modules/stb_implementations.cpp
     ${IMGUI_SOURCES}
 )
 
+target_precompile_headers(shader-forge PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/modules/pch.hpp)
+
 if(MSVC)
-    target_compile_options(shader-forge PRIVATE /std:c++20 /Zc:__cplusplus)
+    target_compile_options(shader-forge PRIVATE /std:c++20 /Zc:__cplusplus /MP)
 endif()
 
 target_compile_definitions(shader-forge PRIVATE
