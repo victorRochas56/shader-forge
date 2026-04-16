@@ -26,6 +26,8 @@
 // TODO point(done), spot and area lights
 // TODO node deletion
 // TODO multithread command buffer recording
+// volumetrics
+// shadow atlas
 static const std::vector validationLayers = {"VK_LAYER_KHRONOS_validation"};
 
 
