@@ -15,6 +15,7 @@ reads inputs through GLFW, stores this frame's and last frame's inputs in 2 Inpu
 struct InputState {
     glm::vec2 mousePos = glm::vec2(0);
     glm::vec2 mouseDelta = glm::vec2(0);
+    glm::vec2 normalizedMouseDelta = glm::vec2(0);
     glm::vec2 scroll = glm::vec2(0);
     int mouse_button = 0;
     int mouse_action = 0;
@@ -136,6 +137,10 @@ class InputManager {
         }*/
         inst.canMove = true;
         inst.current.mouseDelta = inst.current.mousePos - inst.previous.mousePos;
+        int w;
+        int h;
+        glfwGetWindowSize(inst.renderer->getWindow(),&w,&h);
+        inst.current.normalizedMouseDelta = glm::vec2(inst.current.mouseDelta.x / w, inst.current.mouseDelta.y / h);
         inst.previous = inst.current;
     }
 
@@ -153,7 +158,10 @@ class InputManager {
     static void setRenderer(Renderer* pRenderer) { getInstance().renderer = pRenderer; }
     static void setMaterialEditorState(MaterialEditorState* state) { getInstance().materialEditorState = state; }
 
-    InputState& getCurrentState() {return current;}
+    static InputState& getCurrentState(){
+        auto& i = getInstance();
+        return i.current;
+    }
 
   private:
     InputState current, previous;

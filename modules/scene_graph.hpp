@@ -35,14 +35,21 @@ class SceneGraph {
                      glm::vec3 scale = glm::vec3(1.0f));
 
     void removeNode(uint32_t index);
+    void syncDirtyNodes();
 
     void selectNode(uint32_t nodeIndex) {
         if (isNodeValid(nodeIndex)) {
             selectedNode = nodeIndex;
+            nodes[nodeIndex].isSelected = true;
         }
     }
 
-    void deSelectNode() { selectedNode = 0; }
+    void deSelectNode() {
+        if (isNodeValid(selectedNode)){
+            nodes[selectedNode].isSelected = false;
+        } 
+        selectedNode = 0;
+    }
 
     uint32_t getNodeCount() { return lastNode; } // excludes null node at 0
     uint32_t getLastNode() { return lastNode; }
@@ -111,7 +118,7 @@ class SceneGraph {
             child.relativeRotationEuler = glm::eulerAngles(child.relativeRotation);
         }
 
-        TransformSystem::recomputeTransforms(child, nodes);
+        child.transformDirty = true;
     }
 
     // Iterate children of a node by index via callback: fn(Node& child)

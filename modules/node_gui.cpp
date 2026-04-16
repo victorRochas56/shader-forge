@@ -3,7 +3,6 @@
 #include "input.hpp"
 #include "node_ops.hpp"
 #include "renderer.hpp"
-#include "transform_system.hpp"
 
 static std::unordered_map<uint32_t, NodeGuiState> guiStates;
 
@@ -21,8 +20,7 @@ void showNodeInfo(Node& node, Renderer& renderer) {
     }
     showNodeLightInfo(node, renderer);
     showNodeTransformInfo(node, renderer);
-    TransformSystem::updateAll(node, renderer.sceneGraph.getNodes(), renderer.getDescriptorSet(), renderer.getModelMatrixBufferIndex(), renderer.assetManager.meshes,
-                               renderer.getLightsMutable());
+    node.transformDirty = true;
 
     ImGui::Separator();
     if (ImGui::Button("Delete Node")) {
@@ -81,7 +79,7 @@ void showNodeMeshInfo(Node& node, Renderer& renderer) {
                     Node& childNode = renderer.sceneGraph.getNodes()[childIdx];
                     childNode.name = renderer.assetManager.getMeshes()[meshIndices[i]].name;
                     childNode.relativePosition = renderer.assetManager.meshes[meshIndices[i]].center;
-                    TransformSystem::recomputeTransforms(childNode,renderer.sceneGraph.getNodes());
+                    childNode.transformDirty = true;
                     NodeOps::assignMesh(childNode, meshIndices[i], renderer);
                     NodeOps::assignMaterial(childNode, renderer.getFallBackMaterial(), renderer);
                 }

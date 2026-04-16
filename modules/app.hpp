@@ -23,6 +23,7 @@
 #include "scenes.hpp"
 #include "gizmo.hpp"
 #include "profiling.hpp"
+#include "events.hpp"
 
 #define GLM_FORCE_RADIANS
 #define GLM_DEPTH_ZERO_TO_ONE
@@ -32,6 +33,9 @@
 class App {
   public:
     uint32_t start_width = 640, start_height = 360;
+    glm::vec3 addOffset = glm::vec3(0.01,0,0);
+    uint32_t listen = 0;
+    uint32_t effect = 0;
 
     void run() {
         initWindow();
@@ -42,6 +46,7 @@ class App {
         renderer.initVulkan(start_width, start_height);
         renderer.getDescriptorSet().debugDescriptorSet("after_initVulkan");
         initIMGUI(&renderer);
+        EventSystem::init(renderer.sceneGraph);
         
         //load a default environment map on startup
         uint32_t cubeMapIndex =
@@ -49,6 +54,9 @@ class App {
         renderer.getMaterials()[renderer.getFallBackMaterial()].environmentMapIndex = cubeMapIndex;
         renderer.setSkyBox(cubeMapIndex);
 
+        listen = EventSystem::addListener(renderer.sceneGraph.getRootNode().nodeIndex,"isSelected",ListenerBehaviour::CHANGED, ListenerPersistence::TOGGLE);
+        effect = EventSystem::addEffector(renderer.sceneGraph.getRootNode().nodeIndex,"relativePosition",EffectorBehaviour::ADD,&InputManager::getCurrentState().normalizedMouseDelta, false);
+        EventSystem::addEvent(EventTriggerBehaviour::FIRST,{listen},{effect},0);
         //start of render loop
         mainLoop();
     }
@@ -98,6 +106,10 @@ class App {
                 if (!renderer.sceneGraph.isNodeValid(i)) continue;
                 Gizmos::drawAxes(renderer.sceneGraph.getNodes()[i].getTransform(), 0.1f);
             }
+            EventSystem::pollListeners();
+            EventSystem::pollEvents();
+            renderer.sceneGraph.syncDirtyNodes();
+
             //main draw loop
             renderer.drawFrame();
 

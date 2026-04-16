@@ -2,6 +2,15 @@
 #include <unordered_map>
 #include "scene_graph.hpp"
 
+enum class ValueType {
+    FLOAT,
+    VEC3,
+    QUAT,
+    UINT32,
+    BOOL,
+    INT,
+};
+
 struct NodeProperty {
     size_t offset;
     ValueType type;
@@ -23,6 +32,7 @@ inline const std::unordered_map<std::string, NodeProperty>& getNodePropertyMap()
         {"meshIndex",             {offsetof(Node, meshIndex),             ValueType::UINT32}},
         {"materialIndex",         {offsetof(Node, materialIndex),         ValueType::UINT32}},
         {"lightIndex",            {offsetof(Node, lightIndex),            ValueType::UINT32}},
+        {"isSelected",            {offsetof(Node, isSelected),            ValueType::BOOL}}
     };
     return map;
 }
@@ -34,13 +44,11 @@ enum class ListenerBehaviour {
     MORE,
 };
 
-enum class ValueType {
-    FLOAT,
-    VEC3,
-    QUAT,
-    UINT32,
-    BOOL,
-    INT,
+
+enum class ListenerPersistence {
+    RESET,   // triggered for one frame only
+    LATCH,   // once triggered, stay triggered permanently
+    TOGGLE,  // flip triggered on/off each time condition is met
 };
 
 struct Listener {
@@ -48,7 +56,7 @@ struct Listener {
     ValueType type;
     uint32_t nodeIdx = 0;
     bool triggered = false;
-    bool latch = false;       // once triggered, stay triggered permanently?
+    ListenerPersistence persistence = ListenerPersistence::RESET;
     bool dead = false;        // no longer pointing to something valid
     size_t offset;
     void* param;
@@ -68,35 +76,48 @@ struct Listener {
             return;
         }
         T* value = reinterpret_cast<T*>(reinterpret_cast<char*>(&sceneGraph.getNode(nodeIdx)) + offset);
-        if(latch && triggered)
+        if(persistence == ListenerPersistence::LATCH && triggered)
             return;
-        else{ triggered = false; }
+
+        bool conditionMet = false;
         switch (behaviour)
         {
         case ListenerBehaviour::CHANGED:
             if(*static_cast<T*>(prevValue) != *value) {
                 *static_cast<T*>(prevValue) = *value;
-                triggered = true;
+                conditionMet = true;
             }
             break;
         case ListenerBehaviour::EQUALS:
             if(*value == *static_cast<T*>(param))
-                triggered = true;
+                conditionMet = true;
             break;
         case ListenerBehaviour::LESS:
             if constexpr (std::is_arithmetic_v<T>) {
                 if(*value < *static_cast<T*>(param))
-                    triggered = true;
+                    conditionMet = true;
             }
             break;
         case ListenerBehaviour::MORE:
             if constexpr (std::is_arithmetic_v<T>) {
                 if(*value > *static_cast<T*>(param))
-                    triggered = true;
+                    conditionMet = true;
             }
             break;
-
         default:
+            break;
+        }
+
+        switch (persistence)
+        {
+        case ListenerPersistence::RESET:
+            triggered = conditionMet;
+            break;
+        case ListenerPersistence::LATCH:
+            if(conditionMet) triggered = true;
+            break;
+        case ListenerPersistence::TOGGLE:
+            if(conditionMet) triggered = !triggered;
             break;
         }
     };
@@ -114,8 +135,8 @@ struct Effector {
     ValueType type;
     uint32_t nodeIdx;
     bool active = false;     // has this effector been triggered?
-    bool singleUse = true;   // fire once then deactivate, or re-arm for next trigger?
-    bool dead = false;        // no longer pointing to something valid
+    bool singleUse = true;   // fire once then deactivate
+    bool dead = false;       // no longer pointing to something valid
     size_t offset;
     void* param;
 
@@ -126,7 +147,7 @@ struct Effector {
             dead = true;
             return;
         }
-        T* targetValue = (char*)&(sceneGraph.getNode(nodeIdx)) + offset;
+        T* targetValue = (T*)((char*)&(sceneGraph.getNode(nodeIdx)) + offset);
         switch (behaviour)
         {
         case EffectorBehaviour::SET:
@@ -145,6 +166,7 @@ struct Effector {
         default:
             break;
         }
+        sceneGraph.getNode(nodeIdx).transformDirty = true;
     }
 };
 
@@ -182,7 +204,7 @@ class EventSystem {
         e.events.emplace_back();
     }
 
-    static uint32_t addListener(uint32_t nodeIdx, const std::string& valueName, ListenerBehaviour behaviour, void* behaviourParam = nullptr) {
+    static uint32_t addListener(uint32_t nodeIdx, const std::string& valueName, ListenerBehaviour behaviour, ListenerPersistence persistence = ListenerPersistence::RESET, void* behaviourParam = nullptr) {
         auto& e = instance();
         if(nodeIdx == 0) return 0;
         auto& propMap = getNodePropertyMap();
@@ -193,6 +215,7 @@ class EventSystem {
         uint32_t idx = static_cast<uint32_t>(e.listeners.size());
         Listener listener{};
         listener.behaviour = behaviour;
+        listener.persistence = persistence;
         listener.type = prop.type;
         listener.nodeIdx = nodeIdx;
         listener.offset = prop.offset;
@@ -205,7 +228,7 @@ class EventSystem {
         return idx;
     }
 
-    static uint32_t addEffector(uint32_t nodeIdx, const std::string& valueName, EffectorBehaviour behaviour, void* effectorParam) {
+    static uint32_t addEffector(uint32_t nodeIdx, const std::string& valueName, EffectorBehaviour behaviour, void* effectorParam, bool singleUse = true) {
         auto& e = instance();
         if(nodeIdx == 0) return 0;
         auto& propMap = getNodePropertyMap();
@@ -216,6 +239,7 @@ class EventSystem {
         uint32_t idx = static_cast<uint32_t>(e.effectors.size());
         Effector effector{};
         effector.behaviour = behaviour;
+        effector.singleUse = singleUse;
         effector.type = prop.type;
         effector.nodeIdx = nodeIdx;
         effector.offset = prop.offset;
@@ -360,6 +384,8 @@ class EventSystem {
                     }
                     if(effector.singleUse)
                         effector.dead = true;
+                    else
+                        effector.active = false; // re-arm for next frame
                 }
             } else {
                 // event not triggered — re-arm non-single-use effectors

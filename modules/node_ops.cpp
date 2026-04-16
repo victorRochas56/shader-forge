@@ -1,6 +1,5 @@
 #include "node_ops.hpp"
 #include "renderer.hpp"
-#include "transform_system.hpp"
 
 namespace NodeOps {
 
@@ -110,8 +109,7 @@ void assignLight(Node& node, Light light, Renderer& renderer) {
     node.lightIndex = renderer.getDescriptorSet().allocateFixedBuffer<GPULight>(renderer.getLightBufferIndex(), light.toGPU());
     renderer.addLight(node.lightIndex, light);
     std::cout << "added light at index : " << node.lightIndex << std::endl;
-    TransformSystem::updateAll(node, renderer.sceneGraph.getNodes(), renderer.getDescriptorSet(), renderer.getModelMatrixBufferIndex(),
-                               renderer.assetManager.meshes, renderer.getLightsMutable());
+    node.transformDirty = true;
 }
 
 

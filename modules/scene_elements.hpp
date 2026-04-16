@@ -100,7 +100,9 @@ class Node { // need to be able to hide nodes from tree for internal logic
     glm::vec3 boundingBoxMax = glm::vec3(0.0f);
     bool boundingBoxValid = false;
     bool internal = false;
+    bool isSelected = false;
     bool alive = true;
+    bool transformDirty = false;
 };
 
 struct Camera {
