@@ -7,6 +7,7 @@
 #include "material_editor_state.hpp"
 #include "pipelines.hpp"
 #include "swapchain.hpp"
+#include "scnees.hpp"
 #define GLFW_INCLUDE_NONE
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
@@ -379,6 +380,55 @@ void showActionMenu(uint32_t context, Renderer* renderer, float posX, float posY
         renderer->sceneGraph.addNode(false, SceneGraph::ROOT_INDEX, origin + direction);
     }
 
+    ImGui::End();
+}
+
+void showToggles(Renderer* renderer){
+    ImGui::Begin("Toggles");
+    ImGui::SliderInt("ImageMip",&renderer->imageVisMipLevel,0,6);
+    if(ImGui::Button("Depth Buffer")){
+        renderer->imageVisFlags ^= ImageVisFlags::LINEARIZE;
+    }
+    if(ImGui::Button("SSAO")){
+        renderer->toggleSSAO();
+    }
+    if(renderer->enableSSAO){
+        ImGui::SliderFloat("AO Radius",&renderer->ssaoRadius,0.01f,10.0f);
+        ImGui::SliderFloat("AO Bias",&renderer->ssaoBias,0.01f,0.1f);
+        ImGui::SliderFloat("AO Power",&renderer->ssaoPower,0.01f,5.0f);
+    }
+    if(ImGui::Button("SSR")){
+        renderer->toggleSSR();
+    }
+    if(renderer->enableSSR){
+        ImGui::SliderInt("Max Steps",&renderer->ssrMaxSteps,16,128);
+        ImGui::SliderFloat("Thickness",&renderer->ssrThickness,0.01f,5.0f);
+        ImGui::SliderFloat("Roughness Threshold",&renderer->ssrRoughnessThreshold,0.0f,1.0f);
+        ImGui::SliderFloat("Temporal Blend",&renderer->ssrTemporalBlend,0.01f,1.0f);
+        if(ImGui::SliderFloat("Resolution Scale",&renderer->ssrResolutionScale,0.25f,1.0f)){
+            renderer->ssrResolutionDirty = true;
+        }
+    }
+    if(ImGui::Button("Show BBOXes")){
+        renderer->toggleBBOXes();
+    }
+    ImGui::End();
+
+}
+
+void showScenesMenu(SceneManager* sceneManager){
+    ImGui::Begin("Scene Manager");
+    if(ImGui::Button("Save Scene")){
+        sceneManager->saveScene("scene.scn", renderer);
+    }
+    ImGui::SameLine();
+    if(ImGui::Button("Load Scene")){
+        sceneManager->loadScene("scene.scn", renderer);
+    }
+    ImGui::SameLine();
+    if(ImGui::Button("Clear Scene")){
+        sceneManager->clearScene(renderer);
+    }
     ImGui::End();
 }
 

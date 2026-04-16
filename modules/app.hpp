@@ -122,79 +122,26 @@ class App {
     }
 
     void drawGui() {
-
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
-        ImGui::Begin("frame time");
-        ImGui::Text("%.2f ms (avg %d frames)", Tracer::getTrace("frame time").duration * 1000.0, 1);
-        ImGui::End();
-
         ImGui::Begin("node tree");
         traverseNodeTree(renderer.sceneGraph.getRootNode(), 0, renderer.sceneGraph.selectedNode, &renderer);
         ImGui::End();
-        if (renderer.sceneGraph.selectedNode != 0) {
-            showNodeInfo(renderer.sceneGraph.getNodes()[renderer.sceneGraph.selectedNode], renderer);
-        }
+        
+        showNodeInfo(renderer.sceneGraph.getNodes()[renderer.sceneGraph.selectedNode], renderer);
         if (InputManager::getInstance().contextMenuShown) {
             showActionMenu(0, &renderer, InputManager::getInstance().contextMenuPinX, InputManager::getInstance().contextMenuPinY);
         }
-
-        showMaterialEditor(materialEditorState, &renderer);
         
+        showMaterialEditor(materialEditorState, &renderer);
         showImageViewList(&renderer);
-
         showBufferAllocs(&renderer);
         showDebugWindow(&renderer);
         showTraces();
-
-        ImGui::Begin("Toggles");
-        ImGui::SliderInt("ImageMip",&renderer.imageVisMipLevel,0,6);
-        if(ImGui::Button("Depth Buffer")){
-            renderer.imageVisFlags ^= ImageVisFlags::LINEARIZE;
-        }
-        if(ImGui::Button("SSAO")){
-            renderer.toggleSSAO();
-        }
-        if(renderer.enableSSAO){
-            ImGui::SliderFloat("AO Radius",&renderer.ssaoRadius,0.01f,10.0f);
-            ImGui::SliderFloat("AO Bias",&renderer.ssaoBias,0.01f,0.1f);
-            ImGui::SliderFloat("AO Power",&renderer.ssaoPower,0.01f,5.0f);
-        }
-        if(ImGui::Button("SSR")){
-            renderer.toggleSSR();
-        }
-        if(renderer.enableSSR){
-            ImGui::SliderInt("Max Steps",&renderer.ssrMaxSteps,16,128);
-            ImGui::SliderFloat("Thickness",&renderer.ssrThickness,0.01f,5.0f);
-            ImGui::SliderFloat("Roughness Threshold",&renderer.ssrRoughnessThreshold,0.0f,1.0f);
-            ImGui::SliderFloat("Temporal Blend",&renderer.ssrTemporalBlend,0.01f,1.0f);
-            if(ImGui::SliderFloat("Resolution Scale",&renderer.ssrResolutionScale,0.25f,1.0f)){
-                renderer.ssrResolutionDirty = true;
-            }
-        }
-        if(ImGui::Button("Show BBOXes")){
-            renderer.toggleBBOXes();
-        }
-        ImGui::End();
-
-
-        //scenes.hpp
-        ImGui::Begin("Scene Manager");
-        if(ImGui::Button("Save Scene")){
-            sceneManager.saveScene("scene.scn", renderer);
-        }
-        ImGui::SameLine();
-        if(ImGui::Button("Load Scene")){
-            sceneManager.loadScene("scene.scn", renderer);
-        }
-        ImGui::SameLine();
-        if(ImGui::Button("Clear Scene")){
-            sceneManager.clearScene(renderer);
-        }
-
-        ImGui::End();
+        showToggles(&renderer);
+        showScenesMenu(&sceneManager);
         ImGui::Render();
     }
 

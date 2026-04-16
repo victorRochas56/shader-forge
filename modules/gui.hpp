@@ -14,6 +14,7 @@
 
 // Forward declarations
 class Renderer;
+class SceneManager;
 class Node;
 struct MaterialEditorState;
 
@@ -54,6 +55,8 @@ void traverseNodeTree(Node& node, uint32_t level, uint32_t selectedNode, Rendere
 void showMaterialEditor(MaterialEditorState& state, Renderer* renderer);
 void showImageViewList(Renderer* renderer);
 void showActionMenu(uint32_t context, Renderer* renderer, float posX, float posY);
+void showToggles(Renderer* renderer);
+void showScenesMenu(SceneManager* sceneManager);
 void showBufferAllocs(Renderer* renderer);
 void showDebugWindow(Renderer* renderer);
 void showTraces();

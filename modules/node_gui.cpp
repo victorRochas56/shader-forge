@@ -10,6 +10,9 @@ static std::unordered_map<uint32_t, NodeGuiState> guiStates;
 NodeGuiState& getNodeGuiState(uint32_t nodeIndex) { return guiStates[nodeIndex]; }
 
 void showNodeInfo(Node& node, Renderer& renderer) {
+    if (renderer.sceneGraph.selectedNode == 0)
+        return;
+        
     auto& state = getNodeGuiState(node.nodeIndex);
 
     ImGui::Begin("selected node");
