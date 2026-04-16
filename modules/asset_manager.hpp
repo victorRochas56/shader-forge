@@ -10,6 +10,14 @@
 #include "resources.hpp"
 #include "descriptor_sets.hpp"
 
+struct MeshLoadResult {
+    std::vector<uint32_t> meshIndices;
+    // source material ID -> list of mesh indices that use it
+    std::map<int, std::vector<uint32_t>> meshesByMaterial;
+    // source material ID -> material name from the file
+    std::map<int, std::string> materialNames;
+};
+
 class AssetManager {
   public:
     std::vector<Mesh>                   meshes;
@@ -24,10 +32,10 @@ class AssetManager {
         this->indexBufferIndex = indexBufferIndex;
     }
 
-    // Loads an OBJ and returns a vector of mesh indices (one per shape/material group).
+    // Loads an OBJ and returns mesh indices plus material grouping info.
     // Each mesh is a single draw unit with its own vertex/index data.
-    std::vector<uint32_t> loadMeshFromFile(std::string filePath) {
-        std::vector<uint32_t> result;
+    MeshLoadResult loadMeshFromFile(std::string filePath) {
+        MeshLoadResult result;
 
 #if DEBUG == 1
         std::cout << "Loading mesh from " << filePath << std::endl;
@@ -83,7 +91,12 @@ class AssetManager {
             mesh.cpuIndices = indices;
 
             meshes.push_back(std::move(mesh));
-            result.push_back(static_cast<uint32_t>(meshes.size() - 1));
+            uint32_t meshIdx = static_cast<uint32_t>(meshes.size() - 1);
+            result.meshIndices.push_back(meshIdx);
+            result.meshesByMaterial[entry.materialId].push_back(meshIdx);
+            if (result.materialNames.find(entry.materialId) == result.materialNames.end()) {
+                result.materialNames[entry.materialId] = entry.materialName;
+            }
         }
 
         return result;

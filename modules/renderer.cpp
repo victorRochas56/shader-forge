@@ -16,6 +16,7 @@
 #include "imgui_impl_vulkan.h"
 
 #include "gizmo.hpp"
+#include "node_ops.hpp"
 #include "pipelines.hpp"
 #include "profiling.hpp"
 #include "swapchain.hpp"
@@ -367,10 +368,10 @@ void Renderer::removeMeshFromShader(uint32_t nodeIndex, Shader shader, Material 
     for (uint32_t i = 0; i < materials.size(); i++) {
         if (materials[i] == material) { matIdx = i; break; }
     }
-    for (auto it = renderEntries.begin(); it != renderEntries.end(); ++it) {
-        if (it->nodeIndex == nodeIndex &&
-            it->materialIndex == matIdx && it->shaderPipelineIndex == shader.pipelineIndex) {
-            *it = renderEntries.back();
+    for (size_t i = 0; i < renderEntries.size(); ++i) {
+        if (renderEntries[i].nodeIndex == nodeIndex &&
+            renderEntries[i].materialIndex == matIdx && renderEntries[i].shaderPipelineIndex == shader.pipelineIndex) {
+            renderEntries[i] = renderEntries.back();
             renderEntries.pop_back();
             renderListDirty = true;
             return;
@@ -378,13 +379,13 @@ void Renderer::removeMeshFromShader(uint32_t nodeIndex, Shader shader, Material 
     }
 }
 void Renderer::removeNodeFromRenderList(uint32_t nodeIndex) {
-    for (auto it = renderEntries.begin(); it != renderEntries.end();) {
-        if (it->nodeIndex == nodeIndex) {
-            *it = renderEntries.back();
+    for (size_t i = 0; i < renderEntries.size();) {
+        if (renderEntries[i].nodeIndex == nodeIndex) {
+            renderEntries[i] = renderEntries.back();
             renderEntries.pop_back();
             renderListDirty = true;
         } else {
-            ++it;
+            ++i;
         }
     }
 }
@@ -397,6 +398,12 @@ std::map<uint32_t, Light>& Renderer::getLightsMutable() { return lights; }
 void Renderer::addLight(uint32_t index, Light light) { lights[index] = light; }
 Light& Renderer::getLight(uint32_t index) { return lights[index]; }
 void Renderer::clearLights() {
+    // Free shadow map textures before clearing
+    for (auto& [index, light] : lights) {
+        if (light.castsShadows) {
+            NodeOps::disableLightShadows(light, *this);
+        }
+    }
     descriptorSet->clearFixedBuffer(lightBufferIndex);
     lights.clear();
 }

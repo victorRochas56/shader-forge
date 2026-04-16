@@ -429,7 +429,8 @@ class SceneManager {
             try {
                 // Load the file once and cache the resulting mesh indices
                 if (loadedMeshFiles.find(meshPath) == loadedMeshFiles.end()) {
-                    loadedMeshFiles[meshPath] = renderer.assetManager.loadMeshFromFile(meshPath);
+                    auto loadResult = renderer.assetManager.loadMeshFromFile(meshPath);
+                    loadedMeshFiles[meshPath] = std::move(loadResult.meshIndices);
                 }
                 auto& meshIndices = loadedMeshFiles[meshPath];
 

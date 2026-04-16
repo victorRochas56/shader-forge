@@ -58,6 +58,7 @@ void showNodeMeshInfo(Node& node, Renderer& renderer) {
         ImGui::SetNextItemWidth(160);
         ImGui::InputText("mesh source", state.textBuffer, sizeof(state.textBuffer));
         browseButton("mesh", state.textBuffer, sizeof(state.textBuffer));
+        ImGui::Checkbox("Keep material assignments", &state.keepMaterialAssignments);
 
         if (ImGui::Button("Confirm")) {
             uint32_t thisNodeIndex = node.nodeIndex; // capture before any vector reallocation
@@ -68,15 +69,44 @@ void showNodeMeshInfo(Node& node, Renderer& renderer) {
                                                renderer.getMaterials()[node.materialIndex]);
             }
 
-            auto meshIndices = renderer.assetManager.loadMeshFromFile(std::string(state.textBuffer));
+            auto loadResult = renderer.assetManager.loadMeshFromFile(std::string(state.textBuffer));
+            auto& meshIndices = loadResult.meshIndices;
+
+            // Build material mapping: source material ID -> renderer material index
+            // When keepMaterialAssignments is on, create a dummy material per source material
+            std::map<int, uint32_t> matIdToRendererIdx;
+            if (state.keepMaterialAssignments) {
+                Material baseMat = renderer.getMaterials()[renderer.getFallBackMaterial()];
+                for (auto& [srcMatId, name] : loadResult.materialNames) {
+                    Material mat = baseMat;
+                    mat.name = name;
+                    uint32_t matIdx = renderer.addMaterial(mat);
+                    matIdToRendererIdx[srcMatId] = matIdx;
+                }
+            }
 
             if (meshIndices.size() == 1) {
                 // Single mesh — assign directly to this node
                 auto& n = renderer.sceneGraph.getNodes()[thisNodeIndex];
                 NodeOps::assignMesh(n, meshIndices[0], renderer);
-                NodeOps::assignMaterial(n, renderer.getFallBackMaterial(), renderer);
+                uint32_t matIdx = renderer.getFallBackMaterial();
+                if (state.keepMaterialAssignments && !loadResult.meshesByMaterial.empty()) {
+                    int srcMatId = loadResult.meshesByMaterial.begin()->first;
+                    if (matIdToRendererIdx.count(srcMatId))
+                        matIdx = matIdToRendererIdx[srcMatId];
+                }
+                NodeOps::assignMaterial(n, matIdx, renderer);
             } else if (meshIndices.size() > 1) {
                 // Multiple mesh entries — create child nodes for each
+                // Build reverse lookup: mesh index -> source material ID
+                std::map<uint32_t, int> meshToSrcMat;
+                if (state.keepMaterialAssignments) {
+                    for (auto& [srcMatId, idxList] : loadResult.meshesByMaterial) {
+                        for (uint32_t idx : idxList)
+                            meshToSrcMat[idx] = srcMatId;
+                    }
+                }
+
                 for (size_t i = 0; i < meshIndices.size(); i++) {
                     uint32_t childIdx = renderer.sceneGraph.addNode(false, thisNodeIndex);
                     // re-fetch after addNode since nodes vector may have reallocated
@@ -85,12 +115,20 @@ void showNodeMeshInfo(Node& node, Renderer& renderer) {
                     childNode.relativePosition = renderer.assetManager.meshes[meshIndices[i]].center;
                     childNode.transformDirty = true;
                     NodeOps::assignMesh(childNode, meshIndices[i], renderer);
-                    NodeOps::assignMaterial(childNode, renderer.getFallBackMaterial(), renderer);
+
+                    uint32_t matIdx = renderer.getFallBackMaterial();
+                    if (state.keepMaterialAssignments) {
+                        auto it = meshToSrcMat.find(meshIndices[i]);
+                        if (it != meshToSrcMat.end() && matIdToRendererIdx.count(it->second))
+                            matIdx = matIdToRendererIdx[it->second];
+                    }
+                    NodeOps::assignMaterial(childNode, matIdx, renderer);
                 }
             }
 #if DEBUG == 1
             std::cout << "loaded " << meshIndices.size() << " mesh(es)" << std::endl;
 #endif
+            state.keepMaterialAssignments = false;
             state.changingMesh = false;
             // node reference is now potentially invalid — return early
             return;

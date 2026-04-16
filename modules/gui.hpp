@@ -56,7 +56,7 @@ void showMaterialEditor(MaterialEditorState& state, Renderer* renderer);
 void showImageViewList(Renderer* renderer);
 void showActionMenu(uint32_t context, Renderer* renderer, float posX, float posY);
 void showToggles(Renderer* renderer);
-void showScenesMenu(SceneManager* sceneManager);
+void showScenesMenu(Renderer* renderer, SceneManager* sceneManager);
 void showBufferAllocs(Renderer* renderer);
 void showDebugWindow(Renderer* renderer);
 void showTraces();

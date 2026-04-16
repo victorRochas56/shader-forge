@@ -10,6 +10,7 @@ struct NodeGuiState {
     char textBuffer[256] = {};
     std::vector<std::string> materialList;
     bool lightShadow = false;
+    bool keepMaterialAssignments = false;
 };
 
 NodeGuiState& getNodeGuiState(uint32_t nodeIndex);

@@ -141,7 +141,7 @@ class App {
         showDebugWindow(&renderer);
         showTraces();
         showToggles(&renderer);
-        showScenesMenu(&sceneManager);
+        showScenesMenu(&renderer, &sceneManager);
         ImGui::Render();
     }
 
