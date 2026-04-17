@@ -10,7 +10,7 @@ static std::unordered_map<uint32_t, NodeGuiState> guiStates;
 NodeGuiState& getNodeGuiState(uint32_t nodeIndex) { return guiStates[nodeIndex]; }
 
 void showNodeInfo(Node& node, Renderer& renderer) {
-    if (renderer.sceneGraph.selectedNode == 0)
+    if (renderer.scene.sceneGraph.selectedNode == 0)
         return;
         
     auto& state = getNodeGuiState(node.nodeIndex);
@@ -29,8 +29,8 @@ void showNodeInfo(Node& node, Renderer& renderer) {
     ImGui::Separator();
     if (ImGui::Button("Delete Node")) {
         uint32_t idx = node.nodeIndex;
-        renderer.sceneGraph.deSelectNode();
-        renderer.sceneGraph.removeNode(idx);
+        renderer.scene.sceneGraph.deSelectNode();
+        renderer.scene.sceneGraph.removeNode(idx);
         ImGui::End();
         return;
     }
@@ -42,8 +42,8 @@ void showNodeMeshInfo(Node& node, Renderer& renderer) {
     auto& state = getNodeGuiState(node.nodeIndex);
 
     if (!state.changingMesh) {
-        if (node.meshIndex < renderer.assetManager.meshes.size()) {
-            if (ImGui::Button(renderer.assetManager.meshes[node.meshIndex].sourceFile.c_str())) {
+        if (node.meshIndex < renderer.scene.assetManager.meshes.size()) {
+            if (ImGui::Button(renderer.scene.assetManager.meshes[node.meshIndex].sourceFile.c_str())) {
                 state.changingMesh = true;
                 state.textBuffer[0] = '\0';
             }
@@ -64,32 +64,32 @@ void showNodeMeshInfo(Node& node, Renderer& renderer) {
             uint32_t thisNodeIndex = node.nodeIndex; // capture before any vector reallocation
 
             // remove old mesh from render queue
-            if (node.meshIndex < renderer.assetManager.meshes.size() && node.materialIndex != 0xFFFFFFFF) {
-                renderer.removeMeshFromShader(node.nodeIndex, renderer.getMaterials()[node.materialIndex].shaderSource,
-                                               renderer.getMaterials()[node.materialIndex]);
+            if (node.meshIndex < renderer.scene.assetManager.meshes.size() && node.materialIndex != 0xFFFFFFFF) {
+                renderer.removeMeshFromShader(node.nodeIndex, renderer.scene.getMaterials()[node.materialIndex].shaderSource,
+                                               renderer.scene.getMaterials()[node.materialIndex]);
             }
 
-            auto loadResult = renderer.assetManager.loadMeshFromFile(std::string(state.textBuffer));
+            auto loadResult = renderer.scene.assetManager.loadMeshFromFile(std::string(state.textBuffer));
             auto& meshIndices = loadResult.meshIndices;
 
             // Build material mapping: source material ID -> renderer material index
             // When keepMaterialAssignments is on, create a dummy material per source material
             std::map<int, uint32_t> matIdToRendererIdx;
             if (state.keepMaterialAssignments) {
-                Material baseMat = renderer.getMaterials()[renderer.getFallBackMaterial()];
+                Material baseMat = renderer.scene.getMaterials()[renderer.scene.getFallBackMaterial()];
                 for (auto& [srcMatId, name] : loadResult.materialNames) {
                     Material mat = baseMat;
                     mat.name = name;
-                    uint32_t matIdx = renderer.addMaterial(mat);
+                    uint32_t matIdx = renderer.scene.addMaterial(mat);
                     matIdToRendererIdx[srcMatId] = matIdx;
                 }
             }
 
             if (meshIndices.size() == 1) {
                 // Single mesh — assign directly to this node
-                auto& n = renderer.sceneGraph.getNodes()[thisNodeIndex];
+                auto& n = renderer.scene.sceneGraph.getNodes()[thisNodeIndex];
                 NodeOps::assignMesh(n, meshIndices[0], renderer);
-                uint32_t matIdx = renderer.getFallBackMaterial();
+                uint32_t matIdx = renderer.scene.getFallBackMaterial();
                 if (state.keepMaterialAssignments && !loadResult.meshesByMaterial.empty()) {
                     int srcMatId = loadResult.meshesByMaterial.begin()->first;
                     if (matIdToRendererIdx.count(srcMatId))
@@ -108,15 +108,15 @@ void showNodeMeshInfo(Node& node, Renderer& renderer) {
                 }
 
                 for (size_t i = 0; i < meshIndices.size(); i++) {
-                    uint32_t childIdx = renderer.sceneGraph.addNode(false, thisNodeIndex);
+                    uint32_t childIdx = renderer.scene.sceneGraph.addNode(false, thisNodeIndex);
                     // re-fetch after addNode since nodes vector may have reallocated
-                    Node& childNode = renderer.sceneGraph.getNodes()[childIdx];
-                    childNode.name = renderer.assetManager.getMeshes()[meshIndices[i]].name;
-                    childNode.relativePosition = renderer.assetManager.meshes[meshIndices[i]].center;
+                    Node& childNode = renderer.scene.sceneGraph.getNodes()[childIdx];
+                    childNode.name = renderer.scene.assetManager.getMeshes()[meshIndices[i]].name;
+                    childNode.relativePosition = renderer.scene.assetManager.meshes[meshIndices[i]].center;
                     childNode.transformDirty = true;
                     NodeOps::assignMesh(childNode, meshIndices[i], renderer);
 
-                    uint32_t matIdx = renderer.getFallBackMaterial();
+                    uint32_t matIdx = renderer.scene.getFallBackMaterial();
                     if (state.keepMaterialAssignments) {
                         auto it = meshToSrcMat.find(meshIndices[i]);
                         if (it != meshToSrcMat.end() && matIdToRendererIdx.count(it->second))
@@ -138,7 +138,7 @@ void showNodeMeshInfo(Node& node, Renderer& renderer) {
             state.changingMesh = false;
         }
     }
-    if (node.meshIndex < renderer.assetManager.meshes.size()) {
+    if (node.meshIndex < renderer.scene.assetManager.meshes.size()) {
         if (ImGui::Button("Assign Materials")) {
             state.changingMaterials = !state.changingMaterials;
         }
@@ -148,10 +148,10 @@ void showNodeMeshInfo(Node& node, Renderer& renderer) {
 void showNodeMaterialDialog(Node& node, Renderer& renderer) {
     auto& state = getNodeGuiState(node.nodeIndex);
 
-    if (state.materialList.size() != renderer.getMaterials().size()) {
+    if (state.materialList.size() != renderer.scene.getMaterials().size()) {
         state.materialList.clear();
-        for (int i = 0; i < renderer.getMaterials().size(); i++) {
-            const auto& material = renderer.getMaterials()[i];
+        for (int i = 0; i < renderer.scene.getMaterials().size(); i++) {
+            const auto& material = renderer.scene.getMaterials()[i];
             std::string textOption = material.name.empty() ? ("Material " + std::to_string(i)) : material.name;
             state.materialList.push_back(textOption);
         }
@@ -184,8 +184,8 @@ void showNodeMaterialDialog(Node& node, Renderer& renderer) {
 void showNodeLightInfo(Node& node, Renderer& renderer) {
     auto& state = getNodeGuiState(node.nodeIndex);
 
-    if (node.lightIndex != MAX_LIGHTS && node.lightIndex < renderer.getLights().size()) {
-        auto& light = renderer.getLight(node.lightIndex);
+    if (node.lightIndex != MAX_LIGHTS && node.lightIndex < renderer.scene.getLights().size()) {
+        auto& light = renderer.scene.getLight(node.lightIndex);
         const char* lightTypeNames[] = {"Point", "Directional", "Spot", "Area"};
         if (ImGui::BeginCombo("Light Type", lightTypeNames[static_cast<int>(light.type)])) {
             for (int i = 0; i < static_cast<int>(LightType::COUNT); i++) {
@@ -234,7 +234,7 @@ void showNodeLightInfo(Node& node, Renderer& renderer) {
         }
         // Update light in all frame sections of the buffer
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-            renderer.getDescriptorSet().updateFixedBufferWithOffset<GPULight>(renderer.getLightBufferIndex(), node.lightIndex, light.toGPU(), i);
+            (*renderer.bindless.descriptorSet).updateFixedBufferWithOffset<GPULight>(renderer.getLightBufferIndex(), node.lightIndex, light.toGPU(), i);
         }
 
         Gizmos::drawSphere(node.getWorldPosition(),light.range, glm::vec4(1,1,0,1));
@@ -253,13 +253,13 @@ void showNodeTransformInfo(Node& node, Renderer& renderer) {
     Gizmos::drawSDFArrow(node.getWorldPosition(),node.up(),0.01f,0.25f,glm::vec4(0,1,0,1));
     Gizmos::drawSDFArrow(node.getWorldPosition(),node.forward(),0.01f,0.25f,glm::vec4(0,0,1,1));
 
-    ImGui::Text("Parent: %s", renderer.sceneGraph.getNode(node.parentIndex).name.c_str());
+    ImGui::Text("Parent: %s", renderer.scene.sceneGraph.getNode(node.parentIndex).name.c_str());
 
-    const char* currentParentName = renderer.sceneGraph.getNode(node.parentIndex).name.c_str();
+    const char* currentParentName = renderer.scene.sceneGraph.getNode(node.parentIndex).name.c_str();
     if (ImGui::BeginCombo("Change Parent", currentParentName)) {
-        auto& nodes = renderer.sceneGraph.getNodes();
-        for (uint32_t i = SceneGraph::ROOT_INDEX; i <= renderer.sceneGraph.getLastNode(); i++) {
-            if (!renderer.sceneGraph.isNodeValid(i)) continue;
+        auto& nodes = renderer.scene.sceneGraph.getNodes();
+        for (uint32_t i = SceneGraph::ROOT_INDEX; i <= renderer.scene.sceneGraph.getLastNode(); i++) {
+            if (!renderer.scene.sceneGraph.isNodeValid(i)) continue;
             if (i == node.nodeIndex || i == node.parentIndex) continue;
             // Skip non user-facing nodes
             if(nodes[i].internal) continue;
@@ -271,7 +271,7 @@ void showNodeTransformInfo(Node& node, Renderer& renderer) {
             if (isDescendant) continue;
 
             if (ImGui::Selectable(nodes[i].name.c_str(), false)) {
-                renderer.sceneGraph.reparent(node.nodeIndex, i, true);
+                renderer.scene.sceneGraph.reparent(node.nodeIndex, i, true);
             }
         }
         ImGui::EndCombo();
@@ -323,7 +323,7 @@ void showNodeTransformInfo(Node& node, Renderer& renderer) {
         glm::quat desiredWorldRotation = qZ * qY * qX;
 
         if (node.parentIndex != 0) {
-            auto& nodes = renderer.sceneGraph.getNodes();
+            auto& nodes = renderer.scene.sceneGraph.getNodes();
             glm::quat parentWorldRotation = nodes[node.parentIndex].getWorldRotation();
             node.relativeRotation = glm::inverse(parentWorldRotation) * desiredWorldRotation;
         } else {
@@ -352,7 +352,7 @@ void showNodeTransformInfo(Node& node, Renderer& renderer) {
         }
 
         if (node.parentIndex != 0) {
-            auto& nodes = renderer.sceneGraph.getNodes();
+            auto& nodes = renderer.scene.sceneGraph.getNodes();
             node.relativeRotation = glm::inverse(nodes[node.parentIndex].getWorldRotation()) * newWorld;
         } else {
             node.relativeRotation = newWorld;

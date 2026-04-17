@@ -43,18 +43,18 @@ class App {
         InputManager::setRenderer(&renderer);
         InputManager::setMaterialEditorState(&materialEditorState);
 
-        renderer.setWindow(window);
+        gpu.initCore(window);
         renderer.initVulkan(start_width, start_height);
-        renderer.getDescriptorSet().debugDescriptorSet("after_initVulkan");
-        initIMGUI(renderer.getDevice(), renderer.getInstance(), renderer.getGraphicsIndex(),
-                  renderer.getSwapchain(), window);
-        EventSystem::init(renderer.sceneGraph);
+        bindless.descriptorSet->debugDescriptorSet("after_initVulkan");
+        initIMGUI(gpu.getDevice(), *gpu.getInstance(), gpu.getGraphicsIndex(),
+                  gpu.getSwapchain(), window);
+        EventSystem::init(renderer.scene.sceneGraph);
         
         //load a default environment map on startup
         uint32_t cubeMapIndex =
-            renderer.assetManager.loadCubemapFromFile("textures/sky2/posx.jpg", "textures/sky2/posy.jpg", "textures/sky2/posz.jpg", "textures/sky2/negx.jpg", "textures/sky2/negy.jpg", "textures/sky2/negz.jpg");
-        renderer.getMaterials()[renderer.getFallBackMaterial()].environmentMapIndex = cubeMapIndex;
-        renderer.setSkyBox(cubeMapIndex);
+            renderer.scene.assetManager.loadCubemapFromFile("textures/sky2/posx.jpg", "textures/sky2/posy.jpg", "textures/sky2/posz.jpg", "textures/sky2/negx.jpg", "textures/sky2/negy.jpg", "textures/sky2/negz.jpg");
+        renderer.scene.getMaterials()[renderer.scene.getFallBackMaterial()].environmentMapIndex = cubeMapIndex;
+        renderer.scene.setSkyBox(cubeMapIndex);
 
         printf("SIZE OF NODE : %zu",sizeof(Node));
         //start of render loop
@@ -62,7 +62,10 @@ class App {
     }
 
   private:
-    Renderer renderer;
+    GpuContext gpu;
+    BindlessSystem bindless;
+    Scene scene;
+    Renderer renderer{gpu, bindless, scene};
     GLFWwindow* window = nullptr;
     bool framebufferResized = false;
     SceneManager sceneManager;
@@ -102,22 +105,22 @@ class App {
             drawGui();
 
             //draw axes visualization for every node
-            for (int i = 1; i <= renderer.sceneGraph.getLastNode(); i++) {
-                if (!renderer.sceneGraph.isNodeValid(i)) continue;
-                Gizmos::drawAxes(renderer.sceneGraph.getNodes()[i].getTransform(), 0.1f);
+            for (int i = 1; i <= renderer.scene.sceneGraph.getLastNode(); i++) {
+                if (!renderer.scene.sceneGraph.isNodeValid(i)) continue;
+                Gizmos::drawAxes(renderer.scene.sceneGraph.getNodes()[i].getTransform(), 0.1f);
             }
             EventSystem::pollListeners();
             EventSystem::pollEvents();
-            renderer.sceneGraph.syncDirtyNodes();
+            renderer.scene.sceneGraph.syncDirtyNodes();
 
             //main draw loop
             renderer.drawFrame();
 
-            renderer.activeCamera.updatePrevVPM(); // kinda ulgy to put here .. TODO: find a place for it
+            renderer.scene.activeCamera.updatePrevVPM(); // kinda ulgy to put here .. TODO: find a place for it
 
             Tracer::endTrace("frame time");
         }
-        renderer.getDevice().getDevice().waitIdle();
+        gpu.getDevice().getDevice().waitIdle();
         cleanup();
         //TODO : improve cleanup, prompt for save & exit?
     }
@@ -128,17 +131,17 @@ class App {
         ImGui::NewFrame();
 
         ImGui::Begin("node tree");
-        traverseNodeTree(renderer.sceneGraph.getRootNode(), 0, renderer.sceneGraph.selectedNode, renderer.sceneGraph);
+        traverseNodeTree(renderer.scene.sceneGraph.getRootNode(), 0, renderer.scene.sceneGraph.selectedNode, renderer.scene.sceneGraph);
         ImGui::End();
         
-        showNodeInfo(renderer.sceneGraph.getNodes()[renderer.sceneGraph.selectedNode], renderer);
+        showNodeInfo(renderer.scene.sceneGraph.getNodes()[renderer.scene.sceneGraph.selectedNode], renderer);
         if (InputManager::getInstance().contextMenuShown) {
-            showActionMenu(0, renderer.getWindow(), renderer.activeCamera, renderer.sceneGraph, InputManager::getInstance().contextMenuPinX, InputManager::getInstance().contextMenuPinY);
+            showActionMenu(0, gpu.getWindow(), renderer.scene.activeCamera, renderer.scene.sceneGraph, InputManager::getInstance().contextMenuPinX, InputManager::getInstance().contextMenuPinY);
         }
         
         showMaterialEditor(materialEditorState, &renderer);
         showImageViewList(&renderer);
-        showBufferAllocs(renderer.getDescriptorSet(),renderer.assetManager,renderer.getIndirectCommands());
+        showBufferAllocs(*bindless.descriptorSet,renderer.scene.assetManager,renderer.getIndirectCommands());
         showDebugWindow(renderer.culledCount,renderer.cullFovScale);
         showTraces();
         showToggles(renderer.features);
@@ -152,8 +155,8 @@ class App {
         ImGui_ImplGlfw_Shutdown();
         ImGui::DestroyContext();
 
-        renderer.getDevice().getDevice().waitIdle();
-        renderer.cleanupSwapchain();
+        gpu.getDevice().getDevice().waitIdle();
+        gpu.getSwapchain().cleanupSwapChain();
 
         glfwDestroyWindow(window);
         glfwTerminate();

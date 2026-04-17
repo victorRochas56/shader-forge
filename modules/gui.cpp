@@ -118,7 +118,7 @@ void traverseNodeTree(Node& node, uint32_t level, uint32_t selectedNode, SceneGr
 }
 
 void showMaterialEditor(MaterialEditorState& state, Renderer* renderer) {
-    auto& materials = renderer->getMaterials();
+    auto& materials = renderer->scene.getMaterials();
 
     ImGui::Begin("Materials");
 
@@ -215,10 +215,10 @@ void showMaterialEditor(MaterialEditorState& state, Renderer* renderer) {
     ImGui::Separator();
 
     auto buildMaterial = [&](Material& mat) {
-        const Material& defaultMat = materials[renderer->getFallBackMaterial()];
+        const Material& defaultMat = materials[renderer->scene.getFallBackMaterial()];
 
         mat.name = state.nameBuffer;
-        mat.shaderSource = renderer->getFallBackShader();
+        mat.shaderSource = renderer->scene.getFallBackShader();
         mat.color = glm::vec4(state.color[0], state.color[1], state.color[2], state.color[3]);
         mat.metallic = state.metallic;
         mat.roughness = state.roughness;
@@ -228,7 +228,7 @@ void showMaterialEditor(MaterialEditorState& state, Renderer* renderer) {
         // load textures
         if (strlen(state.albedoPath) > 0) {
             try {
-                mat.albedoTextureIndex = renderer->assetManager.loadTextureFromFile(state.albedoPath);
+                mat.albedoTextureIndex = renderer->scene.assetManager.loadTextureFromFile(state.albedoPath);
                 matFlags |= MaterialFlags::HAS_ALBEDO;
             } catch (...) { mat.albedoTextureIndex = defaultMat.albedoTextureIndex; }
         } else {
@@ -237,7 +237,7 @@ void showMaterialEditor(MaterialEditorState& state, Renderer* renderer) {
 
         if (strlen(state.roughnessPath) > 0) {
             try {
-                mat.roughnessTextureIndex = renderer->assetManager.loadTextureFromFile(state.roughnessPath, vk::Format::eR8G8B8A8Unorm);
+                mat.roughnessTextureIndex = renderer->scene.assetManager.loadTextureFromFile(state.roughnessPath, vk::Format::eR8G8B8A8Unorm);
                 matFlags |= MaterialFlags::HAS_ROUGHNESS;
             } catch (...) { mat.roughnessTextureIndex = defaultMat.roughnessTextureIndex; }
         } else {
@@ -246,7 +246,7 @@ void showMaterialEditor(MaterialEditorState& state, Renderer* renderer) {
 
         if (strlen(state.metallicPath) > 0) {
             try {
-                mat.metallicTextureIndex = renderer->assetManager.loadTextureFromFile(state.metallicPath, vk::Format::eR8G8B8A8Unorm);
+                mat.metallicTextureIndex = renderer->scene.assetManager.loadTextureFromFile(state.metallicPath, vk::Format::eR8G8B8A8Unorm);
                 matFlags |= MaterialFlags::HAS_METALLIC;
             } catch (...) { mat.metallicTextureIndex = defaultMat.metallicTextureIndex; }
         } else {
@@ -255,7 +255,7 @@ void showMaterialEditor(MaterialEditorState& state, Renderer* renderer) {
 
         if (strlen(state.normalPath) > 0) {
             try {
-                mat.normalTextureIndex = renderer->assetManager.loadTextureFromFile(state.normalPath, vk::Format::eR8G8B8A8Unorm);
+                mat.normalTextureIndex = renderer->scene.assetManager.loadTextureFromFile(state.normalPath, vk::Format::eR8G8B8A8Unorm);
                 matFlags |= MaterialFlags::HAS_NORMAL;
             } catch (...) { mat.normalTextureIndex = defaultMat.normalTextureIndex; }
         } else {
@@ -275,7 +275,7 @@ void showMaterialEditor(MaterialEditorState& state, Renderer* renderer) {
         }
         if (hasEnvMap) {
             try {
-                mat.environmentMapIndex = renderer->assetManager.loadCubemapFromFile(
+                mat.environmentMapIndex = renderer->scene.assetManager.loadCubemapFromFile(
                     state.envMapPaths[0], state.envMapPaths[1], state.envMapPaths[2],
                     state.envMapPaths[3], state.envMapPaths[4], state.envMapPaths[5]);
             } catch (...) { mat.environmentMapIndex = defaultMat.environmentMapIndex; }
@@ -298,11 +298,11 @@ void showMaterialEditor(MaterialEditorState& state, Renderer* renderer) {
             existingMat.materialID = static_cast<uint32_t>(std::hash<Material>{}(newMat));
 
             // update shader mappings for all nodes using this material
-            auto& nodes = renderer->sceneGraph.getNodes();
-            for (uint32_t i = 1; i <= renderer->sceneGraph.getLastNode(); i++) {
-                if (!renderer->sceneGraph.isNodeValid(i)) continue;
+            auto& nodes = renderer->scene.sceneGraph.getNodes();
+            for (uint32_t i = 1; i <= renderer->scene.sceneGraph.getLastNode(); i++) {
+                if (!renderer->scene.sceneGraph.isNodeValid(i)) continue;
                 auto meshIdx = nodes[i].getMeshIndex();
-                if (meshIdx >= renderer->assetManager.meshes.size()) continue;
+                if (meshIdx >= renderer->scene.assetManager.meshes.size()) continue;
 
                 if (nodes[i].getMaterialIndex() == static_cast<uint32_t>(state.selectedIndex)) {
                     renderer->removeMeshFromShader(i, oldMat.shaderSource, oldMat);
@@ -318,7 +318,7 @@ void showMaterialEditor(MaterialEditorState& state, Renderer* renderer) {
         if (ImGui::Button("Create")) {
             Material newMat;
             buildMaterial(newMat);
-            renderer->addMaterial(newMat);
+            renderer->scene.addMaterial(newMat);
 
             state.showEditor = false;
             InputManager::getInstance().canMove = true;
@@ -343,7 +343,7 @@ void showImageViewList(Renderer* renderer) {
     }
 
     int i = 0;
-    for (const TextureResource& img : renderer->getDescriptorSet().getTextureResources()) {
+    for (const TextureResource& img : (*renderer->bindless.descriptorSet).getTextureResources()) {
         if(img.source.empty()){
             i++;
             continue;

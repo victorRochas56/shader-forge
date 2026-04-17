@@ -8,8 +8,8 @@ void InputManager::tickInputState() { //should be only called once in the main a
 
     //rotating viewport when holding right click
     if (inst.current.mouse_button == 1 && inst.current.mouse_action == 1) {
-        inst.renderer->activeCamera.rotatePitch(inst.current.mouseDelta.y * -0.1f);
-        inst.renderer->activeCamera.rotateYaw(inst.current.mouseDelta.x * 0.1f);
+        inst.renderer->scene.activeCamera.rotatePitch(inst.current.mouseDelta.y * -0.1f);
+        inst.renderer->scene.activeCamera.rotateYaw(inst.current.mouseDelta.x * 0.1f);
     }
 
     glm::vec3 moveVector(0.0f);
@@ -32,33 +32,33 @@ void InputManager::tickInputState() { //should be only called once in the main a
 
     // Apply the combined movement
     if (glm::length(moveVector) > 0) {
-        inst.renderer->activeCamera.moveCamera(moveVector);
+        inst.renderer->scene.activeCamera.moveCamera(moveVector);
     }
 
     // raycast on left click for selection or material picking
     if (inst.current.mouse_button == 0 && inst.current.mouse_action == 1 && inst.previous.mouse_action != 1) {
         int width = 0, height = 0;
-        glfwGetWindowSize(inst.renderer->getWindow(), &width, &height);
+        glfwGetWindowSize(inst.renderer->gpu.getWindow(), &width, &height);
         float NDCx = (inst.current.mousePos.x / width) * 2.0 - 1.0;
         float NDCy = (inst.current.mousePos.y / height) * 2.0 - 1.0;
         glm::vec3 origin;
         glm::vec3 direction;
-        inst.renderer->activeCamera.rayFromScreenCoords(NDCx, NDCy, &origin, &direction);
+        inst.renderer->scene.activeCamera.rayFromScreenCoords(NDCx, NDCy, &origin, &direction);
 
         if (inst.materialPickMode) {
-            auto hit = Raycast::castMeshes(origin, direction, inst.renderer->sceneGraph.getNodes(), inst.renderer->sceneGraph.getLastNode(),
-                                           inst.renderer->assetManager.meshes);
+            auto hit = Raycast::castMeshes(origin, direction, inst.renderer->scene.sceneGraph.getNodes(), inst.renderer->scene.sceneGraph.getLastNode(),
+                                           inst.renderer->scene.assetManager.meshes);
             if (hit.nodeIndex != 0) {
-                auto& node = inst.renderer->sceneGraph.getNodes()[hit.nodeIndex];
+                auto& node = inst.renderer->scene.sceneGraph.getNodes()[hit.nodeIndex];
                 if (node.getMaterialIndex() != 0xFFFFFFFF) {
                     inst.pickedMaterialIndex = static_cast<int>(node.getMaterialIndex());
                 }
             }
             inst.materialPickMode = false;
         } else {
-            std::vector<uint32_t> hitNodes = Raycast::castNodes(origin, direction, inst.renderer->sceneGraph.getNodes(), inst.renderer->sceneGraph.getLastNode());
+            std::vector<uint32_t> hitNodes = Raycast::castNodes(origin, direction, inst.renderer->scene.sceneGraph.getNodes(), inst.renderer->scene.sceneGraph.getLastNode());
             if (!hitNodes.empty()) {
-                inst.renderer->sceneGraph.selectNode(hitNodes.front());
+                inst.renderer->scene.sceneGraph.selectNode(hitNodes.front());
             }
         }
     }
@@ -79,7 +79,7 @@ void InputManager::tickInputState() { //should be only called once in the main a
         } else if (inst.materialEditorState != nullptr && inst.materialEditorState->showEditor) {
             inst.materialEditorState->showEditor = false;
         } else {
-            inst.renderer->sceneGraph.deSelectNode();
+            inst.renderer->scene.sceneGraph.deSelectNode();
         }
     }
     if (inst.current.keyStates[GLFW_KEY_V] == GLFW_PRESS && inst.previous.keyStates[GLFW_KEY_V] != GLFW_PRESS) {
@@ -104,7 +104,7 @@ void InputManager::tickInputState() { //should be only called once in the main a
     inst.current.mouseDelta = inst.current.mousePos - inst.previous.mousePos;
     int w;
     int h;
-    glfwGetWindowSize(inst.renderer->getWindow(),&w,&h);
+    glfwGetWindowSize(inst.renderer->gpu.getWindow(),&w,&h);
     inst.current.normalizedMouseDelta = glm::vec2(inst.current.mouseDelta.x / w, inst.current.mouseDelta.y / h);
     inst.previous = inst.current;
 }

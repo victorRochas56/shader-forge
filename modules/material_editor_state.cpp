@@ -13,16 +13,16 @@ void MaterialEditorState::loadFromMaterial(int index, Material& mat, Renderer* r
         strncpy(dest, src.c_str(), destSize);
         dest[destSize - 1] = '\0';
     };
-    copyPath(albedoPath, sizeof(albedoPath), renderer->assetManager.getTexturePathFromIndex(mat.albedoTextureIndex));
-    copyPath(metallicPath, sizeof(metallicPath), renderer->assetManager.getTexturePathFromIndex(mat.metallicTextureIndex));
-    copyPath(roughnessPath, sizeof(roughnessPath), renderer->assetManager.getTexturePathFromIndex(mat.roughnessTextureIndex));
-    copyPath(normalPath, sizeof(normalPath), renderer->assetManager.getTexturePathFromIndex(mat.normalTextureIndex));
+    copyPath(albedoPath, sizeof(albedoPath), renderer->scene.assetManager.getTexturePathFromIndex(mat.albedoTextureIndex));
+    copyPath(metallicPath, sizeof(metallicPath), renderer->scene.assetManager.getTexturePathFromIndex(mat.metallicTextureIndex));
+    copyPath(roughnessPath, sizeof(roughnessPath), renderer->scene.assetManager.getTexturePathFromIndex(mat.roughnessTextureIndex));
+    copyPath(normalPath, sizeof(normalPath), renderer->scene.assetManager.getTexturePathFromIndex(mat.normalTextureIndex));
 
     flipNormal = (mat.flags & MaterialFlags::FLIP_NORMAL) != 0;
     alphaClip = mat.alphaClip;
     alphaCutoff = mat.alphaCutoff;
 
-    std::string cubemapPath = renderer->assetManager.getCubemapPathFromIndex(mat.environmentMapIndex);
+    std::string cubemapPath = renderer->scene.assetManager.getCubemapPathFromIndex(mat.environmentMapIndex);
     for (int i = 0; i < 6; i++) envMapPaths[i][0] = '\0';
     if (!cubemapPath.empty()) {
         // Format: "posX|negX|posY|negY|posZ|negZ"

@@ -27,8 +27,8 @@ class SceneManager {
         savedMaterialIDs.clear();
 
         // first collect all unique materials used by nodes
-        Node& rootNode = renderer.sceneGraph.getRootNode();
-        auto& nodes = renderer.sceneGraph.getNodes();
+        Node& rootNode = renderer.scene.sceneGraph.getRootNode();
+        auto& nodes = renderer.scene.sceneGraph.getNodes();
         uint32_t child = rootNode.firstChild;
         while (child != 0) {
             collectMaterials(nodes[child], renderer);
@@ -119,8 +119,8 @@ class SceneManager {
         std::cout << "Clearing scene..." << std::endl;
         loadedMeshFiles.clear();
 
-        auto& nodes = renderer.sceneGraph.getNodes();
-        Node& rootNode = renderer.sceneGraph.getRootNode();
+        auto& nodes = renderer.scene.sceneGraph.getNodes();
+        Node& rootNode = renderer.scene.sceneGraph.getRootNode();
 
         // we don't delete root itself - clear all children recursively
         uint32_t child = rootNode.firstChild;
@@ -130,23 +130,23 @@ class SceneManager {
         }
         rootNode.firstChild = 0;
 
-        auto& materials = renderer.getMaterials();
+        auto& materials = renderer.scene.getMaterials();
         if (materials.size() > 1) {
             Material defaultMaterial = materials[0]; // don't clear the default material
             materials.clear();
             materials.push_back(defaultMaterial);
         }
 
-        renderer.sceneGraph.getNodes().clear();
-        renderer.sceneGraph.resetLastNode();
+        renderer.scene.sceneGraph.getNodes().clear();
+        renderer.scene.sceneGraph.resetLastNode();
         renderer.clearRenderList();
         renderer.clearLights();
-        renderer.sceneGraph.init(&renderer);
+        renderer.scene.sceneGraph.init(&renderer);
         std::cout << "Scene cleared successfully!" << std::endl;
     }
 
     void clearNodeRecursive(Node& node, Renderer& renderer) {
-        auto& nodes = renderer.sceneGraph.getNodes();
+        auto& nodes = renderer.scene.sceneGraph.getNodes();
         uint32_t child = node.firstChild;
         while (child != 0) {
             clearNodeRecursive(nodes[child], renderer);
@@ -156,7 +156,7 @@ class SceneManager {
         // Remove mesh from shader rendering
         if (node.getMeshIndex() != MAX_MESHES && node.getMaterialIndex() != 0xFFFFFFFF) {
             uint32_t matIndex = node.getMaterialIndex();
-            renderer.removeMeshFromShader(node.getIndex(), renderer.getMaterials()[matIndex].shaderSource, renderer.getMaterials()[matIndex]);
+            renderer.removeMeshFromShader(node.getIndex(), renderer.scene.getMaterials()[matIndex].shaderSource, renderer.scene.getMaterials()[matIndex]);
         }
     }
 
@@ -176,7 +176,7 @@ class SceneManager {
 
     void parseMaterial(std::ifstream& ifs, Renderer& renderer, std::unordered_map<uint32_t, uint32_t>& materialIDToIndex) {
         Material material;
-        material.shaderSource = renderer.getFallBackShader();
+        material.shaderSource = renderer.scene.getFallBackShader();
         uint32_t materialID = 0;
         std::string albedoPath, metallicPath, roughnessPath, normalPath, environmentMapPath;
 
@@ -230,53 +230,53 @@ class SceneManager {
         // Load textures if paths are provided
         if (!albedoPath.empty()) {
             try {
-                material.albedoTextureIndex = renderer.assetManager.loadTextureFromFile(albedoPath);
+                material.albedoTextureIndex = renderer.scene.assetManager.loadTextureFromFile(albedoPath);
             } catch (const std::exception& e) {
                 std::cerr << "Failed to load albedo texture: " << albedoPath << " - " << e.what() << std::endl;
-                material.albedoTextureIndex = renderer.getMaterials()[renderer.getFallBackMaterial()].albedoTextureIndex;
+                material.albedoTextureIndex = renderer.scene.getMaterials()[renderer.scene.getFallBackMaterial()].albedoTextureIndex;
             }
         } else {
-            material.albedoTextureIndex = renderer.getMaterials()[renderer.getFallBackMaterial()].albedoTextureIndex;
+            material.albedoTextureIndex = renderer.scene.getMaterials()[renderer.scene.getFallBackMaterial()].albedoTextureIndex;
         }
 
         if (!metallicPath.empty()) {
             try {
-                material.metallicTextureIndex = renderer.assetManager.loadTextureFromFile(metallicPath, vk::Format::eR8G8B8A8Unorm);
+                material.metallicTextureIndex = renderer.scene.assetManager.loadTextureFromFile(metallicPath, vk::Format::eR8G8B8A8Unorm);
             } catch (const std::exception& e) {
                 std::cerr << "Failed to load metallic texture: " << metallicPath << " - " << e.what() << std::endl;
-                material.metallicTextureIndex = renderer.getMaterials()[renderer.getFallBackMaterial()].metallicTextureIndex;
+                material.metallicTextureIndex = renderer.scene.getMaterials()[renderer.scene.getFallBackMaterial()].metallicTextureIndex;
             }
         } else {
-            material.metallicTextureIndex = renderer.getMaterials()[renderer.getFallBackMaterial()].metallicTextureIndex;
+            material.metallicTextureIndex = renderer.scene.getMaterials()[renderer.scene.getFallBackMaterial()].metallicTextureIndex;
         }
 
         if (!roughnessPath.empty()) {
             try {
-                material.roughnessTextureIndex = renderer.assetManager.loadTextureFromFile(roughnessPath, vk::Format::eR8G8B8A8Unorm);
+                material.roughnessTextureIndex = renderer.scene.assetManager.loadTextureFromFile(roughnessPath, vk::Format::eR8G8B8A8Unorm);
             } catch (const std::exception& e) {
                 std::cerr << "Failed to load roughness texture: " << roughnessPath << " - " << e.what() << std::endl;
-                material.roughnessTextureIndex = renderer.getMaterials()[renderer.getFallBackMaterial()].roughnessTextureIndex;
+                material.roughnessTextureIndex = renderer.scene.getMaterials()[renderer.scene.getFallBackMaterial()].roughnessTextureIndex;
             }
         } else {
-            material.roughnessTextureIndex = renderer.getMaterials()[renderer.getFallBackMaterial()].roughnessTextureIndex;
+            material.roughnessTextureIndex = renderer.scene.getMaterials()[renderer.scene.getFallBackMaterial()].roughnessTextureIndex;
         }
 
         if (!normalPath.empty()) {
             try {
-                material.normalTextureIndex = renderer.assetManager.loadTextureFromFile(normalPath, vk::Format::eR8G8B8A8Unorm);
+                material.normalTextureIndex = renderer.scene.assetManager.loadTextureFromFile(normalPath, vk::Format::eR8G8B8A8Unorm);
             } catch (const std::exception& e) {
                 std::cerr << "Failed to load normal texture: " << normalPath << " - " << e.what() << std::endl;
-                material.normalTextureIndex = renderer.getMaterials()[renderer.getFallBackMaterial()].normalTextureIndex;
+                material.normalTextureIndex = renderer.scene.getMaterials()[renderer.scene.getFallBackMaterial()].normalTextureIndex;
             }
         } else {
-            material.normalTextureIndex = renderer.getMaterials()[renderer.getFallBackMaterial()].normalTextureIndex;
+            material.normalTextureIndex = renderer.scene.getMaterials()[renderer.scene.getFallBackMaterial()].normalTextureIndex;
         }
 
         if (!environmentMapPath.empty()) {
             try {
                 auto parts = split(environmentMapPath, '|');
                 if (parts.size() == 6) {
-                    material.environmentMapIndex = renderer.assetManager.loadCubemapFromFile(parts[0], // posX
+                    material.environmentMapIndex = renderer.scene.assetManager.loadCubemapFromFile(parts[0], // posX
                                                                                 parts[2], // posY
                                                                                 parts[4], // posZ
                                                                                 parts[1], // negX
@@ -293,10 +293,10 @@ class SceneManager {
         }
 
         // Set HAS_* flags based on which textures were actually loaded
-        uint32_t defaultAlbedo = renderer.getMaterials()[renderer.getFallBackMaterial()].albedoTextureIndex;
-        uint32_t defaultRoughness = renderer.getMaterials()[renderer.getFallBackMaterial()].roughnessTextureIndex;
-        uint32_t defaultMetallic = renderer.getMaterials()[renderer.getFallBackMaterial()].metallicTextureIndex;
-        uint32_t defaultNormal = renderer.getMaterials()[renderer.getFallBackMaterial()].normalTextureIndex;
+        uint32_t defaultAlbedo = renderer.scene.getMaterials()[renderer.scene.getFallBackMaterial()].albedoTextureIndex;
+        uint32_t defaultRoughness = renderer.scene.getMaterials()[renderer.scene.getFallBackMaterial()].roughnessTextureIndex;
+        uint32_t defaultMetallic = renderer.scene.getMaterials()[renderer.scene.getFallBackMaterial()].metallicTextureIndex;
+        uint32_t defaultNormal = renderer.scene.getMaterials()[renderer.scene.getFallBackMaterial()].normalTextureIndex;
         if (!albedoPath.empty() && material.albedoTextureIndex != defaultAlbedo)
             material.flags = static_cast<MaterialFlags>(material.flags | HAS_ALBEDO);
         if (!roughnessPath.empty() && material.roughnessTextureIndex != defaultRoughness)
@@ -309,7 +309,7 @@ class SceneManager {
             material.flags = static_cast<MaterialFlags>(material.flags | ALPHA_CLIP);
 
         // Add material to renderer and store the mapping
-        uint32_t materialIndex = renderer.addMaterial(material);
+        uint32_t materialIndex = renderer.scene.addMaterial(material);
         materialIDToIndex[materialID] = materialIndex;
 
         std::cout << "Loaded material ID: " << materialID << " -> index: " << materialIndex << std::endl;
@@ -419,8 +419,8 @@ class SceneManager {
         }
 
         // Create the node with the saved transform
-        uint32_t nodeIndex = renderer.sceneGraph.addNode(false, parentIndex, position, rotation, scale);
-        renderer.sceneGraph.getNodes()[nodeIndex].name = name;
+        uint32_t nodeIndex = renderer.scene.sceneGraph.addNode(false, parentIndex, position, rotation, scale);
+        renderer.scene.sceneGraph.getNodes()[nodeIndex].name = name;
 
         std::cout << "created node: " << name << " at index " << nodeIndex << std::endl;
 
@@ -429,7 +429,7 @@ class SceneManager {
             try {
                 // Load the file once and cache the resulting mesh indices
                 if (loadedMeshFiles.find(meshPath) == loadedMeshFiles.end()) {
-                    auto loadResult = renderer.assetManager.loadMeshFromFile(meshPath);
+                    auto loadResult = renderer.scene.assetManager.loadMeshFromFile(meshPath);
                     loadedMeshFiles[meshPath] = std::move(loadResult.meshIndices);
                 }
                 auto& meshIndices = loadedMeshFiles[meshPath];
@@ -438,16 +438,16 @@ class SceneManager {
                 uint32_t meshIdx = meshIndices[0];
                 if (!meshName.empty()) {
                     for (uint32_t idx : meshIndices) {
-                        if (renderer.assetManager.getMeshes()[idx].name == meshName) {
+                        if (renderer.scene.assetManager.getMeshes()[idx].name == meshName) {
                             meshIdx = idx;
                             break;
                         }
                     }
                 }
 
-                Node& n = renderer.sceneGraph.getNodes()[nodeIndex];
+                Node& n = renderer.scene.sceneGraph.getNodes()[nodeIndex];
                 NodeOps::assignMesh(n, meshIdx, renderer);
-                uint32_t matIdx = renderer.getFallBackMaterial();
+                uint32_t matIdx = renderer.scene.getFallBackMaterial();
                 if (!materialIDs.empty() && materialIDToIndex.find(materialIDs[0]) != materialIDToIndex.end()) {
                     matIdx = materialIDToIndex[materialIDs[0]];
                 }
@@ -459,7 +459,7 @@ class SceneManager {
 
         // Add light if specified
         if (hasLight) {
-            Node& n = renderer.sceneGraph.getNodes()[nodeIndex];
+            Node& n = renderer.scene.sceneGraph.getNodes()[nodeIndex];
             NodeOps::assignLight(n, light, renderer);
             std::cout << "Added light to node: " << name << std::endl;
         }
@@ -473,10 +473,10 @@ class SceneManager {
 
     void collectMaterials(Node& node, Renderer& renderer) {
         if (node.getMeshIndex() != MAX_MESHES && node.getMaterialIndex() != 0xFFFFFFFF) {
-            Material& mat = renderer.getMaterials()[node.getMaterialIndex()];
+            Material& mat = renderer.scene.getMaterials()[node.getMaterialIndex()];
             savedMaterialIDs.insert(mat.materialID);
         }
-        auto& nodes = renderer.sceneGraph.getNodes();
+        auto& nodes = renderer.scene.sceneGraph.getNodes();
         uint32_t child = node.firstChild;
         while (child != 0) {
             collectMaterials(nodes[child], renderer);
@@ -486,9 +486,9 @@ class SceneManager {
 
     void writeMaterials(Renderer& renderer) {
         ofs << "Materials {" << std::endl;
-        for (const Material& mat : renderer.getMaterials()) {
+        for (const Material& mat : renderer.scene.getMaterials()) {
             // Skip default material (index 0) as it's recreated on init
-            if (mat.materialID == renderer.getMaterials()[0].materialID) {
+            if (mat.materialID == renderer.scene.getMaterials()[0].materialID) {
                 continue;
             }
 
@@ -504,10 +504,10 @@ class SceneManager {
             ofs << "    AlphaCutoff : " << mat.alphaCutoff << std::endl;
 
             // Save texture paths
-            std::string albedoPath = renderer.assetManager.getTexturePathFromIndex(mat.albedoTextureIndex);
-            std::string metallicPath = renderer.assetManager.getTexturePathFromIndex(mat.metallicTextureIndex);
-            std::string roughnessPath = renderer.assetManager.getTexturePathFromIndex(mat.roughnessTextureIndex);
-            std::string normalPath = renderer.assetManager.getTexturePathFromIndex(mat.normalTextureIndex);
+            std::string albedoPath = renderer.scene.assetManager.getTexturePathFromIndex(mat.albedoTextureIndex);
+            std::string metallicPath = renderer.scene.assetManager.getTexturePathFromIndex(mat.metallicTextureIndex);
+            std::string roughnessPath = renderer.scene.assetManager.getTexturePathFromIndex(mat.roughnessTextureIndex);
+            std::string normalPath = renderer.scene.assetManager.getTexturePathFromIndex(mat.normalTextureIndex);
 
             ofs << "    AlbedoTexture : " << albedoPath << std::endl;
             ofs << "    MetallicTexture : " << metallicPath << std::endl;
@@ -515,7 +515,7 @@ class SceneManager {
             ofs << "    NormalTexture : " << normalPath << std::endl;
 
             // Save cubemap
-            std::string cubemapPath = renderer.assetManager.getCubemapPathFromIndex(mat.environmentMapIndex);
+            std::string cubemapPath = renderer.scene.assetManager.getCubemapPathFromIndex(mat.environmentMapIndex);
             ofs << "    EnvironmentMap : " << cubemapPath << std::endl;
 
             ofs << "  }" << std::endl;
@@ -535,7 +535,7 @@ class SceneManager {
         ofs << indent << "  Scale : " << scale.x << "," << scale.y << "," << scale.z << std::endl;
 
         if (node.getLightIndex() != MAX_LIGHTS) {
-            Light light = renderer.getLight(node.getLightIndex());
+            Light light = renderer.scene.getLight(node.getLightIndex());
             std::string type;
             std::string cascades = "";
             switch (light.type) {
@@ -564,20 +564,20 @@ class SceneManager {
         }
 
         if (node.getMeshIndex() != MAX_MESHES) {
-            Mesh& mesh = renderer.assetManager.meshes[node.getMeshIndex()];
+            Mesh& mesh = renderer.scene.assetManager.meshes[node.getMeshIndex()];
             ofs << indent << "  Mesh : " << mesh.sourceFile << std::endl;
             if (!mesh.name.empty()) {
                 ofs << indent << "  MeshName : " << mesh.name << std::endl;
             }
 
             if (node.getMaterialIndex() != 0xFFFFFFFF) {
-                Material& mat = renderer.getMaterials()[node.getMaterialIndex()];
+                Material& mat = renderer.scene.getMaterials()[node.getMaterialIndex()];
                 ofs << indent << "  MaterialID : " << mat.materialID << std::endl;
             }
         }
 
         // Write children
-        auto& nodes = renderer.sceneGraph.getNodes();
+        auto& nodes = renderer.scene.sceneGraph.getNodes();
         uint32_t child = node.firstChild;
         while (child != 0) {
             writeNodes(nodes[child], renderer, depth + 1);

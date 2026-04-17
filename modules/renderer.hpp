@@ -26,11 +26,12 @@
 #include "scene_elements.hpp"
 #include "asset_manager.hpp"
 #include "scene_graph.hpp"
+#include "gpu_context.hpp"
+#include "bindless_system.hpp"
+#include "scene.hpp"
 
 // Forward declarations — full definitions only needed in renderer.cpp
 struct GLFWwindow;
-class Swapchain;
-class PipelineManager;
 struct PipelineBase;
 
 /*
@@ -41,46 +42,15 @@ handles vulkan initialization and the main render loop
 class Renderer {
 #pragma region VARS
   public:
-    Camera                              activeCamera;
-    AssetManager                        assetManager;
-    SceneGraph                          sceneGraph;
+    GpuContext&                         gpu;
+    BindlessSystem&                     bindless;
+    Scene&                              scene;
     RenderFeatures                      features;
     float                               cullFovScale = 1.0f;
     uint32_t                            culledCount = 0;
 
-    ShadowAtlas                         shadowAtlas;
-
   private:
-    GLFWwindow*                         window = nullptr;
     bool                                framebufferResized = false;
-    vk::raii::Instance                  instance = nullptr;
-    vk::raii::Context                   context;
-    vk::raii::DebugUtilsMessengerEXT    debugMessenger = nullptr;
-    vk::raii::SurfaceKHR                surface = nullptr;
-    vk::SampleCountFlagBits             msaaSamples;
-
-    std::vector<const char*>            requiredDeviceExtension = {VK_KHR_SWAPCHAIN_EXTENSION_NAME,           VK_KHR_SPIRV_1_4_EXTENSION_NAME,
-                                                                   VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,   VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME,
-                                                                   VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME, VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME};
-
-    vk::raii::CommandPool               commandPool = nullptr;
-    std::vector<vk::raii::CommandBuffer>commandBuffers;
-    uint32_t                            graphicsIndex = 0;
-
-    //synchronization objects
-    std::vector<vk::raii::Semaphore>    presentCompleteSemaphores;
-    std::vector<vk::raii::Semaphore>    renderFinishedSemaphores;
-    std::vector<vk::raii::Fence>        inFlightFences;
-    std::vector<vk::Fence>              imagesInFlight;
-    uint32_t                            currentFrame = 0;
-    uint32_t                            totalFrames = 0;
-
-    //my classes
-    std::unique_ptr<Device>             device;
-    std::unique_ptr<Swapchain>          swapchain;
-    std::unique_ptr<PipelineManager>    pipelineManager;
-    std::unique_ptr<ResourceManager>    resourceManager;
-    std::unique_ptr<DescriptorSet>      descriptorSet;
 
     //pipelines
     uint32_t                            skyboxPipelineIndex;
@@ -96,10 +66,6 @@ class Renderer {
     uint32_t                            depthSamplerIndex;
     uint32_t                            shadowSamplerIndex;
     uint32_t                            defaultNormalIndex;
-    uint32_t                            skyboxIndex = 0;
-
-    //rendering data
-    std::vector<Material>               materials;
 
     struct RenderEntry {
         uint32_t nodeIndex;
@@ -115,9 +81,6 @@ class Renderer {
     bool                                renderListDirty = false;
     std::vector<ShaderDrawRange>        shaderDrawRanges;
 
-    Shader                              fallbackLitShader;
-    uint32_t                            fallbackDefaultMaterialIndex;
-    std::map<uint32_t, Light>           lights;
     uint32_t                            vertexBufferIndex;
     uint32_t                            indexBufferIndex;
     uint32_t                            modelMatrixBufferIndex;
@@ -149,7 +112,7 @@ class Renderer {
     uint32_t                            ssaoApplyPipelineIndex = 0xFFFFFFFF;
 
     //number of mips for a full resolution fullscreen image
-    uint32_t                            fullscreenMipLevels = 1; 
+    uint32_t                            fullscreenMipLevels = 1;
 
     // Roughness-metallic MRT from lit pass
     uint32_t                            roughnessMetalTextureIndex = 0xFFFFFFFF;
@@ -191,8 +154,6 @@ class Renderer {
     // Temporary texture for gaussian blur (mipmapped for per-mip blur passes)
     uint32_t                            tempBlurTextureIndex = 0xFFFFFFFF;
     std::vector<vk::raii::ImageView>    tempBlurMipViews;
-
-    bool                                vSync = true;
 #pragma endregion
 
 
@@ -200,12 +161,11 @@ class Renderer {
   public:
 
 #pragma region INIT
-    Renderer();
+    Renderer(GpuContext& gpu, BindlessSystem& bindless, Scene& scene);
     ~Renderer();
 
     void initVulkan(uint32_t startWidth, uint32_t startHeight);
 #pragma endregion
-
 
 
 
@@ -217,47 +177,19 @@ class Renderer {
 
 
 
-
 #pragma region GET/SET
-    GLFWwindow* getWindow();
-    void setWindow(GLFWwindow* pWindow);
-
-    const vk::Instance& getInstance() const;
-
-    Device& getDevice();
-    ResourceManager& getResourceManager();
-    DescriptorSet& getDescriptorSet();
-
-    Swapchain& getSwapchain();
-    void cleanupSwapchain();
-    const vk::SampleCountFlagBits& getMsaaSamples() const;
-
-    const uint32_t getGraphicsIndex() const;
-
     uint32_t getModelMatrixBufferIndex();
     uint32_t getLightBufferIndex();
     uint32_t getShadowDrawDataBufferIndex();
-
-    std::vector<Material>& getMaterials();
-    uint32_t addMaterial(Material material);
 
     void addMeshToShader(uint32_t nodeIndex, Shader shader, Material material);
     void removeMeshFromShader(uint32_t nodeIndex, Shader shader, Material material);
     void removeNodeFromRenderList(uint32_t nodeIndex);
 
-    Shader getFallBackShader();
-    uint32_t getFallBackMaterial();
     void clearRenderList();
-
-    const std::map<uint32_t, Light>& getLights();
-    std::map<uint32_t, Light>& getLightsMutable();
-    void addLight(uint32_t index, Light light);
-    Light& getLight(uint32_t index);
     void clearLights();
 
     void toggleVsync();
-
-    void setSkyBox(uint32_t skyboxIndex);
 
     const std::vector<DrawIndexedIndirectCommand>& getIndirectCommands() const { return indirectCommands; }
 #pragma endregion
@@ -269,16 +201,6 @@ class Renderer {
 
   private:
 #pragma region CREATE RESOURCES
-    void createInstance();
-    std::vector<const char*> getRequiredExtensions();
-    void setupDebugMessenger();
-    static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT severity,
-                                                           vk::DebugUtilsMessageTypeFlagsEXT type,
-                                                           const vk::DebugUtilsMessengerCallbackDataEXT* pCallbackData,
-                                                           void*);
-    void createSurface();
-    void createCommandPool();
-    void createCommandBuffers();
     void createShadowAtlas(uint32_t resolution);
     void createSSAOResources(uint32_t width, uint32_t height);
     void createRoughnessMetalResources(uint32_t width, uint32_t height);
@@ -288,9 +210,7 @@ class Renderer {
     void createSSRResources(uint32_t width, uint32_t height);
     void createHiZResources(uint32_t width, uint32_t height);
     void createSDFResources(uint32_t width, uint32_t height);
-    void createSyncObjects();
 #pragma endregion
-
 
 
 

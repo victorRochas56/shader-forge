@@ -10,8 +10,8 @@ void SceneGraph::init(Renderer* renderer) {
     nodes[ROOT_INDEX].name = "root";
     lastNode = ROOT_INDEX;
     allocateNodeGPU(nodes[ROOT_INDEX]);
-    TransformSystem::updateAll(nodes[ROOT_INDEX], nodes, renderer->getDescriptorSet(), renderer->getModelMatrixBufferIndex(),
-                               renderer->assetManager.meshes, renderer->getLightsMutable());
+    TransformSystem::updateAll(nodes[ROOT_INDEX], nodes, (*renderer->bindless.descriptorSet), renderer->getModelMatrixBufferIndex(),
+                               renderer->scene.assetManager.meshes, renderer->scene.getLightsMutable());
 }
 
 uint32_t SceneGraph::addNode(bool internal,uint32_t parentIndex, glm::vec3 position, glm::quat rotation, glm::vec3 scale) {
@@ -35,8 +35,8 @@ uint32_t SceneGraph::addNode(bool internal,uint32_t parentIndex, glm::vec3 posit
     newNode.worldTransform = parent.worldTransform * newNode.localTransform;
 
     allocateNodeGPU(newNode);
-    TransformSystem::updateAll(newNode, nodes, renderer->getDescriptorSet(), renderer->getModelMatrixBufferIndex(),
-                               renderer->assetManager.meshes, renderer->getLightsMutable());
+    TransformSystem::updateAll(newNode, nodes, (*renderer->bindless.descriptorSet), renderer->getModelMatrixBufferIndex(),
+                               renderer->scene.assetManager.meshes, renderer->scene.getLightsMutable());
     return newIndex;
 }
 
@@ -79,18 +79,18 @@ void SceneGraph::syncDirtyNodes() {
     for (uint32_t i = ROOT_INDEX; i <= lastNode; i++) {
         if (!nodes[i].alive || !nodes[i].transformDirty) continue;
         nodes[i].transformDirty = false;
-        TransformSystem::updateAll(nodes[i], nodes, renderer->getDescriptorSet(), renderer->getModelMatrixBufferIndex(),
-                                   renderer->assetManager.meshes, renderer->getLightsMutable());
+        TransformSystem::updateAll(nodes[i], nodes, (*renderer->bindless.descriptorSet), renderer->getModelMatrixBufferIndex(),
+                                   renderer->scene.assetManager.meshes, renderer->scene.getLightsMutable());
     }
 }
 
 void SceneGraph::allocateNodeGPU(Node& node) {
-    uint32_t singleIndex = renderer->getDescriptorSet().allocateFixedBuffer(renderer->getModelMatrixBufferIndex(), glm::mat4(1.0f));
+    uint32_t singleIndex = (*renderer->bindless.descriptorSet).allocateFixedBuffer(renderer->getModelMatrixBufferIndex(), glm::mat4(1.0f));
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         node.modelMatrixIndices[i] = singleIndex;
     }
 }
 
 void SceneGraph::deallocateNodeGPU(Node& node) {
-    renderer->getDescriptorSet().freeFixedBuffer(renderer->getModelMatrixBufferIndex(), node.modelMatrixIndices[0]);
+    (*renderer->bindless.descriptorSet).freeFixedBuffer(renderer->getModelMatrixBufferIndex(), node.modelMatrixIndices[0]);
 }
