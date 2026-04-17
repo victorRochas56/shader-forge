@@ -27,7 +27,6 @@
 // TODO node deletion
 // TODO multithread command buffer recording
 // volumetrics
-// shadow atlas
 static const std::vector validationLayers = {"VK_LAYER_KHRONOS_validation"};
 
 
@@ -105,12 +104,12 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     descriptorSet->createDescriptorSet();
 
     swapchain->create(*window, vSync);
-    createShadowDepthBuffer(DEFAULT_CSM_SHADOW_RESOLUTION);
-    uint32_t ssaoW = std::max(1u, static_cast<uint32_t>(startWidth * ssaoResolutionScale));
-    uint32_t ssaoH = std::max(1u, static_cast<uint32_t>(startHeight * ssaoResolutionScale));
-    uint32_t ssrW = std::max(1u, static_cast<uint32_t>(startWidth * ssrResolutionScale));
-    uint32_t ssrH = std::max(1u, static_cast<uint32_t>(startHeight * ssrResolutionScale));
+    uint32_t ssaoW = std::max(1u, static_cast<uint32_t>(startWidth * features.ssao.resolutionScale));
+    uint32_t ssaoH = std::max(1u, static_cast<uint32_t>(startHeight * features.ssao.resolutionScale));
+    uint32_t ssrW = std::max(1u, static_cast<uint32_t>(startWidth * features.ssr.resolutionScale));
+    uint32_t ssrH = std::max(1u, static_cast<uint32_t>(startHeight * features.ssr.resolutionScale));
     createSSAOResources(ssaoW, ssaoH);
+    createShadowAtlas(SHADOW_ATLAS_SIZE);
     createRoughnessMetalResources(startWidth, startHeight);
     createNormalResources(startWidth, startHeight);
     createMotionVectorResources(startWidth,startHeight);
@@ -210,6 +209,7 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     descriptorSet->allocateFixedBuffer(litPassDataBufferIndex, LitPassData{.samplerIndex = defaultSamplerIndex,
                                                                            .lightCount = 0,
                                                                            .shadowSamplerIndex = shadowSamplerIndex,
+                                                                           .shadowAtlasIndex = shadowAtlas.textureIndex,
                                                                            .cameraPosition = activeCamera.position,
                                                                            .cameraForward = glm::vec3(1, 0, 0),
                                                                            .viewProjection = activeCamera.viewProjection,
@@ -224,14 +224,14 @@ void Renderer::drawFrame() {
     device->getDevice().waitForFences(*inFlightFences[currentFrame], vk::True, UINT64_MAX);
     Tracer::endTrace("wait for fences");
     //TODO make all full screen passes have a resolution scale that can be set dirty when changed/ needs to recreate
-    if (ssrResolutionDirty) {
-        ssrResolutionDirty = false;
+    if (features.ssr.resolutionDirty) {
+        features.ssr.resolutionDirty = false;
         device->getDevice().waitIdle();
         int w = 0, h = 0;
         glfwGetFramebufferSize(window, &w, &h);
         if (w > 0 && h > 0) {
-            uint32_t ssrW = std::max(1u, static_cast<uint32_t>(w * ssrResolutionScale));
-            uint32_t ssrH = std::max(1u, static_cast<uint32_t>(h * ssrResolutionScale));
+            uint32_t ssrW = std::max(1u, static_cast<uint32_t>(w * features.ssr.resolutionScale));
+            uint32_t ssrH = std::max(1u, static_cast<uint32_t>(h * features.ssr.resolutionScale));
             createSSRResources(ssrW, ssrH);
         }
     }
@@ -416,21 +416,16 @@ void Renderer::toggleVsync() {
     handleSwapchainResize();
 }
 
-void Renderer::toggleSSAO() { enableSSAO = !enableSSAO; }
-void Renderer::toggleSSR() { enableSSR = !enableSSR; }
-
-void Renderer::toggleBBOXes() { showBBOXes = !showBBOXes; }
-
 void Renderer::setSkyBox(uint32_t skyboxIdx) { this->skyboxIndex = skyboxIdx; }
 
 void Renderer::handleSwapchainResize() {
     int width = 0, height = 0;
     glfwGetFramebufferSize(window, &width, &height);
     if (width > 0 && height > 0) {
-        uint32_t ssaoW = std::max(1u, static_cast<uint32_t>(width * ssaoResolutionScale));
-        uint32_t ssaoH = std::max(1u, static_cast<uint32_t>(height * ssaoResolutionScale));
-        uint32_t ssrW = std::max(1u, static_cast<uint32_t>(width * ssrResolutionScale));
-        uint32_t ssrH = std::max(1u, static_cast<uint32_t>(height * ssrResolutionScale));
+        uint32_t ssaoW = std::max(1u, static_cast<uint32_t>(width * features.ssao.resolutionScale));
+        uint32_t ssaoH = std::max(1u, static_cast<uint32_t>(height * features.ssao.resolutionScale));
+        uint32_t ssrW = std::max(1u, static_cast<uint32_t>(width * features.ssr.resolutionScale));
+        uint32_t ssrH = std::max(1u, static_cast<uint32_t>(height * features.ssr.resolutionScale));
         createSSAOResources(ssaoW, ssaoH);
         createRoughnessMetalResources(width, height);
         createNormalResources(width, height);
@@ -548,20 +543,19 @@ void Renderer::createCommandBuffers() {
     commandBuffers = vk::raii::CommandBuffers(device->getDevice(), allocInfo);
 }
 
-void Renderer::createShadowDepthBuffer(uint32_t resolution) {
-    // only recreates if resolution changed
-    if (currentShadowDepthResolution == resolution && shadowDepth.view != nullptr) {
-        return;
-    }
-    // Free old resources if they exist
-    shadowDepth.image = nullptr;
-    shadowDepth.view = nullptr;
-    shadowDepth.memory = nullptr;
-    resourceManager->createImage(resolution, resolution, 1, vk::SampleCountFlagBits::e1, vk::Format::eD32Sfloat, vk::ImageTiling::eOptimal,
-                                 vk::ImageUsageFlagBits::eDepthStencilAttachment, vk::MemoryPropertyFlagBits::eDeviceLocal, shadowDepth.image, shadowDepth.memory, 1);
-    shadowDepth.view = resourceManager->createImageView(shadowDepth.image, vk::Format::eD32Sfloat, vk::ImageAspectFlagBits::eDepth);
-    resourceManager->transitionImageLayout(nullptr, shadowDepth.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal);
-    currentShadowDepthResolution = resolution;
+void Renderer::createShadowAtlas(uint32_t resolution) {
+    shadowAtlas.init();
+    vk::Format format = vk::Format::eD32Sfloat;
+    vk::raii::Image image = nullptr;
+    vk::raii::DeviceMemory memory = nullptr;
+    resourceManager->createImage(resolution,resolution, 1, vk::SampleCountFlagBits::e1, format,
+                                vk::ImageTiling::eOptimal,
+                                vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled,
+                                vk::MemoryPropertyFlagBits::eDeviceLocal, image, memory, 1);
+
+    vk::raii::ImageView view = resourceManager->createImageView(image,format,vk::ImageAspectFlagBits::eDepth,1);
+
+    shadowAtlas.textureIndex = descriptorSet->allocateTexture(std::move(image),std::move(memory),std::move(view),"internal/shadowAtlas",false,resolution,resolution);
 }
 
 void Renderer::createSSAOResources(uint32_t width, uint32_t height) {
@@ -810,6 +804,8 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
     cmd.begin({});
 
     Tracer::startTrace("record shadow pass");
+    
+    resourceManager->transitionImageLayout(&cmd, *descriptorSet->getTextureResource(shadowAtlas.textureIndex).image, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
     for (auto& [lightId, light] : lights) {
         if (light.castsShadows != 1) continue;
         // Skip point lights whose shadow maps are already up to date
@@ -817,6 +813,8 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
         recordShadowPass(cmd, light);
         if (light.type == LightType::Point) light.shadowDirty = false;
     }
+    resourceManager->transitionImageLayout(&cmd, *descriptorSet->getTextureResource(shadowAtlas.textureIndex).image, vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+
     Tracer::endTrace("record shadow pass");
 
     Tracer::startTrace("record geo pass");
@@ -824,12 +822,12 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
     Tracer::endTrace("record geo pass");
 
     Tracer::startTrace("record ssr pass");
-    if (enableSSR && ssrPipelineIndex != 0xFFFFFFFF)
+    if (features.ssr.enabled && ssrPipelineIndex != 0xFFFFFFFF)
         recordSSRPass(cmd, imageIndex);
     Tracer::endTrace("record ssr pass");
-    
+
     Tracer::startTrace("record ssao pass");
-    if (enableSSAO && ssaoPipelineIndex != 0xFFFFFFFF)
+    if (features.ssao.enabled && ssaoPipelineIndex != 0xFFFFFFFF)
         recordSSAOPass(cmd, imageIndex);
     Tracer::endTrace("record ssao pass");
 
@@ -839,7 +837,7 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
     Tracer::endTrace("record SDF pass");
 
     Tracer::startTrace("record image vis pass");
-    if (imageVisIndex != 0xFFFFFFFF)
+    if (features.imageVis.imageIndex != 0xFFFFFFFF)
         recordImageVisPass(cmd, imageIndex);
     Tracer::endTrace("record image vis pass");
 
@@ -887,7 +885,7 @@ void Renderer::buildGeometryDrawCommands(const std::array<Plane, 6>& frustumPlan
                 continue;
             }
 
-            if (showBBOXes)
+            if (features.showBBoxes)
                 Gizmos::drawBox(worldMin, worldMax, glm::vec4(1.0f, 1.0f, 0.0f, 1.0f));
         }
 
@@ -1007,6 +1005,7 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
         .samplerIndex = defaultSamplerIndex,
         .lightCount = static_cast<uint32_t>(lights.size()),
         .shadowSamplerIndex = shadowSamplerIndex,
+        .shadowAtlasIndex = shadowAtlas.textureIndex,
         .cameraPosition = activeCamera.position,
         .cameraForward = cameraForward,
         .viewProjection = activeCamera.viewProjection,
@@ -1241,9 +1240,9 @@ void Renderer::recordSSAOPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex)
                           .noiseIndex = ssaoNoiseTextureIndex,
                           .noiseSamplerIndex = ssaoNoiseSamplerIndex,
                           .resolution = glm::uvec2(ssaoExtent.width, ssaoExtent.height),
-                          .radius = ssaoRadius,
-                          .bias = ssaoBias,
-                          .power = ssaoPower,
+                          .radius = features.ssao.radius,
+                          .bias = features.ssao.bias,
+                          .power = features.ssao.power,
                           .kernelSize = 32},
         vk::AttachmentLoadOp::eClear, {1.0f, 1.0f, 1.0f, 1.0f});
 
@@ -1329,9 +1328,9 @@ void Renderer::recordSSRPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) 
                                         .resolution = glm::uvec2(ssrExtent.width, ssrExtent.height),
                                         .hiZIndex = hiZTextureIndex,
                                         .hiZMipLevels = hiZMipLevels,
-                                        .thickness = ssrThickness,
-                                        .roughnessThreshold = ssrRoughnessThreshold,
-                                        .maxSteps = ssrMaxSteps,
+                                        .thickness = features.ssr.thickness,
+                                        .roughnessThreshold = features.ssr.roughnessThreshold,
+                                        .maxSteps = features.ssr.maxSteps,
                                         .frameIndex = totalFrames,
                                      }, currentFrame);
 
@@ -1351,7 +1350,7 @@ void Renderer::recordSSRPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) 
             .historySSRIndex = readHistory,
             .motionVectorIndex = motionVectorTextureIndex,
             .samplerIndex = defaultSamplerIndex,
-            .temporalBlend = ssrTemporalBlend,
+            .temporalBlend = features.ssr.temporalBlend,
             .historyValid = ssrHistoryInvalid ? 0u : 1u,
         },
         vk::AttachmentLoadOp::eClear, {0.0f, 0.0f, 0.0f, 0.0f});
@@ -1376,32 +1375,29 @@ void Renderer::recordSSRPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) 
 }
 
 void Renderer::recordImageVisPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
-    if (imageVisIndex == 0xFFFFFFFF)
+    if (features.imageVis.imageIndex == 0xFFFFFFFF)
         return;
 
     auto extent = swapchain->getSwapChainExtent();
-    auto& visTexture = descriptorSet->getTextureResource(imageVisIndex);
+    auto& visTexture = descriptorSet->getTextureResource(features.imageVis.imageIndex);
     float imgAspect = (visTexture.width > 0 && visTexture.height > 0)
                           ? static_cast<float>(visTexture.width) / static_cast<float>(visTexture.height)
                           : static_cast<float>(extent.width) / static_cast<float>(extent.height);
 
     drawFullscreenPass(cmd, *pipelineManager->getPostProcessPipelines()[imageViewPipelineIndex], *swapchain->getSwapChainImageViews()[imageIndex],
                        extent,
-                       ImageVisPushConstants{.imageIndex = imageVisIndex,
+                       ImageVisPushConstants{.imageIndex = features.imageVis.imageIndex,
                                              .samplerIndex = defaultSamplerIndex,
-                                             .flags = imageVisFlags,
+                                             .flags = features.imageVis.flags,
                                              .nearPlane = activeCamera.nearPlane,
                                              .farPlane = activeCamera.farPlane,
                                              .imageAspect = imgAspect,
                                              .screenAspect = static_cast<float>(extent.width) / static_cast<float>(extent.height),
-                                             .mipLevel = imageVisMipLevel},
+                                             .mipLevel = features.imageVis.mipLevel},
                        vk::AttachmentLoadOp::eLoad);
 }
 
 void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light) {
-
-    uint32_t shadowMapResolution = light.shadowResolution;
-
     auto& currentPipeline = pipelineManager->getBeforeGeoPipelines()[shadowPipelineIndex];
     vk::Buffer indexBufferHandle = descriptorSet->getVariableBuffer(indexBufferIndex);
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, currentPipeline->pipeline);
@@ -1432,7 +1428,7 @@ void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light) {
         }
     }
 
-    // Determine face count and get shadow map + matrix per face
+    // Determine face count
     uint32_t faceCount = 0;
     if (light.type == LightType::Directional) {
         faceCount = light.numCascades;
@@ -1440,36 +1436,48 @@ void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light) {
         faceCount = 6;
     }
 
-    for (uint32_t i = 0; i < faceCount; i++) {
-        TextureResource* shadowMap = nullptr;
-        glm::mat4 lightSpaceMatrix;
+    // Bind the atlas once; each face/cascade is rendered into its tile via viewport+scissor.
+    auto& atlasTex = descriptorSet->getTextureResource(shadowAtlas.textureIndex);
+    vk::RenderingAttachmentInfo depthAttachment{.imageView   = *atlasTex.imageView,
+                                                .imageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
+                                                .loadOp      = vk::AttachmentLoadOp::eLoad,
+                                                .storeOp     = vk::AttachmentStoreOp::eStore};
+    vk::RenderingInfo renderInfo{.renderArea           = {{0, 0}, {SHADOW_ATLAS_SIZE, SHADOW_ATLAS_SIZE}},
+                                 .layerCount           = 1,
+                                 .colorAttachmentCount = 0,
+                                 .pColorAttachments    = nullptr,
+                                 .pDepthAttachment     = &depthAttachment};
+    cmd.beginRendering(renderInfo);
 
+    for (uint32_t i = 0; i < faceCount; i++) {
+        glm::vec4 uvRange;
+        glm::mat4 lightSpaceMatrix;
         if (light.type == LightType::Directional) {
-            shadowMap = &descriptorSet->getTextureResource(light.cascades[i].shadowMapIndex);
+            uvRange          = light.cascades[i].shadowAtlasUVRange;
             lightSpaceMatrix = light.cascades[i].lightSpaceMatrix;
-        } else if (light.type == LightType::Point) {
-            shadowMap = &descriptorSet->getTextureResource(light.cubeMapIndices[i].shadowMapIndex);
+        } else {
+            uvRange          = light.cubeMapIndices[i].shadowAtlasUVRange;
             lightSpaceMatrix = light.cubeMapIndices[i].lightSpaceMatrix;
         }
 
-        resourceManager->transitionImageLayout(&cmd, *shadowMap->image, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
+        int32_t  tx = static_cast<int32_t>(uvRange.x * SHADOW_ATLAS_SIZE);
+        int32_t  ty = static_cast<int32_t>(uvRange.y * SHADOW_ATLAS_SIZE);
+        uint32_t tw = static_cast<uint32_t>((uvRange.z - uvRange.x) * SHADOW_ATLAS_SIZE);
+        uint32_t th = static_cast<uint32_t>((uvRange.w - uvRange.y) * SHADOW_ATLAS_SIZE);
+        if (tw == 0 || th == 0) continue;
 
-        vk::ClearValue clearDepth{.depthStencil = vk::ClearDepthStencilValue{1.0f, 0}};
-        vk::RenderingAttachmentInfo depthAttachment{.imageView = *shadowMap->imageView,
-                                                    .imageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
-                                                    .loadOp = vk::AttachmentLoadOp::eClear,
-                                                    .storeOp = vk::AttachmentStoreOp::eStore,
-                                                    .clearValue = clearDepth};
+        vk::Rect2D tileRect{{tx, ty}, {tw, th}};
 
-        vk::RenderingInfo renderInfo{.renderArea = {{0, 0}, {shadowMapResolution, shadowMapResolution}},
-                                     .layerCount = 1,
-                                     .colorAttachmentCount = 0,
-                                     .pColorAttachments = nullptr,
-                                     .pDepthAttachment = &depthAttachment};
+        // Clear just this tile (the atlas was loaded, not cleared).
+        vk::ClearAttachment clearInfo{.aspectMask = vk::ImageAspectFlagBits::eDepth,
+                                      .colorAttachment = 0,
+                                      .clearValue = vk::ClearValue{.depthStencil = vk::ClearDepthStencilValue{1.0f, 0}}};
+        vk::ClearRect clearRect{.rect = tileRect, .baseArrayLayer = 0, .layerCount = 1};
+        cmd.clearAttachments(clearInfo, clearRect);
 
-        cmd.beginRendering(renderInfo);
-        cmd.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(shadowMapResolution), static_cast<float>(shadowMapResolution), 0.0f, 1.0f));
-        cmd.setScissor(0, vk::Rect2D({0, 0}, {shadowMapResolution, shadowMapResolution}));
+        cmd.setViewport(0, vk::Viewport(static_cast<float>(tx), static_cast<float>(ty),
+                                        static_cast<float>(tw), static_cast<float>(th), 0.0f, 1.0f));
+        cmd.setScissor(0, tileRect);
 
         if (!indirectCommands.empty()) {
             ShadowPushConstants pushConstants = {
@@ -1482,10 +1490,9 @@ void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light) {
             cmd.bindIndexBuffer(indexBufferHandle, 0, vk::IndexType::eUint32);
             cmd.drawIndexedIndirect(*indirectDrawBuffer, frameByteOffset, static_cast<uint32_t>(indirectCommands.size()), sizeof(DrawIndexedIndirectCommand));
         }
-        cmd.endRendering();
-
-        resourceManager->transitionImageLayout(&cmd, *shadowMap->image, vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
     }
+
+    cmd.endRendering();
 }
 
 void Renderer::recordSDFPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {

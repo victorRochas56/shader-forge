@@ -46,32 +46,18 @@ void assignMaterial(Node& node, uint32_t materialIndex, Renderer& renderer) {
                               renderer.getMaterials()[materialIndex]);
 }
 
-uint32_t allocateShadowMap(Light& light, const std::string& name, Renderer& renderer) {
-    ResourceManager& resourceManager = renderer.getResourceManager();
-    vk::raii::Image image = nullptr;
-    vk::raii::DeviceMemory memory = nullptr;
-    resourceManager.createImage(light.shadowResolution, light.shadowResolution, 1, vk::SampleCountFlagBits::e1, vk::Format::eD32Sfloat,
-                                vk::ImageTiling::eOptimal,
-                                vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled,
-                                vk::MemoryPropertyFlagBits::eDeviceLocal, image, memory, 1);
-    vk::raii::ImageView imageView = resourceManager.createImageView(image, vk::Format::eD32Sfloat, vk::ImageAspectFlagBits::eDepth);
-    resourceManager.transitionImageLayout(nullptr, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal);
-    resourceManager.transitionImageLayout(nullptr, image, vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
-    return renderer.getDescriptorSet().allocateTexture(std::move(image), std::move(memory), std::move(imageView), name);
-}
-
 void enableLightShadows(Light& light, const std::string& nodeName, Renderer& renderer) {
     light.castsShadows = 1;
     light.shadowDirty = true;
     switch (light.type) {
     case LightType::Directional:
         for (int i = 0; i < light.numCascades; i++) {
-            light.cascades[i].shadowMapIndex = allocateShadowMap(light, "internal/" + nodeName + "/csm_" + std::to_string(i), renderer);
+            renderer.shadowAtlas.allocateShadowMap(light.shadowResolution, light.cascades[i].shadowAtlasTile, light.cascades[i].shadowAtlasUVRange);
         }
         break;
     case LightType::Point:
         for (int i = 0; i < 6; i++) {
-            light.cubeMapIndices[i].shadowMapIndex = allocateShadowMap(light, "internal/" + nodeName + "/point_" + std::to_string(i), renderer);
+            renderer.shadowAtlas.allocateShadowMap(light.shadowResolution, light.cubeMapIndices[i].shadowAtlasTile, light.cubeMapIndices[i].shadowAtlasUVRange);
         }
         break;
     default:
@@ -84,12 +70,12 @@ void disableLightShadows(Light& light, Renderer& renderer) {
     switch (light.type) {
     case LightType::Directional:
         for (int i = 0; i < light.numCascades; i++) {
-            renderer.getDescriptorSet().freeTexture(light.cascades[i].shadowMapIndex);
+            renderer.shadowAtlas.freeShadowMap(light.cascades[i].shadowAtlasTile);
         }
         break;
     case LightType::Point:
         for (int i = 0; i < 6; i++) {
-            renderer.getDescriptorSet().freeTexture(light.cubeMapIndices[i].shadowMapIndex);
+            renderer.shadowAtlas.freeShadowMap(light.cubeMapIndices[i].shadowAtlasTile);
         }
         break;
     default:

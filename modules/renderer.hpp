@@ -44,12 +44,11 @@ class Renderer {
     Camera                              activeCamera;
     AssetManager                        assetManager;
     SceneGraph                          sceneGraph;
-    uint32_t                            imageVisIndex = 0xFFFFFFFF;
-    uint32_t                            imageVisSamplerIndex = 0xFFFFFFFF;
-    ImageVisFlags                       imageVisFlags = ImageVisFlags::IMAGE_VIS_NONE;
-    int                                 imageVisMipLevel = 0;
+    RenderFeatures                      features;
     float                               cullFovScale = 1.0f;
     uint32_t                            culledCount = 0;
+
+    ShadowAtlas                         shadowAtlas;
 
   private:
     GLFWwindow*                         window = nullptr;
@@ -141,9 +140,6 @@ class Renderer {
     std::vector<ShadowDrawData>             drawDataList;
     std::vector<LitDrawData>                litDrawDataList;
 
-    Image                               shadowDepth;
-    uint32_t                            currentShadowDepthResolution = 0;
-
     //SSAO
     uint32_t                            ssaoTextureIndex = 0xFFFFFFFF;
     uint32_t                            ssaoBlurTextureIndex = 0xFFFFFFFF;
@@ -191,27 +187,12 @@ class Renderer {
     uint32_t                            sdfPassDataBufferIndex = 0xFFFFFFFF;
     uint32_t                            sdfApplyPipelineIndex = 0xFFFFFFFF;
 
-  public:
-    bool                                enableSSAO = true;
-    float                               ssaoRadius = 0.3f;
-    float                               ssaoBias = 0.1f;
-    float                               ssaoPower = 2.0f;
-    float                               ssaoResolutionScale = 0.5f;
-
-    bool                                enableSSR = true;
-    float                               ssrResolutionScale = 0.5f;
-    float                               ssrRoughnessThreshold = 0.9f;
-    int                                 ssrMaxSteps = 16; 
-    float                               ssrThickness = 0.015f;
-    float                               ssrTemporalBlend = 0.333f;
-
   private:
     // Temporary texture for gaussian blur (mipmapped for per-mip blur passes)
     uint32_t                            tempBlurTextureIndex = 0xFFFFFFFF;
     std::vector<vk::raii::ImageView>    tempBlurMipViews;
 
     bool                                vSync = true;
-    bool                                showBBOXes = false;
 #pragma endregion
 
 
@@ -275,12 +256,6 @@ class Renderer {
     void clearLights();
 
     void toggleVsync();
-    void toggleSSAO();
-    void toggleSSR();
-
-    bool ssrResolutionDirty = false;
-
-    void toggleBBOXes();
 
     void setSkyBox(uint32_t skyboxIndex);
 
@@ -304,7 +279,7 @@ class Renderer {
     void createSurface();
     void createCommandPool();
     void createCommandBuffers();
-    void createShadowDepthBuffer(uint32_t resolution);
+    void createShadowAtlas(uint32_t resolution);
     void createSSAOResources(uint32_t width, uint32_t height);
     void createRoughnessMetalResources(uint32_t width, uint32_t height);
     void createNormalResources(uint32_t width, uint32_t height);

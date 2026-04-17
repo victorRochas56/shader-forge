@@ -107,6 +107,37 @@ struct ImageVisPushConstants {
     int mipLevel;
 };
 
+struct ImageVisSettings {
+    uint32_t imageIndex = 0xFFFFFFFF;
+    ImageVisFlags flags = ImageVisFlags::IMAGE_VIS_NONE;
+    int mipLevel = 0;
+};
+
+struct SSAOSettings {
+    bool enabled = true;
+    float radius = 0.3f;
+    float bias = 0.1f;
+    float power = 2.0f;
+    float resolutionScale = 0.5f;
+};
+
+struct SSRSettings {
+    bool enabled = true;
+    float resolutionScale = 0.5f;
+    float roughnessThreshold = 0.9f;
+    int maxSteps = 16;
+    float thickness = 0.015f;
+    float temporalBlend = 0.333f;
+    bool resolutionDirty = false;
+};
+
+struct RenderFeatures {
+    ImageVisSettings imageVis;
+    SSAOSettings ssao;
+    SSRSettings ssr;
+    bool showBBoxes = false;
+};
+
 struct ShadowPushConstants {
     uint64_t vertexBufferAddress;      // 8
     uint64_t modelMatricesAddress;     // 8  (pre-offset)
@@ -271,7 +302,7 @@ struct LitPassData {
     uint32_t samplerIndex;
     uint32_t lightCount;
     uint32_t shadowSamplerIndex;
-    uint32_t padding0;
+    uint32_t shadowAtlasIndex;
     glm::vec3 cameraPosition;
     uint32_t padding1;
     glm::vec3 cameraForward;
@@ -400,11 +431,128 @@ struct Mesh {
     uint32_t refCount = 0;
 };
 
+enum class QuadTileState : uint8_t { Free, Split, Occupied };
+
+struct ShadowAtlasQuadTreeTile {
+    uint32_t parent = 0xFFFFFFFFu;
+    uint32_t size = 0;
+    QuadTileState state = QuadTileState::Free;
+    std::array<uint32_t,4> children = {0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu};
+};
+
+struct ShadowAtlas {
+    uint32_t textureIndex = 0xFFFFFFFF;
+    std::array<ShadowAtlasQuadTreeTile,SHADOW_ATLAS_QUADTREE_COUNT> quadTree;
+
+    void init() {
+        quadTree[0].size = SHADOW_ATLAS_SIZE;
+        for (uint32_t i = 0; i < SHADOW_ATLAS_QUADTREE_COUNT; ++i) {
+            uint32_t firstChild = 4u * i + 1u;
+            if (firstChild >= SHADOW_ATLAS_QUADTREE_COUNT) continue;
+            uint32_t childSize = quadTree[i].size / 2u;
+            for (uint32_t c = 0; c < 4; ++c) {
+                uint32_t childIdx = firstChild + c;
+                quadTree[i].children[c] = childIdx;
+                quadTree[childIdx].parent = i;
+                quadTree[childIdx].size = childSize;
+            }
+        }
+    }
+
+    bool allocateShadowMap(uint32_t size, uint32_t& ouTile, glm::vec4& outUVRange) {
+        uint32_t target = SHADOW_ATLAS_MIN_TILE;
+        while (target < size) target <<= 1;
+        if (target > SHADOW_ATLAS_SIZE) return false;
+
+        // Best-fit: pick the smallest Free node with size >= target. Descending only
+        // through Split nodes means we naturally prefer Free slots already nested inside
+        // Split subtrees (clustered packing) over fragmenting a fresh large Free area.
+        struct Frame { uint32_t idx, x, y; };
+        Frame stack[64];
+        uint32_t top = 0;
+        stack[top++] = {0u, 0u, 0u};
+
+        uint32_t foundIdx  = 0xFFFFFFFFu;
+        uint32_t foundSize = 0xFFFFFFFFu;
+        uint32_t foundX = 0, foundY = 0;
+
+        while (top) {
+            Frame f = stack[--top];
+            auto& node = quadTree[f.idx];
+            if (node.state == QuadTileState::Occupied) continue;
+            if (node.size < target) continue;
+
+            if (node.state == QuadTileState::Free) {
+                if (node.size < foundSize) {
+                    foundIdx  = f.idx;
+                    foundSize = node.size;
+                    foundX    = f.x;
+                    foundY    = f.y;
+                    if (foundSize == target) break; // exact — can't beat this
+                }
+                continue; // don't descend into Free (whole subtree is already free)
+            }
+
+            // Split: descend into children
+            uint32_t half = node.size / 2u;
+            for (uint32_t c = 0; c < 4; ++c) {
+                uint32_t ch = node.children[c];
+                if (ch == 0xFFFFFFFFu) continue;
+                uint32_t cx = f.x + ((c & 1u) ? half : 0u);
+                uint32_t cy = f.y + ((c & 2u) ? half : 0u);
+                stack[top++] = {ch, cx, cy};
+            }
+        }
+
+        if (foundIdx == 0xFFFFFFFFu) return false;
+
+        // Descend TL splitting Free nodes. (child[0] offsets x/y by 0.)
+        uint32_t idx = foundIdx;
+        while (quadTree[idx].size > target) {
+            quadTree[idx].state = QuadTileState::Split;
+            idx = quadTree[idx].children[0];
+        }
+        quadTree[idx].state = QuadTileState::Occupied;
+
+        ouTile = idx;
+        const float inv = 1.0f / float(SHADOW_ATLAS_SIZE);
+        outUVRange = glm::vec4(
+            float(foundX) * inv,
+            float(foundY) * inv,
+            float(foundX + target) * inv,
+            float(foundY + target) * inv
+        );
+        return true;
+    }
+
+    void freeShadowMap(uint32_t tile) {
+        if (tile >= SHADOW_ATLAS_QUADTREE_COUNT) return;
+        if (quadTree[tile].state != QuadTileState::Occupied) return;
+        quadTree[tile].state = QuadTileState::Free;
+
+        // Roll up: if all siblings are Free, parent collapses back to Free.
+        uint32_t p = quadTree[tile].parent;
+        while (p != 0xFFFFFFFFu) {
+            bool allFree = true;
+            for (uint32_t c = 0; c < 4; ++c) {
+                uint32_t ch = quadTree[p].children[c];
+                if (ch != 0xFFFFFFFFu && quadTree[ch].state != QuadTileState::Free) {
+                    allFree = false;
+                    break;
+                }
+            }
+            if (!allFree) break;
+            quadTree[p].state = QuadTileState::Free;
+            p = quadTree[p].parent;
+        }
+    }
+};
+
 enum class LightType { Point, Directional, Spot, Area, COUNT };
 
 struct GPUCascade {
     glm::mat4 lightSpaceMatrix;
-    uint32_t shadowMapIndex;
+    glm::vec4 shadowAtlasRange;
     float splitDistance;
     float texelSize;
     float worldTexelSize;
@@ -412,7 +560,7 @@ struct GPUCascade {
 
 struct GPUPointFace {
     glm::mat4 lightSpaceMatrix;
-    uint32_t shadowMapIndex;
+    glm::vec4 shadowAtlasRange;
 };
 
 struct GPULight {
@@ -431,7 +579,8 @@ struct GPULight {
 
 struct Cascade {
     glm::mat4 lightSpaceMatrix;
-    uint32_t shadowMapIndex = 0xFFFFFFFF;
+    uint32_t shadowAtlasTile;
+    glm::vec4 shadowAtlasUVRange = glm::vec4(0);
     float splitDistance = 0.0f;
     float texelSize = 0.0f;
     float worldTexelSize = 0.0f;
@@ -439,7 +588,8 @@ struct Cascade {
 
 struct PointShadowFace {
     glm::mat4 lightSpaceMatrix;
-    uint32_t shadowMapIndex = 0xFFFFFFFF;
+    uint32_t shadowAtlasTile;
+    glm::vec4 shadowAtlasUVRange = glm::vec4(0);
 };
 
 // TODO: mark light dirty when geometry in its range moves (not just when the light itself moves)
@@ -449,7 +599,6 @@ struct Light {
     uint32_t nodeIndex = 0;
     float range = 10.0f;
     float intensity = 1.0f;
-    uint32_t shadowMapIndex = 0xFFFFFFFF;
     uint32_t shadowResolution = DEFAULT_SHADOW_RESOLUTION;
     glm::vec4 color = glm::vec4(0, 0, 0, 1);
     glm::mat4 lightSpaceMatrix;
@@ -474,22 +623,21 @@ struct Light {
         gpu.shadowResolution = shadowResolution;
         for (uint32_t i = 0; i < 3; i++) {
             gpu.cascades[i].lightSpaceMatrix = cascades[i].lightSpaceMatrix;
-            gpu.cascades[i].shadowMapIndex = cascades[i].shadowMapIndex;
+            gpu.cascades[i].shadowAtlasRange = cascades[i].shadowAtlasUVRange;
             gpu.cascades[i].splitDistance = cascades[i].splitDistance;
             gpu.cascades[i].texelSize = cascades[i].texelSize;
             gpu.cascades[i].worldTexelSize = cascades[i].worldTexelSize;
         }
         for (uint32_t i = 0; i < 6; i++) {
             gpu.pointFaces[i].lightSpaceMatrix = cubeMapIndices[i].lightSpaceMatrix;
-            gpu.pointFaces[i].shadowMapIndex = cubeMapIndices[i].shadowMapIndex;
+            gpu.pointFaces[i].shadowAtlasRange = cubeMapIndices[i].shadowAtlasUVRange;
         }
         return gpu;
     }
 
     bool operator==(const Light& other) const {
-        return type == other.type && modelMatrixIndex == other.modelMatrixIndex && range == other.range && intensity == other.intensity && shadowMapIndex == other.shadowMapIndex &&
-               shadowResolution == other.shadowResolution && color == other.color && lightSpaceMatrix == other.lightSpaceMatrix && direction == other.direction &&
-               castsShadows == other.castsShadows;
+        return type == other.type && modelMatrixIndex == other.modelMatrixIndex && range == other.range && intensity == other.intensity && shadowResolution == other.shadowResolution && 
+               color == other.color && lightSpaceMatrix == other.lightSpaceMatrix && direction == other.direction && castsShadows == other.castsShadows;
     }
 };
 

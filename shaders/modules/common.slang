@@ -30,7 +30,7 @@ struct LitPass {
     uint samplerIndex;
     uint lightCount;
     uint shadowSamplerIndex;
-    uint padding0;
+    uint shadowAtlasIndex;
     float3 cameraPos;
     uint padding1;
     float3 cameraForward;
@@ -41,7 +41,7 @@ struct LitPass {
 
 struct Cascade {
     float4x4 lightSpaceMatrix;
-    uint shadowMapIndex;
+    float4 shadowAtlasRange;
     float splitDistance;
     float texelSize;
     float worldTexelSize;
@@ -49,7 +49,7 @@ struct Cascade {
 
 struct PointFace {
     float4x4 lightSpaceMatrix;
-    uint shadowMapIndex;
+    float4 shadowAtlasRange;
 };
 
 struct Light {

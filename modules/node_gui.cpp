@@ -225,6 +225,7 @@ void showNodeLightInfo(Node& node, Renderer& renderer) {
             state.lightShadow = light.castsShadows;
             if (ImGui::Checkbox("Enable Shadows", &state.lightShadow)) {
                 if (state.lightShadow) {
+                    light.shadowResolution = DEFAULT_CSM_SHADOW_RESOLUTION;
                     NodeOps::enableLightShadows(light, node.name, renderer);
                 } else {
                     NodeOps::disableLightShadows(light, renderer);

@@ -72,8 +72,8 @@ void InputManager::tickInputState() { //should be only called once in the main a
     }
 
     if (inst.current.keyStates[GLFW_KEY_ESCAPE] == GLFW_PRESS && inst.previous.keyStates[GLFW_KEY_ESCAPE] != GLFW_PRESS) {
-        if (inst.renderer->imageVisIndex != 0xFFFFFFFF) {
-            inst.renderer->imageVisIndex = 0xFFFFFFFF;
+        if (inst.renderer->features.imageVis.imageIndex != 0xFFFFFFFF) {
+            inst.renderer->features.imageVis.imageIndex = 0xFFFFFFFF;
         } else if (inst.materialPickMode) {
             inst.materialPickMode = false;
         } else if (inst.materialEditorState != nullptr && inst.materialEditorState->showEditor) {

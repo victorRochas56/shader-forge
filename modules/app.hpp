@@ -46,7 +46,8 @@ class App {
         renderer.setWindow(window);
         renderer.initVulkan(start_width, start_height);
         renderer.getDescriptorSet().debugDescriptorSet("after_initVulkan");
-        initIMGUI(&renderer);
+        initIMGUI(renderer.getDevice(), renderer.getInstance(), renderer.getGraphicsIndex(),
+                  renderer.getSwapchain(), window);
         EventSystem::init(renderer.sceneGraph);
         
         //load a default environment map on startup
@@ -127,20 +128,20 @@ class App {
         ImGui::NewFrame();
 
         ImGui::Begin("node tree");
-        traverseNodeTree(renderer.sceneGraph.getRootNode(), 0, renderer.sceneGraph.selectedNode, &renderer);
+        traverseNodeTree(renderer.sceneGraph.getRootNode(), 0, renderer.sceneGraph.selectedNode, renderer.sceneGraph);
         ImGui::End();
         
         showNodeInfo(renderer.sceneGraph.getNodes()[renderer.sceneGraph.selectedNode], renderer);
         if (InputManager::getInstance().contextMenuShown) {
-            showActionMenu(0, &renderer, InputManager::getInstance().contextMenuPinX, InputManager::getInstance().contextMenuPinY);
+            showActionMenu(0, renderer.getWindow(), renderer.activeCamera, renderer.sceneGraph, InputManager::getInstance().contextMenuPinX, InputManager::getInstance().contextMenuPinY);
         }
         
         showMaterialEditor(materialEditorState, &renderer);
         showImageViewList(&renderer);
-        showBufferAllocs(&renderer);
-        showDebugWindow(&renderer);
+        showBufferAllocs(renderer.getDescriptorSet(),renderer.assetManager,renderer.getIndirectCommands());
+        showDebugWindow(renderer.culledCount,renderer.cullFovScale);
         showTraces();
-        showToggles(&renderer);
+        showToggles(renderer.features);
         showScenesMenu(&renderer, &sceneManager);
         ImGui::Render();
     }

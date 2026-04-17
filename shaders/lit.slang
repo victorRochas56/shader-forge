@@ -197,25 +197,30 @@ float calculateDirectionalShadow(float3 fragWorldPos, float3 cameraPos, float3 c
     projCoords.x = projCoords.x * 0.5 + 0.5;
     projCoords.y = projCoords.y * 0.5 + 0.5;
 
-    if (projCoords.x < 0.0 || projCoords.x > 1.0 ||
-        projCoords.y < 0.0 || projCoords.y > 1.0 ||
+    // Tighten bounds by the PCF radius so offsets don't leave this cascade's tile
+    float texelSize = cascade.texelSize;
+    if (projCoords.x < texelSize || projCoords.x > 1.0 - texelSize ||
+        projCoords.y < texelSize || projCoords.y > 1.0 - texelSize ||
         projCoords.z < 0.0 || projCoords.z > 1.0) {
         return 0.0;
     }
 
     float currentDepth = projCoords.z - 0.0001f;
 
+    float2 rangeMin  = cascade.shadowAtlasRange.xy;
+    float2 rangeSpan = cascade.shadowAtlasRange.zw - cascade.shadowAtlasRange.xy;
+
     float shadow = 0.0;
-    float texelSize = cascade.texelSize;
     int totalSamples = 9;
 
     for (int x = -1; x <= 1; x++) {
         for (int y = -1; y <= 1; y++) {
-            float2 sampleCoords = projCoords.xy + float2(x, y) * texelSize;
+            float2 local    = projCoords.xy + float2(x, y) * texelSize;
+            float2 atlasUV  = rangeMin + local * rangeSpan;
 
-            float shadowMapDepth = textures[cascade.shadowMapIndex].Sample(
-                samplers[pc.litPassData.shadowSamplerIndex],
-                sampleCoords
+            float shadowMapDepth = textures[pc.litPassData.shadowAtlasIndex].Sample(
+                samplers[pc.litPassData.samplerIndex],
+                atlasUV
             ).r;
 
             if (currentDepth < shadowMapDepth) {
@@ -255,25 +260,29 @@ float calculatePointShadow(float3 fragWorldPos, float3 lightPos, float3 geometri
     projCoords.x = projCoords.x * 0.5 + 0.5;
     projCoords.y = projCoords.y * 0.5 + 0.5;
 
-    if (projCoords.x < 0.0 || projCoords.x > 1.0 ||
-        projCoords.y < 0.0 || projCoords.y > 1.0 ||
+    float texelSize = 1.0 / float(light.shadowResolution);
+    if (projCoords.x < texelSize || projCoords.x > 1.0 - texelSize ||
+        projCoords.y < texelSize || projCoords.y > 1.0 - texelSize ||
         projCoords.z < 0.0 || projCoords.z > 1.0) {
         return 0.0;
     }
 
     float currentDepth = projCoords.z;
 
+    float2 rangeMin  = face.shadowAtlasRange.xy;
+    float2 rangeSpan = face.shadowAtlasRange.zw - face.shadowAtlasRange.xy;
+
     float shadow = 0.0;
     int totalSamples = 9;
-    float texelSize = 1.0 / float(light.shadowResolution);
 
     for (int x = -1; x <= 1; x++) {
         for (int y = -1; y <= 1; y++) {
-            float2 sampleCoords = projCoords.xy + float2(x, y) * texelSize;
+            float2 local    = projCoords.xy + float2(x, y) * texelSize;
+            float2 atlasUV  = rangeMin + local * rangeSpan;
 
-            float shadowMapDepth = textures[face.shadowMapIndex].Sample(
-                samplers[pc.litPassData.shadowSamplerIndex],
-                sampleCoords
+            float shadowMapDepth = textures[pc.litPassData.shadowAtlasIndex].Sample(
+                samplers[pc.litPassData.samplerIndex],
+                atlasUV
             ).r;
 
             if (currentDepth < shadowMapDepth) {

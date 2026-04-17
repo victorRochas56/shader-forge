@@ -3,6 +3,7 @@
 
 #include <string>
 #include <filesystem>
+#include <vulkan/vulkan.hpp>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -15,8 +16,17 @@
 // Forward declarations
 class Renderer;
 class SceneManager;
+class SceneGraph;
+class DescriptorSet;
+class AssetManager;
+class Device;
+class Swapchain;
+struct GLFWwindow;
+struct Camera;
+struct DrawIndexedIndirectCommand;
 class Node;
 struct MaterialEditorState;
+struct RenderFeatures;
 
 //helper functions for IMGUI
 
@@ -50,13 +60,14 @@ static void browseButton(const char* id, char* pathBuffer, size_t bufferSize) {
     }
 }
 #endif
-void initIMGUI(Renderer* renderer);
-void traverseNodeTree(Node& node, uint32_t level, uint32_t selectedNode, Renderer* renderer);
+void initIMGUI(Device& device, vk::Instance instance, uint32_t graphicsQueueFamily,
+               Swapchain& swapchain, GLFWwindow* window);
+void traverseNodeTree(Node& node, uint32_t level, uint32_t selectedNode, SceneGraph& sceneGraph);
 void showMaterialEditor(MaterialEditorState& state, Renderer* renderer);
 void showImageViewList(Renderer* renderer);
-void showActionMenu(uint32_t context, Renderer* renderer, float posX, float posY);
-void showToggles(Renderer* renderer);
+void showActionMenu(uint32_t context, GLFWwindow* window, Camera& camera, SceneGraph& sceneGraph, float posX, float posY);
+void showToggles(RenderFeatures& features);
 void showScenesMenu(Renderer* renderer, SceneManager* sceneManager);
-void showBufferAllocs(Renderer* renderer);
-void showDebugWindow(Renderer* renderer);
+void showBufferAllocs(DescriptorSet& descriptorSet, AssetManager& assetManager, const std::vector<DrawIndexedIndirectCommand>& indirectDraws);
+void showDebugWindow(uint32_t culledCount, float& cullFovScale);
 void showTraces();

@@ -20,7 +20,8 @@ static void check_vk_result(VkResult err) {
         abort();
 }
 
-void initIMGUI(Renderer* renderer) {
+void initIMGUI(Device& device, vk::Instance instance, uint32_t graphicsQueueFamily,
+               Swapchain& swapchain, GLFWwindow* window) {
     VkDescriptorPoolSize pool_sizes[] = {{VK_DESCRIPTOR_TYPE_SAMPLER, 1000},
                                          {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000},
                                          {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000},
@@ -41,7 +42,7 @@ void initIMGUI(Renderer* renderer) {
     pool_info.pPoolSizes = pool_sizes;
 
     VkDescriptorPool imguiPool;
-    VkResult result = vkCreateDescriptorPool(*renderer->getDevice().getDevice(), &pool_info, nullptr, &imguiPool);
+    VkResult result = vkCreateDescriptorPool(*device.getDevice(), &pool_info, nullptr, &imguiPool);
     check_vk_result(result);
 
     // Initialize ImGui
@@ -51,20 +52,20 @@ void initIMGUI(Renderer* renderer) {
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
     // Setup Platform/Renderer backends
-    ImGui_ImplGlfw_InitForVulkan(renderer->getWindow(), true);
+    ImGui_ImplGlfw_InitForVulkan(window, true);
 
     // Get swapchain details
-    uint32_t swapchainImageCount = renderer->getSwapchain().getSwapChainImages().size();
-    vk::Format colorFormat = renderer->getSwapchain().getSwapChainImageFormat();
-    vk::Format depthFormat = findDepthFormat(renderer->getDevice());
+    uint32_t swapchainImageCount = swapchain.getSwapChainImages().size();
+    vk::Format colorFormat = swapchain.getSwapChainImageFormat();
+    vk::Format depthFormat = findDepthFormat(device);
 
     ImGui_ImplVulkan_InitInfo init_info = {};
     init_info.ApiVersion = VK_API_VERSION_1_4;
-    init_info.Instance = renderer->getInstance();
-    init_info.PhysicalDevice = *renderer->getDevice().getPhysicalDevice();
-    init_info.Device = *renderer->getDevice().getDevice();
-    init_info.QueueFamily = renderer->getGraphicsIndex();
-    init_info.Queue = *renderer->getDevice().getGraphicsQueue();
+    init_info.Instance = instance;
+    init_info.PhysicalDevice = *device.getPhysicalDevice();
+    init_info.Device = *device.getDevice();
+    init_info.QueueFamily = graphicsQueueFamily;
+    init_info.Queue = *device.getGraphicsQueue();
     init_info.DescriptorPool = imguiPool;
     init_info.Subpass = 0;
     init_info.MinImageCount = swapchainImageCount;
@@ -92,7 +93,7 @@ void initIMGUI(Renderer* renderer) {
     }
 }
 
-void traverseNodeTree(Node& node, uint32_t level, uint32_t selectedNode, Renderer* renderer) {
+void traverseNodeTree(Node& node, uint32_t level, uint32_t selectedNode, SceneGraph& sceneGraph) {
     std::string displayText = "";
     ImGuiTreeNodeFlags flag = ImGuiTreeNodeFlags_DefaultOpen;
     if(!node.internal) {
@@ -103,12 +104,12 @@ void traverseNodeTree(Node& node, uint32_t level, uint32_t selectedNode, Rendere
         if(node.firstChild == 0) flag |= ImGuiTreeNodeFlags_Leaf;
         if(ImGui::TreeNodeEx(displayText.c_str(),flag)){
             if(ImGui::IsItemClicked())
-                renderer->sceneGraph.selectNode(node.getIndex());
+                sceneGraph.selectNode(node.getIndex());
                 
-            auto& nodes = renderer->sceneGraph.getNodes();
+            auto& nodes = sceneGraph.getNodes();
             uint32_t child = node.firstChild;
             while (child != 0) {
-                traverseNodeTree(nodes[child], level + 1, selectedNode, renderer);
+                traverseNodeTree(nodes[child], level + 1, selectedNode, sceneGraph);
                 child = nodes[child].nextSibling;
             }
             ImGui::TreePop();
@@ -336,8 +337,9 @@ void showMaterialEditor(MaterialEditorState& state, Renderer* renderer) {
 void showImageViewList(Renderer* renderer) {
     ImGui::Begin("Image Views");
 
+    ImageVisSettings& vis = renderer->features.imageVis;
     if (ImGui::Button("Clear Selection")) {
-        renderer->imageVisIndex = 0xFFFFFFFF;
+        vis.imageIndex = 0xFFFFFFFF;
     }
 
     int i = 0;
@@ -346,20 +348,20 @@ void showImageViewList(Renderer* renderer) {
             i++;
             continue;
         }
-        bool selected = (renderer->imageVisIndex == static_cast<uint32_t>(i));
+        bool selected = (vis.imageIndex == static_cast<uint32_t>(i));
         if (selected) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
         if (ImGui::Button(img.source.c_str())) {
-            renderer->imageVisIndex = (selected) ? 0xFFFFFFFF : i;
+            vis.imageIndex = (selected) ? 0xFFFFFFFF : i;
         }
         if (selected) {
             ImGui::PopStyleColor();
             ImGui::SameLine();
             if (ImGui::Button("B&W")){
-                renderer->imageVisFlags ^= ImageVisFlags::B_W_IMAGE;
+                vis.flags ^= ImageVisFlags::B_W_IMAGE;
             }
             ImGui::SameLine();
             if (ImGui::Button("Flip Y")){
-                renderer->imageVisFlags ^= ImageVisFlags::FLIP_VERTICAL;
+                vis.flags ^= ImageVisFlags::FLIP_VERTICAL;
             }
         }
         i++;
@@ -368,52 +370,50 @@ void showImageViewList(Renderer* renderer) {
     ImGui::End();
 }
 
-void showActionMenu(uint32_t context, Renderer* renderer, float posX, float posY) {
-    ImGui::SetNextWindowPos(ImVec2{posX, posY});
+void showActionMenu(uint32_t context, GLFWwindow* window, Camera& camera,
+                    SceneGraph& sceneGraph, float posX, float posY) {
+    ImGui::SetNextWindowPos({posX, posY});
     ImGui::Begin("Action");
     if (ImGui::Button("Add Node")) {
-        glm::vec3 origin;
-        glm::vec3 direction;
-        int width = 0, height = 0;
-        glfwGetWindowSize(renderer->getWindow(), &width, &height);
-        renderer->activeCamera.rayFromScreenCoords((posX / width) * 2.0 - 1.0, (posY / height) * 2.0 - 1.0, &origin, &direction);
-        renderer->sceneGraph.addNode(false, SceneGraph::ROOT_INDEX, origin + direction);
+        glm::vec3 origin, direction;
+        int w = 0, h = 0;
+        glfwGetWindowSize(window, &w, &h);
+        camera.rayFromScreenCoords((posX / w) * 2.0 - 1.0, (posY / h) * 2.0 - 1.0, &origin, &direction);
+        sceneGraph.addNode(false, SceneGraph::ROOT_INDEX, origin + direction);
     }
-
     ImGui::End();
 }
 
-void showToggles(Renderer* renderer){
+void showToggles(RenderFeatures& f){
     ImGui::Begin("Toggles");
-    ImGui::SliderInt("ImageMip",&renderer->imageVisMipLevel,0,6);
+    ImGui::SliderInt("ImageMip", &f.imageVis.mipLevel, 0, 6);
     if(ImGui::Button("Depth Buffer")){
-        renderer->imageVisFlags ^= ImageVisFlags::LINEARIZE;
+        f.imageVis.flags ^= ImageVisFlags::LINEARIZE;
     }
     if(ImGui::Button("SSAO")){
-        renderer->toggleSSAO();
+        f.ssao.enabled = !f.ssao.enabled;
     }
-    if(renderer->enableSSAO){
-        ImGui::SliderFloat("AO Radius",&renderer->ssaoRadius,0.01f,10.0f);
-        ImGui::SliderFloat("AO Bias",&renderer->ssaoBias,0.01f,0.1f);
-        ImGui::SliderFloat("AO Power",&renderer->ssaoPower,0.01f,5.0f);
+    if(f.ssao.enabled){
+        ImGui::SliderFloat("AO Radius", &f.ssao.radius, 0.01f, 10.0f);
+        ImGui::SliderFloat("AO Bias", &f.ssao.bias, 0.01f, 0.1f);
+        ImGui::SliderFloat("AO Power", &f.ssao.power, 0.01f, 5.0f);
     }
     if(ImGui::Button("SSR")){
-        renderer->toggleSSR();
+        f.ssr.enabled = !f.ssr.enabled;
     }
-    if(renderer->enableSSR){
-        ImGui::SliderInt("Max Steps",&renderer->ssrMaxSteps,16,128);
-        ImGui::SliderFloat("Thickness",&renderer->ssrThickness,0.01f,5.0f);
-        ImGui::SliderFloat("Roughness Threshold",&renderer->ssrRoughnessThreshold,0.0f,1.0f);
-        ImGui::SliderFloat("Temporal Blend",&renderer->ssrTemporalBlend,0.01f,1.0f);
-        if(ImGui::SliderFloat("Resolution Scale",&renderer->ssrResolutionScale,0.25f,1.0f)){
-            renderer->ssrResolutionDirty = true;
+    if(f.ssr.enabled){
+        ImGui::SliderInt("Max Steps", &f.ssr.maxSteps, 16, 128);
+        ImGui::SliderFloat("Thickness", &f.ssr.thickness, 0.01f, 5.0f);
+        ImGui::SliderFloat("Roughness Threshold", &f.ssr.roughnessThreshold, 0.0f, 1.0f);
+        ImGui::SliderFloat("Temporal Blend", &f.ssr.temporalBlend, 0.01f, 1.0f);
+        if(ImGui::SliderFloat("Resolution Scale", &f.ssr.resolutionScale, 0.25f, 1.0f)){
+            f.ssr.resolutionDirty = true;
         }
     }
     if(ImGui::Button("Show BBOXes")){
-        renderer->toggleBBOXes();
+        f.showBBoxes = !f.showBBoxes;
     }
     ImGui::End();
-
 }
 
 void showScenesMenu(Renderer* renderer,SceneManager* sceneManager){
@@ -432,7 +432,7 @@ void showScenesMenu(Renderer* renderer,SceneManager* sceneManager){
     ImGui::End();
 }
 
-void showBufferAllocs(Renderer* renderer){
+void showBufferAllocs(DescriptorSet& descriptorSet, AssetManager& assetManager, const std::vector<DrawIndexedIndirectCommand>& indirectDraws){
 
     ImGui::Begin("Buffers");
 
@@ -440,7 +440,7 @@ void showBufferAllocs(Renderer* renderer){
 
     ImGui::Text("Variable Buffers");
     int i =0;
-    for(auto& buffer : renderer->getDescriptorSet().getVariableBuffers()){
+    for(auto& buffer : descriptorSet.getVariableBuffers()){
         vk::DeviceSize usedBytes = 0;
         for (const auto& alloc : buffer->allocations)
             usedBytes += alloc.size;
@@ -453,7 +453,7 @@ void showBufferAllocs(Renderer* renderer){
 
     ImGui::Text("Fixed Buffers");
     i =0;
-    for(auto& buffer : renderer->getDescriptorSet().getFixedBuffers()){
+    for(auto& buffer : descriptorSet.getFixedBuffers()){
         uint32_t inUse = 0;
         for (const auto& alloc : buffer->allocations)
             if (alloc.inUse) inUse++;
@@ -470,7 +470,7 @@ void showBufferAllocs(Renderer* renderer){
     ImGui::Text("Textures");
     vk::DeviceSize totalTexBytes = 0;
     int texCount = 0;
-    for (const auto& tex : renderer->getDescriptorSet().getTextureResources()) {
+    for (const auto& tex : descriptorSet.getTextureResources()) {
         if (tex.isEmpty()) continue;
         // base RGBA8 size * ~1.33 for mip chain
         vk::DeviceSize baseSize = (vk::DeviceSize)tex.width * tex.height * 4;
@@ -481,14 +481,14 @@ void showBufferAllocs(Renderer* renderer){
     ImGui::Text("%d textures | ~%.2f MB (with mips)", texCount, totalTexBytes / (1024.0f * 1024.0f));
     grandTotal += totalTexBytes;
 
-    ImGui::Text("Samplers: %d", (int)renderer->getDescriptorSet().getSamplerResources().size());
+    ImGui::Text("Samplers: %d", (int)descriptorSet.getSamplerResources().size());
 
     ImGui::Separator();
     ImGui::Text("Meshes");
     vk::DeviceSize totalVertexBytes = 0;
     vk::DeviceSize totalIndexBytes = 0;
     int meshCount = 0;
-    for (const auto& mesh : renderer->assetManager.meshes) {
+    for (const auto& mesh : assetManager.meshes) {
         if (mesh.freed) continue;
         meshCount++;
         totalVertexBytes += (vk::DeviceSize)mesh.vertexCount * mesh.vertexStride;
@@ -500,9 +500,9 @@ void showBufferAllocs(Renderer* renderer){
 
     ImGui::Separator();
     uint32_t totalTris = 0;
-    for (const auto& cmd : renderer->getIndirectCommands())
+    for (const auto& cmd : indirectDraws)
         totalTris += cmd.indexCount / 3;
-    ImGui::Text("Triangles: %u (%u draws)", totalTris, (uint32_t)renderer->getIndirectCommands().size());
+    ImGui::Text("Triangles: %u (%u draws)", totalTris, (uint32_t)indirectDraws.size());
 
     ImGui::Separator();
     float grandTotalMB = grandTotal / (1024.0f * 1024.0f);
@@ -512,10 +512,10 @@ void showBufferAllocs(Renderer* renderer){
     ImGui::End();
 }
 
-void showDebugWindow(Renderer* renderer){
+void showDebugWindow(uint32_t culledCount, float& cullFovScale){
     ImGui::Begin("Debug");
-    ImGui::Text(("Culled : " + std::to_string(renderer->culledCount)).c_str());
-    ImGui::SliderFloat("Cull FOV Scale", &renderer->cullFovScale, 0.1f, 1.0f);
+    ImGui::Text(("Culled : " + std::to_string(culledCount)).c_str());
+    ImGui::SliderFloat("Cull FOV Scale", &cullFovScale, 0.1f, 1.0f);
     ImGui::End();
 }
 
