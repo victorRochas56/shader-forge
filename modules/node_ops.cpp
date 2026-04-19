@@ -30,6 +30,9 @@ void assignMesh(Node& node, uint32_t meshIndex, Renderer& renderer) {
         node.boundingBoxMax = glm::max(node.boundingBoxMax, worldCorner);
     }
     node.boundingBoxValid = true;
+    // Flow through syncDirtyNodes so LightInfluence reconciles this new AABB
+    // against every point light.
+    node.transformDirty = true;
 }
 
 void assignMaterial(Node& node, uint32_t materialIndex, Renderer& renderer) {
@@ -92,7 +95,7 @@ void assignLight(Node& node, Light light, Renderer& renderer) {
         enableLightShadows(light, node.name, renderer);
     }
 
-    node.lightIndex = (*renderer.bindless.descriptorSet).allocateFixedBuffer<GPULight>(renderer.getLightBufferIndex(), light.toGPU());
+    node.lightIndex = (*renderer.bindless.descriptorSet).allocateFixedBuffer<GPULight>(renderer.getLightBufferIndex(), light.toGPU(node.getWorldPosition(), node.forward()));
     renderer.scene.addLight(node.lightIndex, light);
     std::cout << "added light at index : " << node.lightIndex << std::endl;
     node.transformDirty = true;

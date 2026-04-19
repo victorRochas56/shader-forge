@@ -28,6 +28,7 @@ struct SDFPushConstants {
     float4x4  invViewProjection;
 };
 
+//need ConstantBuffer because it contain BDAs  
 [[vk::push_constant]] ConstantBuffer<SDFPushConstants> sdfPC;
 
 struct VSOutput {

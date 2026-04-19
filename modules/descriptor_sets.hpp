@@ -222,6 +222,18 @@ class DescriptorSet {
         samplerBindingIndex = bindingIndex;
         bindingIndex++;
 
+        // Dedicated single-slot comparison sampler for hardware PCF shadow sampling.
+        // Kept separate from the bindless sampler array so the shader can declare it
+        // as SamplerComparisonState without aliasing a SamplerState binding.
+        layoutBindings.push_back(vk::DescriptorSetLayoutBinding{.binding = bindingIndex,
+                                                                .descriptorType = vk::DescriptorType::eSampler,
+                                                                .descriptorCount = 1,
+                                                                .stageFlags = vk::ShaderStageFlagBits::eFragment | vk::ShaderStageFlagBits::eVertex});
+        poolSizes.push_back(vk::DescriptorPoolSize(vk::DescriptorType::eSampler, 1));
+        bindingFlags.push_back({});
+        shadowCompareSamplerBindingIndex = bindingIndex;
+        bindingIndex++;
+
         // Storage buffers are now accessed via Buffer Device Address (BDA) — no descriptor bindings needed
 
         vk::DescriptorPoolCreateInfo poolInfo{};
@@ -367,6 +379,37 @@ class DescriptorSet {
 
     //TODO
     void freeSampler(uint32_t index) {  }
+
+    // Allocates the dedicated shadow comparison sampler at its own descriptor binding.
+    // Only one such sampler exists; re-calling this replaces the previous one.
+    void allocateShadowCompareSampler(vk::Filter filter, vk::SamplerAddressMode addressMode, vk::CompareOp compareOp, vk::BorderColor borderColor) {
+        vk::SamplerCreateInfo createInfo{.pNext = nullptr,
+                                         .flags = {},
+                                         .magFilter = filter,
+                                         .minFilter = filter,
+                                         .mipmapMode = vk::SamplerMipmapMode::eNearest,
+                                         .addressModeU = addressMode,
+                                         .addressModeV = addressMode,
+                                         .addressModeW = addressMode,
+                                         .anisotropyEnable = VK_FALSE,
+                                         .maxAnisotropy = 1.0f,
+                                         .compareEnable = VK_TRUE,
+                                         .compareOp = compareOp,
+                                         .minLod = 0.0,
+                                         .maxLod = 0.0,
+                                         .borderColor = borderColor};
+        shadowCompareSampler = vk::raii::Sampler(device.getDevice(), createInfo);
+
+        vk::DescriptorImageInfo imageInfo{.sampler = **shadowCompareSampler};
+        vk::WriteDescriptorSet write{.sType = vk::StructureType::eWriteDescriptorSet,
+                                     .dstSet = *descriptorSet,
+                                     .dstBinding = shadowCompareSamplerBindingIndex,
+                                     .dstArrayElement = 0,
+                                     .descriptorCount = 1,
+                                     .descriptorType = vk::DescriptorType::eSampler,
+                                     .pImageInfo = &imageInfo};
+        device.getDevice().updateDescriptorSets(write, {});
+    }
 
     template <typename T> uint32_t createFixedBuffer(uint32_t maxElements = MAX_FIXED_BUFFER, bool usesDynamicOffset = false) {
         vk::DeviceSize bufferSize = maxElements * sizeof(T);
@@ -584,6 +627,8 @@ class DescriptorSet {
     std::vector<SamplerResource> samplerResources;
     uint32_t samplerBindingIndex;
     std::queue<uint32_t> freeSamplerSlots;
+    uint32_t shadowCompareSamplerBindingIndex;
+    std::optional<vk::raii::Sampler> shadowCompareSampler;
     std::vector<TextureResource> textureResources;
     uint32_t textureBindingIndex;
     uint32_t cubemapBindingIndex;

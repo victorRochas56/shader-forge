@@ -219,6 +219,9 @@ struct Camera {
         return corners;
     }
 
+    glm::vec3 getLookDir() {
+        return glm::normalize(target - position);
+    }
 };
 
 

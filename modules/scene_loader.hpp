@@ -17,7 +17,7 @@ and
 parses a file and loads a scene from it
 */
 
-class SceneManager {
+class SceneLoader {
   public:
     void clearScene(Renderer& renderer) { clearSceneInternal(renderer); }
 

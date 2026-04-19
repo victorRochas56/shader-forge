@@ -54,9 +54,11 @@ struct PointFace {
 
 struct Light {
     uint type;
-    uint modelMatrixIndex;
+    float3 position;
+    float3 direction;
     float range;
     float intensity;
+    uint padding[3];
     float4 color;
     int castsShadows;
     int showCascades;
@@ -98,7 +100,16 @@ TextureCube cubemaps[];
 [[vk::binding(2,0)]]
 SamplerState samplers[];
 
+[[vk::binding(3,0)]]
+SamplerComparisonState shadowCmpSampler;
 
+
+
+float3 reconstructPixelRayDir(float2 uv, float4x4 view, float proj00, float proj11) {
+    float2 ndc = uv * 2.0 - 1.0;
+    float3 viewRay = float3(ndc.x / proj00, ndc.y / proj11, -1.0);
+    return normalize(mul(viewRay, (float3x3)view));
+}
 
 float3 reconstructViewPos(float2 uv, float depth, float4x4 invProjection) {
     float4 clip = float4(uv * 2.0 - 1.0, depth, 1.0);
@@ -161,4 +172,15 @@ VertexOutput litVertMain(uint vertexID, uint drawID)
     output.bitangent = normalize(cross(output.normal, output.tangent));
     output.drawID = drawID;
     return output;
+}
+
+uint pcgHash(uint x) {
+    uint state = x * 747796405u + 2891336453u;
+    uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+float rand(inout uint seed) {
+    seed = pcgHash(seed);
+    return float(seed) * (1.0 / 4294967296.0);
 }

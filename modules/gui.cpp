@@ -7,7 +7,7 @@
 #include "material_editor_state.hpp"
 #include "pipelines.hpp"
 #include "swapchain.hpp"
-#include "scenes.hpp"
+#include "scene_loader.hpp"
 #define GLFW_INCLUDE_NONE
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
@@ -416,18 +416,18 @@ void showToggles(RenderFeatures& f){
     ImGui::End();
 }
 
-void showScenesMenu(Renderer* renderer,SceneManager* sceneManager){
+void showScenesMenu(Renderer* renderer,SceneLoader* sceneLoader){
     ImGui::Begin("Scene Manager");
     if(ImGui::Button("Save Scene")){
-        sceneManager->saveScene("scene.scn", *renderer);
+        sceneLoader->saveScene("scene.scn", *renderer);
     }
     ImGui::SameLine();
     if(ImGui::Button("Load Scene")){
-        sceneManager->loadScene("scene.scn", *renderer);
+        sceneLoader->loadScene("scene.scn", *renderer);
     }
     ImGui::SameLine();
     if(ImGui::Button("Clear Scene")){
-        sceneManager->clearScene(*renderer);
+        sceneLoader->clearScene(*renderer);
     }
     ImGui::End();
 }

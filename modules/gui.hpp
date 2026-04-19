@@ -15,7 +15,7 @@
 
 // Forward declarations
 class Renderer;
-class SceneManager;
+class SceneLoader;
 class SceneGraph;
 class DescriptorSet;
 class AssetManager;
@@ -67,7 +67,7 @@ void showMaterialEditor(MaterialEditorState& state, Renderer* renderer);
 void showImageViewList(Renderer* renderer);
 void showActionMenu(uint32_t context, GLFWwindow* window, Camera& camera, SceneGraph& sceneGraph, float posX, float posY);
 void showToggles(RenderFeatures& features);
-void showScenesMenu(Renderer* renderer, SceneManager* sceneManager);
+void showScenesMenu(Renderer* renderer, SceneLoader* sceneLoader);
 void showBufferAllocs(DescriptorSet& descriptorSet, AssetManager& assetManager, const std::vector<DrawIndexedIndirectCommand>& indirectDraws);
 void showDebugWindow(uint32_t culledCount, float& cullFovScale);
 void showTraces();

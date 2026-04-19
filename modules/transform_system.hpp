@@ -1,6 +1,7 @@
 #pragma once
 #include "scene_elements.hpp"
 #include "descriptor_sets.hpp"
+#include "light_influence.hpp"
 #include "structs.hpp"
 #include <map>
 #include <vector>
@@ -39,13 +40,8 @@ namespace TransformSystem {
             ds.updateFixedBufferWithOffset(modelMatrixBufferIndex, node.modelMatrixIndices[i], offsetTransform, i);
         }
 
-        // Update light direction if node has a light
-        if (node.lightIndex != MAX_LIGHTS && lights.contains(node.lightIndex)) {
-            lights[node.lightIndex].direction = glm::normalize(node.worldTransform[0]);
-            lights[node.lightIndex].shadowDirty = true;
-        }
-
-        // Update world-space bounding box if node has a mesh
+        // Update world-space bounding box if node has a mesh.
+        // Done before light reconciliation so the new AABB is what gets tested.
         if (node.meshIndex < meshes.size() && node.boundingBoxValid) {
             const auto& mesh = meshes[node.meshIndex];
             glm::vec3 corners[8] = {
@@ -63,6 +59,18 @@ namespace TransformSystem {
                 node.boundingBoxMax = glm::max(node.boundingBoxMax, worldCorner);
             }
         }
+
+        // Update light direction if node has a light, and rebuild that light's
+        // influence set since its world position may have moved.
+        if (node.lightIndex != MAX_LIGHTS && lights.contains(node.lightIndex)) {
+            Light& L = lights[node.lightIndex];
+            L.direction = glm::normalize(node.worldTransform[2]);
+            L.shadowDirty = true;
+            LightInfluence::rebuildLightSet(L, nodes);
+        }
+
+        // Reconcile this node's AABB against every shadow-casting point light.
+        LightInfluence::onMeshedNodeTouched(node, nodes, lights);
 
         uint32_t child = node.firstChild;
         while (child != 0) {

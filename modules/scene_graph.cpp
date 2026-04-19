@@ -1,4 +1,5 @@
 #include "scene_graph.hpp"
+#include "light_influence.hpp"
 #include "renderer.hpp"
 
 void SceneGraph::init(Renderer* renderer) {
@@ -43,6 +44,8 @@ uint32_t SceneGraph::addNode(bool internal,uint32_t parentIndex, glm::vec3 posit
 void SceneGraph::killNode(uint32_t idx) {
     Node& node = nodes[idx];
     if (!node.alive) return;
+
+    LightInfluence::onNodeRemoved(node, renderer->scene.getLightsMutable());
 
     node.alive = false;
     unlinkChild(idx);

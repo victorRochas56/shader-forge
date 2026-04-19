@@ -35,9 +35,9 @@ Vertex loadVertex(float* buffer, uint vertexIndex, uint stride, uint offset)
 {
     Vertex vert;
     uint floatOffset = (offset + vertexIndex * stride) / 4;
-    float* v = buffer + floatOffset;
+    float3* v = (float3*)(buffer + floatOffset);
 
-    vert.position = float3(v[0], v[1], v[2]);
+    vert.position = v[0];
 
     return vert;
 }
@@ -45,12 +45,12 @@ Vertex loadVertex(float* buffer, uint vertexIndex, uint stride, uint offset)
 [shader("vertex")]
 VertexOutput vertMain(uint vertexID : SV_VertexID, uint drawID : SV_DrawIndex)
 {
-    // Fetch per-draw data using gl_DrawID (SV_DrawIndex in SLANG)
     ShadowDrawData drawData = pc.shadowDrawData[drawID];
 
+    // Issue matrix load first so its latency overlaps the vertex fetch.
+    float4x4 modelMatrix = pc.modelMatrices[drawData.modelMatrixIndex];
     Vertex vertex = loadVertex(pc.vertexBuffer, vertexID, drawData.vertexStride, drawData.vertexOffset);
 
-    float4x4 modelMatrix = pc.modelMatrices[drawData.modelMatrixIndex];
     float4 worldPos = mul(modelMatrix, float4(vertex.position, 1.0));
 
     VertexOutput output;

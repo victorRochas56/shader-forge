@@ -23,7 +23,7 @@
 
 // TODO clustered lights? (forward +)
 //      pass the N nearest lights to the lit shader
-// TODO point(done), spot and area lights
+// TODO spot and area lights
 // TODO node deletion
 // TODO multithread command buffer recording
 // volumetrics
@@ -63,7 +63,7 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     // these buffers store the data once per frame in flight since they are usually accessed every frame by the CPU
     modelMatrixBufferIndex = bindless.descriptorSet->createFixedBuffer<glm::mat4>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
     lightBufferIndex = bindless.descriptorSet->createFixedBuffer<GPULight>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
-    shadowDrawDataBufferIndex = bindless.descriptorSet->createFixedBuffer<ShadowDrawData>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
+    shadowDrawDataBufferIndex = bindless.descriptorSet->createFixedBuffer<ShadowDrawData>(MAX_FRAMES_IN_FLIGHT * MAX_SHADOW_CASTERS * MAX_FIXED_BUFFER, true);
     litPassDataBufferIndex = bindless.descriptorSet->createFixedBuffer<LitPassData>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
     ssrPassDataBufferIndex = bindless.descriptorSet->createFixedBuffer<SSRPassData>(MAX_FRAMES_IN_FLIGHT, true);
 
@@ -71,7 +71,7 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         bindless.descriptorSet->setBufferFrameOffset(modelMatrixBufferIndex, i, MAX_FIXED_BUFFER * i);
         bindless.descriptorSet->setBufferFrameOffset(lightBufferIndex, i, MAX_FIXED_BUFFER * i);
-        bindless.descriptorSet->setBufferFrameOffset(shadowDrawDataBufferIndex, i, MAX_FIXED_BUFFER * i);
+        bindless.descriptorSet->setBufferFrameOffset(shadowDrawDataBufferIndex, i, MAX_SHADOW_CASTERS * MAX_FIXED_BUFFER * i);
         bindless.descriptorSet->setBufferFrameOffset(litPassDataBufferIndex,i, MAX_FIXED_BUFFER * i);
         bindless.descriptorSet->setBufferFrameOffset(ssrPassDataBufferIndex,i,i);
     }
@@ -83,7 +83,9 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     }
     
     // indirect draw buffers (separate for shadow and lit passes)
-    std::tie(indirectDrawBuffer, indirectDrawBufferMemory, indirectDrawBufferMapped)       = bindless.resourceManager->createIndirectDrawBuffer();
+    // Shadow indirect buffer needs one slot per shadow-casting light per frame so multiple lights
+    // recorded into the same command buffer don't overwrite each other's draw commands.
+    std::tie(indirectDrawBuffer, indirectDrawBufferMemory, indirectDrawBufferMapped)       = bindless.resourceManager->createIndirectDrawBuffer(MAX_SHADOW_CASTERS);
     std::tie(litIndirectDrawBuffer, litIndirectDrawBufferMemory, litIndirectDrawBufferMapped) = bindless.resourceManager->createIndirectDrawBuffer();
     
     //init gizmos
@@ -106,6 +108,7 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     createSSRResources(ssrW, ssrH);
     createHiZResources(startWidth, startHeight);
     createSDFResources(startWidth,startHeight);
+    createVolumetricResources(startWidth,startHeight);
 
 #if DEBUG == 1
     bindless.descriptorSet->debugDescriptorSet("after_createDescriptorSet");
@@ -117,15 +120,20 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
                                                          vk::CompareOp::eLessOrEqual, vk::BorderColor::eFloatOpaqueBlack);
     depthSamplerIndex = bindless.descriptorSet->allocateSampler(vk::Filter::eNearest, vk::SamplerMipmapMode::eNearest, vk::SamplerAddressMode::eClampToEdge, VK_FALSE, 16.0, VK_FALSE,
                                                        vk::CompareOp::eLessOrEqual, vk::BorderColor::eFloatOpaqueBlack);
-    shadowSamplerIndex = bindless.descriptorSet->allocateSampler(vk::Filter::eNearest,                   // Nearest filtering for PCF (shader does the filtering)
-                                                        vk::SamplerMipmapMode::eNearest,        // No mipmaps
-                                                        vk::SamplerAddressMode::eClampToBorder, // Clamp to avoid wrapping
-                                                        VK_FALSE,                               // No anisotropy needed
+    shadowSamplerIndex = bindless.descriptorSet->allocateSampler(vk::Filter::eNearest,
+                                                        vk::SamplerMipmapMode::eNearest,
+                                                        vk::SamplerAddressMode::eClampToBorder,
+                                                        VK_FALSE,
                                                         1.0f,
-                                                        VK_FALSE, // No comparison sampler for manual PCF
+                                                        VK_FALSE,
                                                         vk::CompareOp::eLessOrEqual,
-                                                        vk::BorderColor::eFloatOpaqueWhite // 1.0 = far depth = not in shadow
+                                                        vk::BorderColor::eFloatOpaqueWhite
     );
+    // Dedicated hardware-PCF comparison sampler — lives at its own binding.
+    bindless.descriptorSet->allocateShadowCompareSampler(vk::Filter::eLinear,
+                                                        vk::SamplerAddressMode::eClampToBorder,
+                                                        vk::CompareOp::eLess,
+                                                        vk::BorderColor::eFloatOpaqueWhite);
     // Default albedo (white)
     std::array<uint8_t, 4> whiteColor = {255, 255, 255, 255};
     auto [albedoImage, albedoMemory, albedoImageView] = bindless.resourceManager->createTexture(whiteColor.data(), 1, 1, vk::Format::eR8G8B8A8Srgb);
@@ -252,15 +260,15 @@ void Renderer::drawFrame() {
 
     for (auto& [id, light] : scene.lights) {
         if (light.castsShadows == 1) {
+            glm::vec3 lightDir = scene.sceneGraph.getNode(light.nodeIndex).forward(); 
+            glm::vec3 lightPos = scene.sceneGraph.getNode(light.nodeIndex).getWorldPosition();
             if (light.type == LightType::Directional) {
                 // CSM depends on camera — always recalculate
                 calculateCascadedLightSpaceMatrices(light, scene.activeCamera, this);
-                bindless.descriptorSet->updateFixedBufferWithOffset<GPULight>(lightBufferIndex, id, light.toGPU(), gpu.currentFrame);
+                bindless.descriptorSet->updateFixedBufferWithOffset<GPULight>(lightBufferIndex, id, light.toGPU(lightPos,lightDir), gpu.currentFrame);
             } else if (light.type == LightType::Point && light.shadowDirty) {
-                glm::mat4 modelMatrix = scene.sceneGraph.getNodes()[light.nodeIndex].worldTransform;
-                glm::vec3 lightPos = glm::vec3(modelMatrix[3]);
                 calculatePointLightFaceMatrices(light, lightPos);
-                bindless.descriptorSet->updateFixedBufferWithOffset<GPULight>(lightBufferIndex, id, light.toGPU(), gpu.currentFrame);
+                bindless.descriptorSet->updateFixedBufferWithOffset<GPULight>(lightBufferIndex, id, light.toGPU(lightPos,lightDir), gpu.currentFrame);
             }
         }
     }
@@ -378,7 +386,8 @@ void Renderer::handleSwapchainResize() {
         createColorResolveResources(width, height);
         createSSRResources(ssrW, ssrH);
         createHiZResources(width, height);
-        createSDFResources(width,height);
+        createSDFResources(width, height);
+        createVolumetricResources(width, height);
     }
     scene.activeCamera.aspectRatio = static_cast<float>(width) / static_cast<float>(height);
     scene.activeCamera.calculateViewProjectionMatrix();
@@ -641,6 +650,22 @@ void Renderer::createSDFResources(uint32_t width, uint32_t height) {
     }
 }
 
+void Renderer::createVolumetricResources(uint32_t width, uint32_t height) {
+    createOrResizeRenderTarget(volTextureIndex,width,height,gpu.getSwapchain().getSwapChainImageFormat(),"internal/volumetrics");
+
+    if (volPipelineIndex == 0xFFFFFFFF) {
+        volPipelineIndex = 
+        bindless.pipelineManager->createPipeline<VolumetricPushConstants>(PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
+                                                           vk::False, "shaders/volumetrics.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet());
+    }
+    // apply pipeline
+    if (volApplyPipelineIndex == 0xFFFFFFFF) {
+        volApplyPipelineIndex = bindless.pipelineManager->createPipeline<VolumetricApplyPushConstants>(
+            PipelineCategory::POSTPROCESS_ALPHA_BLEND, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone,
+            vk::False, vk::False, "shaders/volumetrics_apply.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet());
+    }
+}
+
 /////=================================================RENDERING=================================================/////
 
 void Renderer::recordCommandBuffer(uint32_t imageIndex) {
@@ -649,15 +674,21 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
 
     Tracer::startTrace("record shadow pass");
     
-    bindless.resourceManager->transitionImageLayout(&cmd, *bindless.descriptorSet->getTextureResource(scene.shadowAtlas.textureIndex).image, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
+    bindless.resourceManager->transitionImageLayout(&cmd, *bindless.descriptorSet->getTextureResource(scene.shadowAtlas.textureIndex).image, vk::ImageLayout::eDepthReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
+    uint32_t shadowSlot = 0;
     for (auto& [lightId, light] : scene.lights) {
         if (light.castsShadows != 1) continue;
         // Skip point lights whose shadow maps are already up to date
         if (light.type == LightType::Point && !light.shadowDirty) continue;
-        recordShadowPass(cmd, light);
+        if (shadowSlot >= MAX_SHADOW_CASTERS) {
+            std::cerr << "Warning: more than MAX_SHADOW_CASTERS shadow-casting lights in a frame; dropping extras" << std::endl;
+            break;
+        }
+        recordShadowPass(cmd, light, shadowSlot);
         if (light.type == LightType::Point) light.shadowDirty = false;
+        shadowSlot++;
     }
-    bindless.resourceManager->transitionImageLayout(&cmd, *bindless.descriptorSet->getTextureResource(scene.shadowAtlas.textureIndex).image, vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+    bindless.resourceManager->transitionImageLayout(&cmd, *bindless.descriptorSet->getTextureResource(scene.shadowAtlas.textureIndex).image, vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eDepthReadOnlyOptimal);
 
     Tracer::endTrace("record shadow pass");
 
@@ -674,6 +705,11 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
     if (features.ssao.enabled && ssaoPipelineIndex != 0xFFFFFFFF)
         recordSSAOPass(cmd, imageIndex);
     Tracer::endTrace("record ssao pass");
+
+    Tracer::startTrace("record Volumetric pass");
+    if(volPipelineIndex != 0xFFFFFFFF) {
+        recordVolumetricsPass(cmd, imageIndex);
+    }
 
     Tracer::startTrace("record SDF pass");
     if(sdfPipelineIndex != 0xFFFFFFFF)
@@ -692,7 +728,8 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
 }
 
 template <typename PerMeshFn>
-void Renderer::buildGeometryDrawCommands(const std::array<Plane, 6>& frustumPlanes, bool doCulling, PerMeshFn&& perMeshFn) {
+void Renderer::buildGeometryDrawCommands(const std::array<Plane, 6>& frustumPlanes, bool doCulling, PerMeshFn&& perMeshFn,
+                                         const std::function<bool(const Node&)>& nodeFilter) {
     if (renderListDirty) {
         std::sort(renderEntries.begin(), renderEntries.end(), [](const RenderEntry& a, const RenderEntry& b) {
             return a.shaderPipelineIndex < b.shaderPipelineIndex;
@@ -720,6 +757,8 @@ void Renderer::buildGeometryDrawCommands(const std::array<Plane, 6>& frustumPlan
             }
             continue;
         }
+
+        if (nodeFilter && !nodeFilter(*node)) continue;
 
         if (node->isBoundingBoxValid() && doCulling) {
             glm::vec3 worldMin, worldMax;
@@ -1241,7 +1280,7 @@ void Renderer::recordImageVisPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
                        vk::AttachmentLoadOp::eLoad);
 }
 
-void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light) {
+void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light, uint32_t shadowSlot) {
     auto& currentPipeline = bindless.pipelineManager->getBeforeGeoPipelines()[shadowPipelineIndex];
     vk::Buffer indexBufferHandle = bindless.descriptorSet->getVariableBuffer(indexBufferIndex);
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, currentPipeline->pipeline);
@@ -1250,14 +1289,24 @@ void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light) {
     // Build indirect draw commands once — identical across all faces/cascades since culling is off
     std::array<Plane, 6> dummyPlanes{};
     drawDataList.clear();
+    // Point lights only need to draw casters inside their range — LightInfluence
+    // keeps that set current, so we filter by it here. Directional lights skip
+    // the filter (they affect all geometry).
+    std::function<bool(const Node&)> nodeFilter;
+    if (light.type == LightType::Point) {
+        nodeFilter = [&light](const Node& n) { return light.influencedNodes.count(n.nodeIndex) != 0; };
+    }
     buildGeometryDrawCommands(dummyPlanes, false, [&](const auto& mesh, auto& node, const auto& material) {
         drawDataList.push_back({.vertexAllocationIndex = mesh.vertexAllocationIndex,
                                 .vertexOffset = static_cast<uint32_t>(mesh.vertexOffset),
                                 .vertexStride = mesh.vertexStride,
                                 .modelMatrixIndex = node.getModelMatrixIndex()});
-    });
+    }, nodeFilter);
 
-    vk::DeviceSize frameByteOffset = gpu.currentFrame * MAX_INDIRECT_COMMANDS * sizeof(DrawIndexedIndirectCommand);
+    // Per-light slot within the frame so multiple shadow-casting lights don't stomp on each
+    // other's indirect commands / draw data before the GPU reads them.
+    uint32_t slotIdx = gpu.currentFrame * MAX_SHADOW_CASTERS + shadowSlot;
+    vk::DeviceSize frameByteOffset = static_cast<vk::DeviceSize>(slotIdx) * MAX_INDIRECT_COMMANDS * sizeof(DrawIndexedIndirectCommand);
 
     // Upload indirect commands and draw data once
     if (!indirectCommands.empty()) {
@@ -1265,8 +1314,8 @@ void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light) {
 
         auto* shadowDataBuffer = bindless.descriptorSet->getFixedBufferMappedData<ShadowDrawData>(shadowDrawDataBufferIndex);
         if (shadowDataBuffer) {
-            uint32_t frameOffset = gpu.currentFrame * MAX_FIXED_BUFFER;
-            memcpy(&shadowDataBuffer[frameOffset], drawDataList.data(), drawDataList.size() * sizeof(ShadowDrawData));
+            uint32_t drawDataOffset = slotIdx * MAX_FIXED_BUFFER;
+            memcpy(&shadowDataBuffer[drawDataOffset], drawDataList.data(), drawDataList.size() * sizeof(ShadowDrawData));
         } else {
             std::cerr << "Error: shadow data buffer mapped memory is null!" << std::endl;
         }
@@ -1327,7 +1376,7 @@ void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light) {
             ShadowPushConstants pushConstants = {
                 .vertexBufferAddress   = bindless.descriptorSet->getVariableBuffers()[vertexBufferIndex]->address,
                 .modelMatricesAddress  = bindless.descriptorSet->getFixedBuffers()[modelMatrixBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(glm::mat4),
-                .shadowDrawDataAddress = bindless.descriptorSet->getFixedBuffers()[shadowDrawDataBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(ShadowDrawData),
+                .shadowDrawDataAddress = bindless.descriptorSet->getFixedBuffers()[shadowDrawDataBufferIndex]->address + static_cast<vk::DeviceSize>(slotIdx) * MAX_FIXED_BUFFER * sizeof(ShadowDrawData),
                 .lightSpaceMatrix      = lightSpaceMatrix};
             cmd.pushConstants<ShadowPushConstants>(*currentPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pushConstants);
 
@@ -1337,6 +1386,37 @@ void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light) {
     }
 
     cmd.endRendering();
+}
+
+void Renderer::recordVolumetricsPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
+    if (volTextureIndex == 0xFFFFFFFF)
+        return;
+
+    auto extent = gpu.getSwapchain().getSwapChainExtent();
+
+    drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[volPipelineIndex], *bindless.descriptorSet->getTextureResource(volTextureIndex).imageView,
+                       extent,
+                       VolumetricPushConstants {
+                            .lightsAddress = bindless.descriptorSet->getFixedBuffers()[lightBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(GPULight),
+                            .lightCount = static_cast<uint32_t>(scene.lights.size()),
+                            .shadowAtlasIndex = scene.shadowAtlas.textureIndex,
+                            .cameraPos = scene.activeCamera.position,
+                            .depthTextureIndex = gpu.getSwapchain().getDepthResolveIndex(),
+                            .cameraDir = scene.activeCamera.getLookDir(),
+                            .depthSamplerIndex = depthSamplerIndex,
+                            .screenSize = {extent.width, extent.height},
+                            .view = scene.activeCamera.viewMatrix,
+                            .projection = scene.activeCamera.projectionMatrix,
+                            .invViewProjection = glm::inverse(scene.activeCamera.viewProjection)
+                       }, vk::AttachmentLoadOp::eClear);
+
+    drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[volApplyPipelineIndex], *gpu.getSwapchain().getSwapChainImageViews()[imageIndex],
+                       extent,
+                       VolumetricApplyPushConstants {
+                            .volumetricTextureIndex = volTextureIndex,
+                            .samplerIndex = defaultSamplerIndex
+                       }, vk::AttachmentLoadOp::eLoad);
+                    
 }
 
 void Renderer::recordSDFPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {

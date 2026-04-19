@@ -200,8 +200,17 @@ void showNodeLightInfo(Node& node, Renderer& renderer) {
             ImGui::EndCombo();
         }
         if (light.type != LightType::Directional) {
-            ImGui::DragFloat("range", &light.range);
+            if (ImGui::DragFloat("range", &light.range)) {
+                // Range change alters which nodes fall inside the sphere —
+                // flag the light's node so syncDirtyNodes rebuilds the set.
+                node.transformDirty = true;
+            }
         }
+
+        for(uint32_t nodeIdx : light.influencedNodes) {
+            Gizmos::drawLine(Line{.startPoint = renderer.scene.sceneGraph.getNode(nodeIdx).getWorldPosition(),.endPoint = node.getWorldPosition(),.color = glm::vec4(1,1,0,1)});
+        }
+
         ImGui::DragFloat("intensity", &light.intensity);
         float colR = light.color.r;
         float colG = light.color.g;
@@ -225,16 +234,20 @@ void showNodeLightInfo(Node& node, Renderer& renderer) {
             state.lightShadow = light.castsShadows;
             if (ImGui::Checkbox("Enable Shadows", &state.lightShadow)) {
                 if (state.lightShadow) {
-                    light.shadowResolution = DEFAULT_CSM_SHADOW_RESOLUTION;
+                    if(light.type == LightType::Directional)
+                        light.shadowResolution = DEFAULT_CSM_SHADOW_RESOLUTION;
                     NodeOps::enableLightShadows(light, node.name, renderer);
                 } else {
                     NodeOps::disableLightShadows(light, renderer);
                 }
+                // Toggling shadows changes whether this light participates
+                // in the influence set — rebuild on next sync.
+                node.transformDirty = true;
             }
         }
         // Update light in all frame sections of the buffer
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-            (*renderer.bindless.descriptorSet).updateFixedBufferWithOffset<GPULight>(renderer.getLightBufferIndex(), node.lightIndex, light.toGPU(), i);
+            (*renderer.bindless.descriptorSet).updateFixedBufferWithOffset<GPULight>(renderer.getLightBufferIndex(), node.lightIndex, light.toGPU(node.getWorldPosition(), node.forward()), i);
         }
 
         Gizmos::drawSphere(node.getWorldPosition(),light.range, glm::vec4(1,1,0,1));

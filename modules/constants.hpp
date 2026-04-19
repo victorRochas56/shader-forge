@@ -19,8 +19,9 @@ constexpr uint32_t MAX_SAMPLERS = 2048;
 constexpr uint32_t MAX_FIXED_BUFFER = 2048;
 constexpr uint32_t MAX_VARIABLE_BUFFER = 2048;
 constexpr uint32_t MAX_INDIRECT_COMMANDS = 10000; // per frame slot count for indirect draw buffers
+constexpr uint32_t MAX_SHADOW_CASTERS = 8; // per-frame slot count for shadow indirect/draw-data buffers
 
-constexpr uint32_t SHADOW_ATLAS_SIZE = 16384;
+constexpr uint32_t SHADOW_ATLAS_SIZE = 8192;
 constexpr uint32_t SHADOW_ATLAS_MIN_TILE = 256;
 constexpr uint32_t SHADOW_ATLAS_LEAVES_PER_SIDE = SHADOW_ATLAS_SIZE / SHADOW_ATLAS_MIN_TILE;
 constexpr uint32_t SHADOW_ATLAS_LEAF_COUNT     = SHADOW_ATLAS_LEAVES_PER_SIDE * SHADOW_ATLAS_LEAVES_PER_SIDE;

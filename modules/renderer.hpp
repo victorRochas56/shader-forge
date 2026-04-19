@@ -7,6 +7,7 @@
 #endif
 
 #include <algorithm>
+#include <functional>
 #include <map>
 #include <memory>
 #include <unordered_set>
@@ -150,6 +151,12 @@ class Renderer {
     uint32_t                            sdfPassDataBufferIndex = 0xFFFFFFFF;
     uint32_t                            sdfApplyPipelineIndex = 0xFFFFFFFF;
 
+    // Volume rendering
+    uint32_t                            volPipelineIndex = 0xFFFFFFFF;
+    uint32_t                            volTextureIndex = 0xFFFFFFFF;
+    uint32_t                            volPassDataBufferIndex = 0xFFFFFFFF;
+    uint32_t                            volApplyPipelineIndex = 0xFFFFFFFF;
+
   private:
     // Temporary texture for gaussian blur (mipmapped for per-mip blur passes)
     uint32_t                            tempBlurTextureIndex = 0xFFFFFFFF;
@@ -210,6 +217,7 @@ class Renderer {
     void createSSRResources(uint32_t width, uint32_t height);
     void createHiZResources(uint32_t width, uint32_t height);
     void createSDFResources(uint32_t width, uint32_t height);
+    void createVolumetricResources(uint32_t width, uint32_t height);
 #pragma endregion
 
 
@@ -219,7 +227,8 @@ class Renderer {
     void recordCommandBuffer(uint32_t imageIndex);
 
     template <typename PerMeshFn>
-    void buildGeometryDrawCommands(const std::array<Plane, 6>& frustumPlanes, bool doCulling, PerMeshFn&& perMeshFn);
+    void buildGeometryDrawCommands(const std::array<Plane, 6>& frustumPlanes, bool doCulling, PerMeshFn&& perMeshFn,
+                                   const std::function<bool(const Node&)>& nodeFilter = {});
 
     void recordHiZPass(vk::raii::CommandBuffer& cmd);
     void recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex);
@@ -227,7 +236,8 @@ class Renderer {
     void recordSSAOPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex);
     void recordSSRPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex);
     void recordImageVisPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex);
-    void recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light);
+    void recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light, uint32_t shadowSlot);
+    void recordVolumetricsPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex);
     void recordSDFPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex);
 
     void createOrResizeRenderTarget(uint32_t& index, uint32_t width, uint32_t height,

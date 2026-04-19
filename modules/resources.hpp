@@ -44,12 +44,14 @@ class ResourceManager {
   public:
     ResourceManager(Device& device, vk::raii::CommandPool& commandPool) : commandPool(commandPool), device(device) {};
 
-    std::tuple<vk::raii::Buffer, vk::raii::DeviceMemory, void*> createIndirectDrawBuffer() {
+    std::tuple<vk::raii::Buffer, vk::raii::DeviceMemory, void*> createIndirectDrawBuffer(uint32_t slotsPerFrame = 1) {
 
         vk::raii::Buffer indirectDrawBuffer = nullptr;
         vk::raii::DeviceMemory indirectDrawBufferMemory = nullptr;
-        // Create persistent indirect draw buffer — one slot per frame in flight to avoid write/read races
-        vk::DeviceSize indirectBufferSize = sizeof(DrawIndexedIndirectCommand) * MAX_INDIRECT_COMMANDS * MAX_FRAMES_IN_FLIGHT;
+        // Persistent indirect draw buffer: slotsPerFrame * MAX_FRAMES_IN_FLIGHT contiguous slots.
+        // Callers needing multiple independent recordings per frame (e.g. per-light shadow passes)
+        // pass slotsPerFrame > 1 so each recording writes into its own slot.
+        vk::DeviceSize indirectBufferSize = sizeof(DrawIndexedIndirectCommand) * MAX_INDIRECT_COMMANDS * slotsPerFrame * MAX_FRAMES_IN_FLIGHT;
         vk::BufferCreateInfo indirectBufferInfo{.size = indirectBufferSize, .usage = vk::BufferUsageFlagBits::eIndirectBuffer, .sharingMode = vk::SharingMode::eExclusive};
 
         indirectDrawBuffer = vk::raii::Buffer(device.getDevice(), indirectBufferInfo);
@@ -415,6 +417,23 @@ class ResourceManager {
             barrier.srcAccessMask = vk::AccessFlagBits2::eShaderRead;
             barrier.dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
             barrier.srcStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+            barrier.dstStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests;
+            barrier.subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eDepth, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1};
+        }
+
+        // Depth-only read layout — preserves Z-compression on NV/AMD for faster sampled-depth reads.
+        else if (oldLayout == vk::ImageLayout::eDepthStencilAttachmentOptimal && newLayout == vk::ImageLayout::eDepthReadOnlyOptimal) {
+            barrier.srcAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
+            barrier.dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eShaderRead;
+            barrier.srcStageMask = vk::PipelineStageFlagBits2::eLateFragmentTests;
+            barrier.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader | vk::PipelineStageFlagBits2::eEarlyFragmentTests;
+            barrier.subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eDepth, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1};
+        }
+
+        else if (oldLayout == vk::ImageLayout::eDepthReadOnlyOptimal && newLayout == vk::ImageLayout::eDepthStencilAttachmentOptimal) {
+            barrier.srcAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eShaderRead;
+            barrier.dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
+            barrier.srcStageMask = vk::PipelineStageFlagBits2::eFragmentShader | vk::PipelineStageFlagBits2::eEarlyFragmentTests;
             barrier.dstStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests;
             barrier.subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eDepth, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1};
         }

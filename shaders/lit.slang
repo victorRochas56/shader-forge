@@ -70,10 +70,10 @@ FragmentOutput fragMain(VertexOutput input)
     float3 Lo = float3(0.0);
 
     for(int i = 0; i < pc.litPassData.lightCount; i++){
-        Light currentLight = pc.lights[i];
+        Light* currentLight = &pc.lights[i];
 
         if(currentLight.type != 1) {
-            float distance = length(getPosFromMM(currentLight.modelMatrixIndex) - input.worldPos);
+            float distance = length(currentLight.position - input.worldPos);
             if(distance > currentLight.range){
                 continue;
             }
@@ -84,15 +84,14 @@ FragmentOutput fragMain(VertexOutput input)
         float3 radiance;
 
         if(currentLight.type == 1) {
-            float4x4 lightMM = pc.modelMatrices[currentLight.modelMatrixIndex];
-            float3 lightDir = float3(lightMM[0].x, lightMM[1].x, lightMM[2].x);
+            float3 lightDir = currentLight.direction;
             lightDir = normalize(lightDir);
             L = -lightDir;
             attenuation = 1.0;
             radiance = currentLight.color.rgb * currentLight.intensity;
         }
         else {
-            float3 lightPos = getPosFromMM(currentLight.modelMatrixIndex);
+            float3 lightPos = currentLight.position;
             float distance = length(lightPos - input.worldPos);
 
             L = normalize(lightPos - input.worldPos);
@@ -171,7 +170,7 @@ FragmentOutput fragMain(VertexOutput input)
 
 
 
-float calculateDirectionalShadow(float3 fragWorldPos, float3 cameraPos, float3 cameraForward, float3 geometricNormal, float3 L, Light light)
+float calculateDirectionalShadow(float3 fragWorldPos, float3 cameraPos, float3 cameraForward, float3 geometricNormal, float3 L, Light* light)
 {
     float viewDepth = dot(fragWorldPos - cameraPos, cameraForward);
 
@@ -210,30 +209,18 @@ float calculateDirectionalShadow(float3 fragWorldPos, float3 cameraPos, float3 c
     float2 rangeMin  = cascade.shadowAtlasRange.xy;
     float2 rangeSpan = cascade.shadowAtlasRange.zw - cascade.shadowAtlasRange.xy;
 
-    float shadow = 0.0;
-    int totalSamples = 9;
-
-    for (int x = -1; x <= 1; x++) {
-        for (int y = -1; y <= 1; y++) {
-            float2 local    = projCoords.xy + float2(x, y) * texelSize;
-            float2 atlasUV  = rangeMin + local * rangeSpan;
-
-            float shadowMapDepth = textures[pc.litPassData.shadowAtlasIndex].Sample(
-                samplers[pc.litPassData.samplerIndex],
-                atlasUV
-            ).r;
-
-            if (currentDepth < shadowMapDepth) {
-                shadow += 1.0;
-            }
-        }
-    }
-
-    shadow /= float(totalSamples);
-    return 1.0 - shadow;
+    // DIAGNOSTIC: single-tap hardware PCF to isolate whether the regression is
+    // kernel-size-driven or architectural (binding alias, occupancy, etc).
+    float2 atlasUV = rangeMin + projCoords.xy * rangeSpan;
+    float lit = textures[pc.litPassData.shadowAtlasIndex].SampleCmpLevelZero(
+        shadowCmpSampler,
+        atlasUV,
+        currentDepth
+    );
+    return 1.0 - lit;
 }
 
-float calculatePointShadow(float3 fragWorldPos, float3 lightPos, float3 geometricNormal, float3 L, Light light)
+float calculatePointShadow(float3 fragWorldPos, float3 lightPos, float3 geometricNormal, float3 L, Light* light)
 {
     float3 fragToLight = fragWorldPos - lightPos;
     float3 absDir = abs(fragToLight);
@@ -267,41 +254,27 @@ float calculatePointShadow(float3 fragWorldPos, float3 lightPos, float3 geometri
         return 0.0;
     }
 
-    float currentDepth = projCoords.z;
+    float currentDepth = projCoords.z - 0.0001f;
 
     float2 rangeMin  = face.shadowAtlasRange.xy;
     float2 rangeSpan = face.shadowAtlasRange.zw - face.shadowAtlasRange.xy;
 
-    float shadow = 0.0;
-    int totalSamples = 9;
-
-    for (int x = -1; x <= 1; x++) {
-        for (int y = -1; y <= 1; y++) {
-            float2 local    = projCoords.xy + float2(x, y) * texelSize;
-            float2 atlasUV  = rangeMin + local * rangeSpan;
-
-            float shadowMapDepth = textures[pc.litPassData.shadowAtlasIndex].Sample(
-                samplers[pc.litPassData.samplerIndex],
-                atlasUV
-            ).r;
-
-            if (currentDepth < shadowMapDepth) {
-                shadow += 1.0;
-            }
-        }
-    }
-
-    shadow /= float(totalSamples);
-    return 1.0 - shadow;
+    // DIAGNOSTIC: single-tap hardware PCF.
+    float2 atlasUV = rangeMin + projCoords.xy * rangeSpan;
+    float lit = textures[pc.litPassData.shadowAtlasIndex].SampleCmpLevelZero(
+        shadowCmpSampler,
+        atlasUV,
+        currentDepth
+    );
+    return 1.0 - lit;
 }
 
-float calculateShadow(float3 fragWorldPos, float3 cameraPos, float3 cameraForward, float3 geometricNormal, float3 L, Light light)
+float calculateShadow(float3 fragWorldPos, float3 cameraPos, float3 cameraForward, float3 geometricNormal, float3 L, Light* light)
 {
     if (light.type == 1) {
         return calculateDirectionalShadow(fragWorldPos, cameraPos, cameraForward, geometricNormal, L, light);
     } else if (light.type == 0) {
-        float3 lightPos = getPosFromMM(light.modelMatrixIndex);
-        return calculatePointShadow(fragWorldPos, lightPos, geometricNormal, L, light);
+        return calculatePointShadow(fragWorldPos, light.position, geometricNormal, L, light);
     }
     return 0.0;
 }

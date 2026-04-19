@@ -20,7 +20,7 @@
 #include "node_gui.hpp"
 #include "input.hpp"
 #include "renderer.hpp"
-#include "scenes.hpp"
+#include "scene_loader.hpp"
 #include "gizmo.hpp"
 #include "profiling.hpp"
 #include "events.hpp"
@@ -68,7 +68,7 @@ class App {
     Renderer renderer{gpu, bindless, scene};
     GLFWwindow* window = nullptr;
     bool framebufferResized = false;
-    SceneManager sceneManager;
+    SceneLoader sceneLoader;
     MaterialEditorState materialEditorState;
 
     void initWindow() {
@@ -105,10 +105,15 @@ class App {
             drawGui();
 
             //draw axes visualization for every node
-            for (int i = 1; i <= renderer.scene.sceneGraph.getLastNode(); i++) {
-                if (!renderer.scene.sceneGraph.isNodeValid(i)) continue;
-                Gizmos::drawAxes(renderer.scene.sceneGraph.getNodes()[i].getTransform(), 0.1f);
-            }
+            Node* currentNode = &scene.sceneGraph.getRootNode();
+            if(scene.sceneGraph.selectedNode != 0)
+                currentNode = &scene.sceneGraph.getNode(scene.sceneGraph.selectedNode);
+
+            Gizmos::drawAxes(currentNode->getTransform(),0.15f);
+            scene.sceneGraph.forEachChild(*currentNode,[](Node& child){
+                Gizmos::drawAxes(child.getTransform(),0.15f);
+            });
+
             EventSystem::pollListeners();
             EventSystem::pollEvents();
             renderer.scene.sceneGraph.syncDirtyNodes();
@@ -145,7 +150,7 @@ class App {
         showDebugWindow(renderer.culledCount,renderer.cullFovScale);
         showTraces();
         showToggles(renderer.features);
-        showScenesMenu(&renderer, &sceneManager);
+        showScenesMenu(&renderer, &sceneLoader);
         ImGui::Render();
     }
 

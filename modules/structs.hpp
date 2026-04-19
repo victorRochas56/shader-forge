@@ -2,6 +2,7 @@
 
 #include <array>
 #include <string>
+#include <unordered_set>
 
 #include "constants.hpp"
 
@@ -270,6 +271,26 @@ struct SDFApplyPushConstants {
     uint32_t sdfTextureIndex;
     uint32_t samplerIndex;
     uint32_t padding[2];
+};
+
+struct VolumetricPushConstants {
+    uint64_t lightsAddress;      // offset 0
+    uint32_t lightCount;         // offset 8
+    uint32_t shadowAtlasIndex;   // offset 12
+    glm::vec3 cameraPos;         // offset 16
+    uint32_t depthTextureIndex;  // offset 28
+    glm::vec3 cameraDir;         // offset 32
+    uint32_t depthSamplerIndex;  // offset 44
+    uint32_t screenSize[2];      // offset 48
+    uint32_t _pad3[2];           // offset 56 (align mat4 to 64)
+    glm::mat4 view;              // offset 64
+    glm::mat4 projection;        // offset 128
+    glm::mat4 invViewProjection; // offset 192
+};
+
+struct VolumetricApplyPushConstants {
+    uint32_t volumetricTextureIndex;
+    uint32_t samplerIndex;
 };
 
 struct LitDrawData {
@@ -564,16 +585,18 @@ struct GPUPointFace {
 };
 
 struct GPULight {
-    uint32_t type = 0;              // offset 0
-    uint32_t modelMatrixIndex = 0;  // offset 4
-    float range = 10.0f;            // offset 8
-    float intensity = 1.0f;         // offset 12
-    glm::vec4 color = glm::vec4(0, 0, 0, 1); // offset 16 (vec4-aligned)
-    int castsShadows = 0;           // offset 32
-    int showCascades = 0;           // offset 36
-    uint32_t numCascades = 3;       // offset 40
-    uint32_t shadowResolution = DEFAULT_SHADOW_RESOLUTION; // offset 44
-    GPUCascade cascades[3];         // offset 48 (mat4-aligned)
+    uint32_t type = 0;              
+    glm::vec3 position = glm::vec3(0,0,0);
+    glm::vec3 direction = glm::vec3(0,0,0);
+    float range = 10.0f;            
+    float intensity = 1.0f;
+    uint32_t padding[3];         
+    glm::vec4 color = glm::vec4(0, 0, 0, 1);
+    int castsShadows = 0;           
+    int showCascades = 0;           
+    uint32_t numCascades = 3;       
+    uint32_t shadowResolution = DEFAULT_SHADOW_RESOLUTION;
+    GPUCascade cascades[3];
     GPUPointFace pointFaces[6];
 };
 
@@ -592,7 +615,6 @@ struct PointShadowFace {
     glm::vec4 shadowAtlasUVRange = glm::vec4(0);
 };
 
-// TODO: mark light dirty when geometry in its range moves (not just when the light itself moves)
 struct Light {
     LightType type = LightType::Point;
     uint32_t modelMatrixIndex = 0;
@@ -609,11 +631,15 @@ struct Light {
     std::array<Cascade, 3> cascades;
     std::array<PointShadowFace,6> cubeMapIndices;
     bool shadowDirty = true;
+    // Point-light only: node indices whose world AABB currently overlaps this light's sphere.
+    // Maintained exclusively by LightInfluence — do not mutate elsewhere.
+    std::unordered_set<uint32_t> influencedNodes;
 
-    GPULight toGPU() const {
+    GPULight toGPU(glm::vec3 lightPos, glm::vec3 lightDir) const {
         GPULight gpu;
         gpu.type = static_cast<uint32_t>(type);
-        gpu.modelMatrixIndex = modelMatrixIndex;
+        gpu.position = lightPos;
+        gpu.direction = lightDir;
         gpu.range = range;
         gpu.intensity = intensity;
         gpu.color = color;
