@@ -60,17 +60,19 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     scene.assetManager.init(bindless.resourceManager.get(), bindless.descriptorSet.get(), vertexBufferIndex, indexBufferIndex);
 
     sdfPassDataBufferIndex = bindless.descriptorSet->createFixedBuffer<SDF>(MAX_FIXED_BUFFER);
+    volumeBufferIndex = bindless.descriptorSet->createFixedBuffer<Volume>(MAX_FIXED_BUFFER, false);
+
     // these buffers store the data once per frame in flight since they are usually accessed every frame by the CPU
     modelMatrixBufferIndex = bindless.descriptorSet->createFixedBuffer<glm::mat4>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
-    lightBufferIndex = bindless.descriptorSet->createFixedBuffer<GPULight>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
     shadowDrawDataBufferIndex = bindless.descriptorSet->createFixedBuffer<ShadowDrawData>(MAX_FRAMES_IN_FLIGHT * MAX_SHADOW_CASTERS * MAX_FIXED_BUFFER, true);
+    lightBufferIndex = bindless.descriptorSet->createFixedBuffer<GPULight>(MAX_LIGHTS * MAX_FRAMES_IN_FLIGHT, true);
     litPassDataBufferIndex = bindless.descriptorSet->createFixedBuffer<LitPassData>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
     ssrPassDataBufferIndex = bindless.descriptorSet->createFixedBuffer<SSRPassData>(MAX_FRAMES_IN_FLIGHT, true);
 
     // sets the frame offsets for each buffer
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         bindless.descriptorSet->setBufferFrameOffset(modelMatrixBufferIndex, i, MAX_FIXED_BUFFER * i);
-        bindless.descriptorSet->setBufferFrameOffset(lightBufferIndex, i, MAX_FIXED_BUFFER * i);
+        bindless.descriptorSet->setBufferFrameOffset(lightBufferIndex, i, MAX_LIGHTS * i);
         bindless.descriptorSet->setBufferFrameOffset(shadowDrawDataBufferIndex, i, MAX_SHADOW_CASTERS * MAX_FIXED_BUFFER * i);
         bindless.descriptorSet->setBufferFrameOffset(litPassDataBufferIndex,i, MAX_FIXED_BUFFER * i);
         bindless.descriptorSet->setBufferFrameOffset(ssrPassDataBufferIndex,i,i);
@@ -99,6 +101,8 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     uint32_t ssaoH = std::max(1u, static_cast<uint32_t>(startHeight * features.ssao.resolutionScale));
     uint32_t ssrW = std::max(1u, static_cast<uint32_t>(startWidth * features.ssr.resolutionScale));
     uint32_t ssrH = std::max(1u, static_cast<uint32_t>(startHeight * features.ssr.resolutionScale));
+    uint32_t volW = std::max(1u, static_cast<uint32_t>(startWidth * features.volumetrics.resolutionScale));
+    uint32_t volH = std::max(1u, static_cast<uint32_t>(startHeight * features.volumetrics.resolutionScale));
     createSSAOResources(ssaoW, ssaoH);
     createShadowAtlas(SHADOW_ATLAS_SIZE);
     createRoughnessMetalResources(startWidth, startHeight);
@@ -108,7 +112,7 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     createSSRResources(ssrW, ssrH);
     createHiZResources(startWidth, startHeight);
     createSDFResources(startWidth,startHeight);
-    createVolumetricResources(startWidth,startHeight);
+    createVolumetricResources(volW,volH);
 
 #if DEBUG == 1
     bindless.descriptorSet->debugDescriptorSet("after_createDescriptorSet");
@@ -320,6 +324,7 @@ void Renderer::drawFrame() {
 
 uint32_t Renderer::getModelMatrixBufferIndex() { return modelMatrixBufferIndex; }
 uint32_t Renderer::getLightBufferIndex() { return lightBufferIndex; }
+uint32_t Renderer::getVolumeBufferIndex() { return volumeBufferIndex; }
 uint32_t Renderer::getShadowDrawDataBufferIndex() { return shadowDrawDataBufferIndex; }
 
 void Renderer::addMeshToShader(uint32_t nodeIndex, Shader shader, Material material) {
@@ -379,6 +384,8 @@ void Renderer::handleSwapchainResize() {
         uint32_t ssaoH = std::max(1u, static_cast<uint32_t>(height * features.ssao.resolutionScale));
         uint32_t ssrW = std::max(1u, static_cast<uint32_t>(width * features.ssr.resolutionScale));
         uint32_t ssrH = std::max(1u, static_cast<uint32_t>(height * features.ssr.resolutionScale));
+        uint32_t volW = std::max(1u, static_cast<uint32_t>(width * features.volumetrics.resolutionScale));
+        uint32_t volH = std::max(1u, static_cast<uint32_t>(height * features.volumetrics.resolutionScale));
         createSSAOResources(ssaoW, ssaoH);
         createRoughnessMetalResources(width, height);
         createNormalResources(width, height);
@@ -387,7 +394,7 @@ void Renderer::handleSwapchainResize() {
         createSSRResources(ssrW, ssrH);
         createHiZResources(width, height);
         createSDFResources(width, height);
-        createVolumetricResources(width, height);
+        createVolumetricResources(volW, volH);
     }
     scene.activeCamera.aspectRatio = static_cast<float>(width) / static_cast<float>(height);
     scene.activeCamera.calculateViewProjectionMatrix();
@@ -707,7 +714,7 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
     Tracer::endTrace("record ssao pass");
 
     Tracer::startTrace("record Volumetric pass");
-    if(volPipelineIndex != 0xFFFFFFFF) {
+    if(features.volumetrics.enabled && volPipelineIndex != 0xFFFFFFFF) {
         recordVolumetricsPass(cmd, imageIndex);
     }
 
@@ -1087,18 +1094,19 @@ void Renderer::recordOverlayPass(vk::raii::CommandBuffer& cmd, uint32_t imageInd
     setFullscreenViewport(cmd, extent);
 
     // gizmos
-    for(auto& line : Gizmos::getNoDiscardLines()){
-        Gizmos::drawLine(line.second);
+    if(features.showGizmos){
+        for(auto& line : Gizmos::getNoDiscardLines()){
+            Gizmos::drawLine(line.second);
+        }
+        auto& gizmoPipeline = bindless.pipelineManager->getPostProcessPipelines()[gizmoPipelineIndex];
+        bindPipeline(cmd, *gizmoPipeline);
+        LinePushConstants lineConstants = {.lineVertsAddress = Gizmos::getLineBufferAddress(),
+                                        .depthTextureIndex = gpu.getSwapchain().getDepthResolveIndex(),
+                                        .depthSamplerIndex = depthSamplerIndex,
+                                        .viewProjection = scene.activeCamera.viewProjection};
+        cmd.pushConstants<LinePushConstants>(*gizmoPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, lineConstants);
+        cmd.draw(Gizmos::getVertexCount(), 1, 0, 0);
     }
-    auto& gizmoPipeline = bindless.pipelineManager->getPostProcessPipelines()[gizmoPipelineIndex];
-    bindPipeline(cmd, *gizmoPipeline);
-    LinePushConstants lineConstants = {.lineVertsAddress = Gizmos::getLineBufferAddress(),
-                                       .depthTextureIndex = gpu.getSwapchain().getDepthResolveIndex(),
-                                       .depthSamplerIndex = depthSamplerIndex,
-                                       .viewProjection = scene.activeCamera.viewProjection};
-    cmd.pushConstants<LinePushConstants>(*gizmoPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, lineConstants);
-    cmd.draw(Gizmos::getVertexCount(), 1, 0, 0);
-
     // GUI
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), *cmd);
     cmd.endRendering();
@@ -1392,7 +1400,8 @@ void Renderer::recordVolumetricsPass(vk::raii::CommandBuffer& cmd, uint32_t imag
     if (volTextureIndex == 0xFFFFFFFF)
         return;
 
-    auto extent = gpu.getSwapchain().getSwapChainExtent();
+    auto& volRes = bindless.descriptorSet->getTextureResource(volTextureIndex);
+    vk::Extent2D extent = {volRes.width, volRes.height};
 
     drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[volPipelineIndex], *bindless.descriptorSet->getTextureResource(volTextureIndex).imageView,
                        extent,
@@ -1405,13 +1414,14 @@ void Renderer::recordVolumetricsPass(vk::raii::CommandBuffer& cmd, uint32_t imag
                             .cameraDir = scene.activeCamera.getLookDir(),
                             .depthSamplerIndex = depthSamplerIndex,
                             .screenSize = {extent.width, extent.height},
-                            .view = scene.activeCamera.viewMatrix,
-                            .projection = scene.activeCamera.projectionMatrix,
+                            .volumeBufferIndex = bindless.descriptorSet->getFixedBuffers()[volumeBufferIndex]->address /* + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(Volume)*/,
+                            .numSteps = static_cast<uint32_t>(features.volumetrics.numSteps),
+                            .volumeCount = static_cast<uint32_t>(scene.volumes.size()),
                             .invViewProjection = glm::inverse(scene.activeCamera.viewProjection)
                        }, vk::AttachmentLoadOp::eClear);
 
     drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[volApplyPipelineIndex], *gpu.getSwapchain().getSwapChainImageViews()[imageIndex],
-                       extent,
+                       gpu.getSwapchain().getSwapChainExtent(),
                        VolumetricApplyPushConstants {
                             .volumetricTextureIndex = volTextureIndex,
                             .samplerIndex = defaultSamplerIndex

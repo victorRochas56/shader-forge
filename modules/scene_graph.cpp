@@ -84,6 +84,10 @@ void SceneGraph::syncDirtyNodes() {
         nodes[i].transformDirty = false;
         TransformSystem::updateAll(nodes[i], nodes, (*renderer->bindless.descriptorSet), renderer->getModelMatrixBufferIndex(),
                                    renderer->scene.assetManager.meshes, renderer->scene.getLightsMutable());
+        if(nodes[i].volumeIndex != 0xFFFFFFFF) {
+            renderer->scene.volumes[nodes[i].volumeIndex].center = nodes[i].getWorldPosition();
+            renderer->bindless.descriptorSet->updateFixedBuffer<Volume>(renderer->getVolumeBufferIndex(),nodes[i].volumeIndex,renderer->scene.volumes[nodes[i].volumeIndex]);
+        }
     }
 }
 

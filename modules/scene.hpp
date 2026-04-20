@@ -31,6 +31,7 @@ class Scene {
     Camera                     activeCamera;
     ShadowAtlas                shadowAtlas;
     std::map<uint32_t, Light>  lights;
+    std::map<uint32_t, Volume> volumes;
     std::vector<Material>      materials;
     Shader                     fallbackLitShader;
     uint32_t                   fallbackDefaultMaterialIndex = 0;
@@ -78,6 +79,16 @@ class Scene {
         }
         bindless.descriptorSet->clearFixedBuffer(lightBufferIndex);
         lights.clear();
+    }
+
+    // --- volumes -------------------------------------------------------
+    const std::map<uint32_t, Volume>& getVolumes() const { return volumes; }
+    std::map<uint32_t, Volume>&       getVolumesMutable() { return volumes; }
+    void                              addVolume(uint32_t index, Volume volume) { volumes[index] = volume; }
+    Volume&                           getVolume(uint32_t index) { return volumes[index]; }
+    void clearVolumes(BindlessSystem& bindless, uint32_t volumeBufferIndex) {
+        bindless.descriptorSet->clearFixedBuffer(volumeBufferIndex);
+        volumes.clear();
     }
 
     // --- defaults / skybox ---------------------------------------------

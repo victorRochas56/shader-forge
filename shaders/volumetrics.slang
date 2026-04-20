@@ -1,18 +1,28 @@
 import modules.common;
 
+struct Volume {
+    uint nodeIndex;
+    float density;
+    int shape;
+    float3 center;
+    float radius;
+    float3 dimensions;
+};
+
 struct VolumetricPushConstants {
-    Light* lights;            // offset 0
-    uint lightCount;          // offset 8
-    uint shadowAtlasIndex;    // offset 12
-    float3 cameraPos;         // offset 16
-    uint depthTextureIndex;   // offset 28
-    float3 cameraDir;         // offset 32
-    uint depthSamplerIndex;   // offset 44
-    uint2 screenSize;         // offset 48
-    uint2 _pad3;              // offset 56
-    float4x4 view;            // offset 64
-    float4x4 projection;      // offset 128
-    float4x4 invViewProjection; // offset 192
+    Light* lights;
+    uint lightCount;
+    uint shadowAtlasIndex;
+    float3 cameraPos;
+    uint depthTextureIndex;
+    float3 cameraDir;
+    uint depthSamplerIndex;
+    uint2 screenSize;
+    Volume* vols;
+    uint numSteps;
+    uint2 _pad;
+    uint volumeCount;
+    float4x4 invViewProjection;
 }
 
 [[vk::push_constant]] ConstantBuffer<VolumetricPushConstants> volPc;
@@ -74,10 +84,8 @@ struct FragmentOutput {
 };
 
 #define PI 3.1415
-#define NUMSTEPS 16
 #define SIGMA_A 0.5
 #define SIGMA_S 0.5
-#define DENSITY 1
 
 // Sample the point-light shadow atlas at a world-space position. Returns 0.0
 // when lit (or outside the shadow frustum) and 1.0 when occluded.
@@ -131,26 +139,29 @@ FragmentOutput fragMain(VSOutput input) {
     float3 totalInScatter = float3(0);
     float  totalTransmittance = 1.0f;
 
-    float proj00 = volPc.projection[0][0];
-    float proj11 = volPc.projection[1][1];
-
-    float3 pixelRayDir = reconstructPixelRayDir(input.texCoord, volPc.view, proj00, proj11);
-
-    // Reconstruct world-space distance to the opaque surface so volumetrics
-    // never scatter light from behind solid geometry.
     float2 ndc = input.texCoord * 2.0 - 1.0;
+
+    // Unproject near and far to recover a world-space ray.
+    float4 nearW = mul(volPc.invViewProjection, float4(ndc, 0.0, 1.0));
+    float4 farW  = mul(volPc.invViewProjection, float4(ndc, 1.0, 1.0));
+    nearW.xyz /= nearW.w;
+    farW.xyz  /= farW.w;
+    float3 pixelRayDir = normalize(farW.xyz - nearW.xyz);
+
+    // Same unprojection at the scene-depth sample gives the surface point so
+    // volumetrics never scatter light from behind solid geometry.
     float sceneDepth = textures[volPc.depthTextureIndex].Sample(samplers[volPc.depthSamplerIndex], input.texCoord).r;
     float4 surfaceWorld = mul(volPc.invViewProjection, float4(ndc, sceneDepth, 1.0));
     surfaceWorld.xyz /= surfaceWorld.w;
     float surfaceDist = dot(surfaceWorld.xyz - volPc.cameraPos, pixelRayDir);
 
-    for (uint i = 0; i < volPc.lightCount; i++) {
-        if (volPc.lights[i].type != 0) continue;
-        Light* light = &volPc.lights[i];
+    for (uint i = 0; i < volPc.volumeCount; i++) {
+        //if (volPc.vols[i].type != 0) continue;
+        Volume* vol = &volPc.vols[i];
 
         float3 hitPointA;
         float3 hitPointB;
-        if (!rayIntersectSphere(volPc.cameraPos, pixelRayDir, light.position, light.range, hitPointA, hitPointB))
+        if (!rayIntersectSphere(volPc.cameraPos, pixelRayDir, vol.center, vol.radius, hitPointA, hitPointB))
             continue;
 
         // Clip the march segment against scene depth.
@@ -162,35 +173,34 @@ FragmentOutput fragMain(VSOutput input) {
             hitPointB = volPc.cameraPos + tB * pixelRayDir;
         }
 
-        float stepDist = length(hitPointB - hitPointA) / NUMSTEPS;
+        float stepDist = length(hitPointB - hitPointA) / volPc.numSteps;
         float transparency = 1.0f;
         float3 result = float3(0);
 
         float g = 0.8; // assymetry factor of the phase function
-        for (int n = 0; n <= NUMSTEPS; n++) {
+        for (int n = 0; n <= volPc.numSteps; n++) {
             float3 sample_pos = hitPointA + (n + rand(seed)) * stepDist * pixelRayDir;
-            float3 toLight = light.position - sample_pos;
-            float  lightDist = length(toLight);
-            float falloff = 1.0 / max(lightDist * lightDist, 1e-4);
 
-            // Smooth density falloff: full density at the light, zero at light.range.
-            float densityFalloff = saturate(1.0 - lightDist / light.range);
-            densityFalloff *= densityFalloff;
-            float density = DENSITY * densityFalloff;
-
-            float sample_attenuation = exp(-stepDist * density * (SIGMA_A + SIGMA_S));
+            float sample_attenuation = exp(-stepDist * vol.density * (SIGMA_A + SIGMA_S));
             transparency *= sample_attenuation;
 
-            float cos_theta = dot(pixelRayDir, -normalize(toLight));
+            for (uint li = 0; li < volPc.lightCount; li++) {
+                Light* light = &volPc.lights[li];
+                if(light.type != 0) continue;
+                float3 toLight = light.position - sample_pos;
+                float  lightDist = length(toLight);
+                if (lightDist > light.range) continue;
 
-            float light_attenuation = exp(-lightDist * density * (SIGMA_A + SIGMA_S));
+                float cos_theta = dot(pixelRayDir, normalize(toLight));
+                float light_attenuation = exp(-lightDist * vol.density * (SIGMA_A + SIGMA_S));
 
-            float shadow = 0.0;
-            if (light.castsShadows == 1) {
-                shadow = samplePointShadowAt(sample_pos, light, volPc.shadowAtlasIndex);
+                float shadow = 0.0;
+                if (light.castsShadows == 1) {
+                    shadow = samplePointShadowAt(sample_pos, light, volPc.shadowAtlasIndex);
+                }
+
+                result += (1.0 - shadow) * transparency * light.color.rgb * phase(g, cos_theta) * light.intensity * light_attenuation * stepDist * vol.density * SIGMA_S;
             }
-
-            result += (1.0 - shadow) * transparency * light.color.rgb * phase(g, cos_theta) * light.intensity * light_attenuation * falloff * stepDist;
         }
 
         // in-scattered light already premultiplied by its own transmittance,

@@ -101,4 +101,10 @@ void assignLight(Node& node, Light light, Renderer& renderer) {
     node.transformDirty = true;
 }
 
+void assignVolume(Node& node, Volume volume, Renderer& renderer) {
+    volume.nodeIndex = node.nodeIndex;
+    node.volumeIndex = renderer.bindless.descriptorSet->allocateFixedBuffer<Volume>(renderer.getVolumeBufferIndex(), volume);
+    renderer.scene.addVolume(node.volumeIndex,volume);
+}
+
 }

@@ -86,6 +86,7 @@ class Renderer {
     uint32_t                            indexBufferIndex;
     uint32_t                            modelMatrixBufferIndex;
     uint32_t                            lightBufferIndex;
+    uint32_t                            volumeBufferIndex;
     uint32_t                            shadowDrawDataBufferIndex;
     uint32_t                            litDrawDataBufferIndex;
     uint32_t                            litPassDataBufferIndex;
@@ -187,6 +188,7 @@ class Renderer {
 #pragma region GET/SET
     uint32_t getModelMatrixBufferIndex();
     uint32_t getLightBufferIndex();
+    uint32_t getVolumeBufferIndex();
     uint32_t getShadowDrawDataBufferIndex();
 
     void addMeshToShader(uint32_t nodeIndex, Shader shader, Material material);

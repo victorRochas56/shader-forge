@@ -386,6 +386,9 @@ void showActionMenu(uint32_t context, GLFWwindow* window, Camera& camera,
 
 void showToggles(RenderFeatures& f){
     ImGui::Begin("Toggles");
+    if(ImGui::Button("Gizmos")){
+        f.showGizmos = !f.showGizmos;
+    }
     ImGui::SliderInt("ImageMip", &f.imageVis.mipLevel, 0, 6);
     if(ImGui::Button("Depth Buffer")){
         f.imageVis.flags ^= ImageVisFlags::LINEARIZE;
@@ -409,6 +412,12 @@ void showToggles(RenderFeatures& f){
         if(ImGui::SliderFloat("Resolution Scale", &f.ssr.resolutionScale, 0.25f, 1.0f)){
             f.ssr.resolutionDirty = true;
         }
+    }
+    if(ImGui::Button("Volumetrics")){
+        f.volumetrics.enabled = !f.volumetrics.enabled;
+    }
+    if(f.volumetrics.enabled){
+        ImGui::SliderInt("Steps", &f.volumetrics.numSteps,4,32);
     }
     if(ImGui::Button("Show BBOXes")){
         f.showBBoxes = !f.showBBoxes;

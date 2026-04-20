@@ -132,10 +132,18 @@ struct SSRSettings {
     bool resolutionDirty = false;
 };
 
+struct VolumetricSettings {
+    bool enabled = true;
+    float resolutionScale = 0.5f;
+    int numSteps = 8;
+};
+
 struct RenderFeatures {
     ImageVisSettings imageVis;
     SSAOSettings ssao;
     SSRSettings ssr;
+    VolumetricSettings volumetrics;
+    bool showGizmos = true;
     bool showBBoxes = false;
 };
 
@@ -274,18 +282,21 @@ struct SDFApplyPushConstants {
 };
 
 struct VolumetricPushConstants {
-    uint64_t lightsAddress;      // offset 0
-    uint32_t lightCount;         // offset 8
-    uint32_t shadowAtlasIndex;   // offset 12
-    glm::vec3 cameraPos;         // offset 16
-    uint32_t depthTextureIndex;  // offset 28
-    glm::vec3 cameraDir;         // offset 32
-    uint32_t depthSamplerIndex;  // offset 44
-    uint32_t screenSize[2];      // offset 48
-    uint32_t _pad3[2];           // offset 56 (align mat4 to 64)
-    glm::mat4 view;              // offset 64
-    glm::mat4 projection;        // offset 128
-    glm::mat4 invViewProjection; // offset 192
+    uint64_t lightsAddress;            // 0
+    uint32_t lightCount;               // 8
+    uint32_t shadowAtlasIndex;         // 12
+    glm::vec3 cameraPos;               // 16
+    uint32_t depthTextureIndex;        // 28
+    glm::vec3 cameraDir;               // 32
+    uint32_t depthSamplerIndex;        // 44
+    uint32_t screenSize[2];            // 48
+    uint64_t volumeBufferIndex;        // 56
+    uint32_t numSteps;                 // 64
+    uint32_t _pad0;                    // 68 (uint2 _pad aligns to 8)
+    uint32_t _pad1[2];                 // 72  shader: uint2 _pad
+    uint32_t volumeCount;              // 80
+    uint32_t _pad2[3];                 // 84 (mat4 aligns to 16 -> 96)
+    glm::mat4 invViewProjection;       // 96, ends at 160
 };
 
 struct VolumetricApplyPushConstants {
@@ -665,6 +676,20 @@ struct Light {
         return type == other.type && modelMatrixIndex == other.modelMatrixIndex && range == other.range && intensity == other.intensity && shadowResolution == other.shadowResolution && 
                color == other.color && lightSpaceMatrix == other.lightSpaceMatrix && direction == other.direction && castsShadows == other.castsShadows;
     }
+};
+
+enum class VolumeShape {
+    SPHERE,
+    BOX
+};
+
+struct Volume {
+    uint32_t nodeIndex = 0;
+    float density = 0.8f;
+    VolumeShape shape = VolumeShape::SPHERE;
+    glm::vec3 center = glm::vec3(0,0,0);
+    float radius = 1.0f;
+    glm::vec3 dimensions = glm::vec3(1,1,1);
 };
 
 struct Vertex {

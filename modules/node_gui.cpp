@@ -23,6 +23,7 @@ void showNodeInfo(Node& node, Renderer& renderer) {
         showNodeMaterialDialog(node, renderer);
     }
     showNodeLightInfo(node, renderer);
+    showNodeVolumeInfo(node, renderer);
     showNodeTransformInfo(node, renderer);
     node.transformDirty = true;
 
@@ -245,10 +246,9 @@ void showNodeLightInfo(Node& node, Renderer& renderer) {
                 node.transformDirty = true;
             }
         }
-        // Update light in all frame sections of the buffer
-        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-            (*renderer.bindless.descriptorSet).updateFixedBufferWithOffset<GPULight>(renderer.getLightBufferIndex(), node.lightIndex, light.toGPU(node.getWorldPosition(), node.forward()), i);
-        }
+        // Update light
+        (*renderer.bindless.descriptorSet).updateFixedBuffer<GPULight>(renderer.getLightBufferIndex(), node.lightIndex, light.toGPU(node.getWorldPosition(), node.forward()));
+        
 
         Gizmos::drawSphere(node.getWorldPosition(),light.range, glm::vec4(1,1,0,1));
 
@@ -258,6 +258,22 @@ void showNodeLightInfo(Node& node, Renderer& renderer) {
         NodeOps::assignLight(node, light, renderer);
     }
 
+}
+
+void showNodeVolumeInfo(Node& node, Renderer& renderer) {
+
+    if(node.volumeIndex == 0xFFFFFFFF) {
+        if(ImGui::Button("Add Volume")){
+            Volume vol;
+            NodeOps::assignVolume(node,vol,renderer);
+        }
+    }
+    else {
+        if(ImGui::SliderFloat("radius", &renderer.scene.volumes[node.volumeIndex].radius,0.0f,20.0f))
+            node.transformDirty = true;
+        if(ImGui::SliderFloat("density", &renderer.scene.volumes[node.volumeIndex].density,0.0f,1.0f))
+            node.transformDirty = true;
+    }
 }
 
 void showNodeTransformInfo(Node& node, Renderer& renderer) {

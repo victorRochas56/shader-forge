@@ -94,6 +94,7 @@ class Node { // need to be able to hide nodes from tree for internal logic
     uint32_t meshIndex = MAX_MESHES;
     uint32_t materialIndex = 0xFFFFFFFF;
     uint32_t lightIndex = MAX_LIGHTS;
+    uint32_t volumeIndex = 0xFFFFFFFF;
 
     // Bounding box for frustum culling (in world space)
     glm::vec3 boundingBoxMin = glm::vec3(0.0f);
