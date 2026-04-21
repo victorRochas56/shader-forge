@@ -87,41 +87,6 @@ struct FragmentOutput {
 #define SIGMA_A 0.5
 #define SIGMA_S 0.5
 
-// Sample the point-light shadow atlas at a world-space position. Returns 0.0
-// when lit (or outside the shadow frustum) and 1.0 when occluded.
-float samplePointShadowAt(float3 worldPos, Light* light, uint shadowAtlasIdx) {
-    float3 fragToLight = worldPos - light.position;
-    float3 absDir = abs(fragToLight);
-
-    int faceIndex;
-    if (absDir.x >= absDir.y && absDir.x >= absDir.z) {
-        faceIndex = fragToLight.x > 0.0 ? 0 : 1;
-    } else if (absDir.y >= absDir.x && absDir.y >= absDir.z) {
-        faceIndex = fragToLight.y > 0.0 ? 2 : 3;
-    } else {
-        faceIndex = fragToLight.z > 0.0 ? 4 : 5;
-    }
-
-    PointFace face = light.pointFaces[faceIndex];
-    float4 lsp = mul(face.lightSpaceMatrix, float4(worldPos, 1.0));
-    float3 proj = lsp.xyz / lsp.w;
-    proj.xy = proj.xy * 0.5 + 0.5;
-
-    if (proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0 ||
-        proj.z < 0.0 || proj.z > 1.0) {
-        return 0.0;
-    }
-
-    float currentDepth = proj.z - 0.0005f;
-    float2 rangeMin  = face.shadowAtlasRange.xy;
-    float2 rangeSpan = face.shadowAtlasRange.zw - face.shadowAtlasRange.xy;
-    float2 atlasUV = rangeMin + proj.xy * rangeSpan;
-
-    float lit = textures[shadowAtlasIdx].SampleCmpLevelZero(
-        shadowCmpSampler, atlasUV, currentDepth);
-    return 1.0 - lit;
-}
-
 // the Henyey-Greenstein phase function
 float phase(float g, float cos_theta)
 {
@@ -179,24 +144,31 @@ FragmentOutput fragMain(VSOutput input) {
 
         float g = 0.8; // assymetry factor of the phase function
         for (int n = 0; n <= volPc.numSteps; n++) {
-            float3 sample_pos = hitPointA + (n + rand(seed)) * stepDist * pixelRayDir;
+            float3 sample_pos = hitPointA + (n + 0.5f * rand(seed)) * stepDist * pixelRayDir;
 
             float sample_attenuation = exp(-stepDist * vol.density * (SIGMA_A + SIGMA_S));
             transparency *= sample_attenuation;
 
             for (uint li = 0; li < volPc.lightCount; li++) {
                 Light* light = &volPc.lights[li];
-                if(light.type != 0) continue;
-                float3 toLight = light.position - sample_pos;
-                float  lightDist = length(toLight);
-                if (lightDist > light.range) continue;
+                float3 toLight;
+                float lightDist;
+                if(light.type == LightType::Point){
+                    toLight = light.position - sample_pos;
+                    lightDist = length(toLight);
+                    if (lightDist > light.range) continue;
+                }
+                else if(light.type == LightType::Directional){
+                    lightDist = 0;
+                    toLight = light.direction;
+                }
 
                 float cos_theta = dot(pixelRayDir, normalize(toLight));
                 float light_attenuation = exp(-lightDist * vol.density * (SIGMA_A + SIGMA_S));
 
                 float shadow = 0.0;
                 if (light.castsShadows == 1) {
-                    shadow = samplePointShadowAt(sample_pos, light, volPc.shadowAtlasIndex);
+                    shadow = calculateShadow(sample_pos, volPc.cameraPos, volPc.cameraDir, float3(0), float3(0), light, volPc.shadowAtlasIndex);
                 }
 
                 result += (1.0 - shadow) * transparency * light.color.rgb * phase(g, cos_theta) * light.intensity * light_attenuation * stepDist * vol.density * SIGMA_S;

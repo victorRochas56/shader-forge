@@ -52,8 +52,15 @@ struct PointFace {
     float4 shadowAtlasRange;
 };
 
+enum LightType {
+    Point,
+    Directional,
+    Spot,
+    Area,
+};
+
 struct Light {
-    uint type;
+    LightType type;
     float3 position;
     float3 direction;
     float range;
@@ -104,6 +111,109 @@ SamplerState samplers[];
 SamplerComparisonState shadowCmpSampler;
 
 
+
+float calculateDirectionalShadow(float3 fragWorldPos, float3 cameraPos, float3 cameraForward, float3 geometricNormal, float3 L, Light* light, uint shadowAtlasIdx)
+{
+    float viewDepth = dot(fragWorldPos - cameraPos, cameraForward);
+
+    int cascadeIndex = int(light.numCascades) - 1;
+    for (int i = 0; i < int(light.numCascades); i++) {
+        if (viewDepth < light.cascades[i].splitDistance) {
+            cascadeIndex = i;
+            break;
+        }
+    }
+    if( light.showCascades>0){
+        return cascadeIndex;
+    }
+
+    Cascade cascade = light.cascades[cascadeIndex];
+
+    float NdotL = abs(dot(geometricNormal, normalize(L + float3(1e-8))));
+    float normalOffset = cascade.worldTexelSize * (1.0 - NdotL) * 2.0;
+    float3 biasedPos = fragWorldPos + geometricNormal * normalOffset;
+
+    float4 fragPosLightSpace = mul(cascade.lightSpaceMatrix, float4(biasedPos, 1.0));
+    float3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
+    projCoords.x = projCoords.x * 0.5 + 0.5;
+    projCoords.y = projCoords.y * 0.5 + 0.5;
+
+    float texelSize = cascade.texelSize;
+    if (projCoords.x < texelSize || projCoords.x > 1.0 - texelSize ||
+        projCoords.y < texelSize || projCoords.y > 1.0 - texelSize ||
+        projCoords.z < 0.0 || projCoords.z > 1.0) {
+        return 0.0;
+    }
+
+    float currentDepth = projCoords.z - 0.0001f;
+
+    float2 rangeMin  = cascade.shadowAtlasRange.xy;
+    float2 rangeSpan = cascade.shadowAtlasRange.zw - cascade.shadowAtlasRange.xy;
+
+    float2 atlasUV = rangeMin + projCoords.xy * rangeSpan;
+    float lit = textures[shadowAtlasIdx].SampleCmpLevelZero(
+        shadowCmpSampler,
+        atlasUV,
+        currentDepth
+    );
+    return 1.0 - lit;
+}
+
+float calculatePointShadow(float3 fragWorldPos, float3 geometricNormal, float3 L, Light* light, uint shadowAtlasIdx)
+{
+    float3 fragToLight = fragWorldPos - light.position;
+    float3 absDir = abs(fragToLight);
+
+    int faceIndex;
+    if (absDir.x >= absDir.y && absDir.x >= absDir.z) {
+        faceIndex = fragToLight.x > 0.0 ? 0 : 1;
+    } else if (absDir.y >= absDir.x && absDir.y >= absDir.z) {
+        faceIndex = fragToLight.y > 0.0 ? 2 : 3;
+    } else {
+        faceIndex = fragToLight.z > 0.0 ? 4 : 5;
+    }
+
+    PointFace face = light.pointFaces[faceIndex];
+
+    float NdotL = saturate(abs(dot(geometricNormal, L)));
+    float normalOffset = (1.0 - NdotL) * light.range / float(light.shadowResolution) * 3.0;
+    float3 biasedPos = fragWorldPos + geometricNormal * normalOffset;
+
+    float4 fragPosLightSpace = mul(face.lightSpaceMatrix, float4(biasedPos, 1.0));
+    float3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
+    projCoords.x = projCoords.x * 0.5 + 0.5;
+    projCoords.y = projCoords.y * 0.5 + 0.5;
+
+    float texelSize = 1.0 / float(light.shadowResolution);
+    if (projCoords.x < texelSize || projCoords.x > 1.0 - texelSize ||
+        projCoords.y < texelSize || projCoords.y > 1.0 - texelSize ||
+        projCoords.z < 0.0 || projCoords.z > 1.0) {
+        return 0.0;
+    }
+
+    float currentDepth = projCoords.z - 0.0001f;
+
+    float2 rangeMin  = face.shadowAtlasRange.xy;
+    float2 rangeSpan = face.shadowAtlasRange.zw - face.shadowAtlasRange.xy;
+
+    float2 atlasUV = rangeMin + projCoords.xy * rangeSpan;
+    float lit = textures[shadowAtlasIdx].SampleCmpLevelZero(
+        shadowCmpSampler,
+        atlasUV,
+        currentDepth
+    );
+    return 1.0 - lit;
+}
+
+float calculateShadow(float3 fragWorldPos, float3 cameraPos, float3 cameraForward, float3 geometricNormal, float3 L, Light* light, uint shadowAtlasIdx)
+{
+    if (light.type == LightType::Directional) {
+        return calculateDirectionalShadow(fragWorldPos, cameraPos, cameraForward, geometricNormal, L, light, shadowAtlasIdx);
+    } else if (light.type == LightType::Point) {
+        return calculatePointShadow(fragWorldPos, geometricNormal, L, light, shadowAtlasIdx);
+    }
+    return 0.0;
+}
 
 float3 reconstructPixelRayDir(float2 uv, float4x4 view, float proj00, float proj11) {
     float2 ndc = uv * 2.0 - 1.0;

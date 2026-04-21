@@ -596,7 +596,7 @@ struct GPUPointFace {
 };
 
 struct GPULight {
-    uint32_t type = 0;              
+    LightType type = LightType::Point;              
     glm::vec3 position = glm::vec3(0,0,0);
     glm::vec3 direction = glm::vec3(0,0,0);
     float range = 10.0f;            
@@ -653,7 +653,7 @@ struct Light {
 
     GPULight toGPU(glm::vec3 lightPos, glm::vec3 lightDir) const {
         GPULight gpu;
-        gpu.type = static_cast<uint32_t>(type);
+        gpu.type = type;
         gpu.position = lightPos;
         gpu.direction = lightDir;
         gpu.range = range;
