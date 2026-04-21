@@ -220,6 +220,9 @@ float4 fragMain(VSOutput input) : SV_Target {
 
     float initDepth = textures[SSRpc.passData.depthIndex].SampleLevel(samplers[SSRpc.passData.depthSamplerIndex], uv, 0).r;
 
+    if (initDepth >= 1.0)
+        return float4(0, 0, 0, 0);
+
     // Reconstruct world position
     float3 worldPos = reconstructViewPos(uv, initDepth, SSRpc.passData.invViewProj);
 

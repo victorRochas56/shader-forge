@@ -691,6 +691,7 @@ enum class VolumeShape {
 struct Volume {
     uint32_t nodeIndex = 0;
     float density = 0.8f;
+    float phase = 0.8f;
     VolumeShape shape = VolumeShape::SPHERE;
     glm::vec3 center = glm::vec3(0,0,0);
     float radius = 1.0f;

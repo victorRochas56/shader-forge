@@ -324,7 +324,9 @@ class SceneLoader {
         std::string meshName;
         std::vector<uint32_t> materialIDs;
         bool hasLight = false;
+        bool hasVolume = false;
         Light light;
+        Volume vol;
 
         // Collect child node stream positions to parse after this node is created
         std::vector<std::streampos> childNodePositions;
@@ -415,6 +417,17 @@ class SceneLoader {
                         }
                     }
                 }
+            } else if (key == "Volume") {
+                hasVolume = true;
+                auto parts = split(value, ';');
+                vol.density = std::stof(parts[0]);
+                vol.phase = std::stof(parts[1]);
+                vol.shape = static_cast<VolumeShape>(std::stoul(parts[2]));
+                auto centerParts = split(parts[3], ',');
+                vol.center = glm::vec3(std::stof(centerParts[0]),std::stof(centerParts[1]),std::stof(centerParts[2]));
+                vol.radius = std::stof(parts[4]);
+                auto dimParts = split(parts[5], ',');
+                vol.dimensions = glm::vec3(std::stof(dimParts[0]),std::stof(dimParts[1]),std::stof(dimParts[2]));
             }
         }
 
@@ -462,6 +475,13 @@ class SceneLoader {
             Node& n = renderer.scene.sceneGraph.getNodes()[nodeIndex];
             NodeOps::assignLight(n, light, renderer);
             std::cout << "Added light to node: " << name << std::endl;
+        }
+
+        // same for volume
+        if (hasVolume) {
+            Node& n = renderer.scene.sceneGraph.getNodes()[nodeIndex];
+            NodeOps::assignVolume(n, vol, renderer);
+            std::cout << "Added volume to node: " << name << std::endl;
         }
 
         // Now parse child nodes recursively
@@ -574,6 +594,11 @@ class SceneLoader {
                 Material& mat = renderer.scene.getMaterials()[node.getMaterialIndex()];
                 ofs << indent << "  MaterialID : " << mat.materialID << std::endl;
             }
+        }
+
+        if (node.volumeIndex != 0xFFFFFFFF) {
+            Volume& vol = renderer.scene.volumes[node.volumeIndex];
+            ofs << indent << " Volume : " << vol.density << ";" << vol.phase << ";" << static_cast<uint32_t>(vol.shape) << ";" << vol.center.x << "," << vol.center.y << "," << vol.center.z << ";" << vol.radius << ";" << vol.dimensions.x << "," << vol.dimensions.y << "," << vol.dimensions.z << std::endl;
         }
 
         // Write children

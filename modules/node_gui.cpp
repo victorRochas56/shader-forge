@@ -273,6 +273,8 @@ void showNodeVolumeInfo(Node& node, Renderer& renderer) {
             node.transformDirty = true;
         if(ImGui::SliderFloat("density", &renderer.scene.volumes[node.volumeIndex].density,0.0f,1.0f))
             node.transformDirty = true;
+        if(ImGui::SliderFloat("phase", &renderer.scene.volumes[node.volumeIndex].phase,0.0f,1.0f))
+            node.transformDirty = true;
     }
 }
 

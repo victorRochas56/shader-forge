@@ -100,4 +100,6 @@ void SceneGraph::allocateNodeGPU(Node& node) {
 
 void SceneGraph::deallocateNodeGPU(Node& node) {
     (*renderer->bindless.descriptorSet).freeFixedBuffer(renderer->getModelMatrixBufferIndex(), node.modelMatrixIndices[0]);
+    (*renderer->bindless.descriptorSet).freeFixedBuffer(renderer->getLightBufferIndex(), node.lightIndex);
+    renderer->scene.lights.erase(node.lightIndex);
 }

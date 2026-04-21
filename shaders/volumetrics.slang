@@ -3,6 +3,7 @@ import modules.common;
 struct Volume {
     uint nodeIndex;
     float density;
+    float phase;
     int shape;
     float3 center;
     float radius;
@@ -142,7 +143,6 @@ FragmentOutput fragMain(VSOutput input) {
         float transparency = 1.0f;
         float3 result = float3(0);
 
-        float g = 0.8; // assymetry factor of the phase function
         for (int n = 0; n <= volPc.numSteps; n++) {
             float3 sample_pos = hitPointA + (n + 0.5f * rand(seed)) * stepDist * pixelRayDir;
 
@@ -175,7 +175,7 @@ FragmentOutput fragMain(VSOutput input) {
                     shadow = calculateShadow(sample_pos, volPc.cameraPos, volPc.cameraDir, float3(0), float3(0), light, volPc.shadowAtlasIndex);
                 }
 
-                result += (1.0 - shadow) * transparency * light.color.rgb * phase(g, cos_theta) * light.intensity * light_attenuation * stepDist * vol.density * SIGMA_S;
+                result += (1.0 - shadow) * transparency * light.color.rgb * phase(vol.phase, cos_theta) * light.intensity * light_attenuation * stepDist * vol.density * SIGMA_S;
             }
         }
 
