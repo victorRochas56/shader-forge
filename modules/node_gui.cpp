@@ -246,8 +246,8 @@ void showNodeLightInfo(Node& node, Renderer& renderer) {
                 node.transformDirty = true;
             }
         }
-        // Update light
-        (*renderer.bindless.descriptorSet).updateFixedBuffer<GPULight>(renderer.getLightBufferIndex(), node.lightIndex, light.toGPU(node.getWorldPosition(), node.forward()));
+        // Flag for GPU fanout — the per-frame renderer loop writes each frame-in-flight slice.
+        light.gpuDirtyFrames = MAX_FRAMES_IN_FLIGHT;
         
 
         Gizmos::drawSphere(node.getWorldPosition(),light.range, glm::vec4(1,1,0,1));

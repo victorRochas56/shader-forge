@@ -263,17 +263,27 @@ void Renderer::drawFrame() {
     Tracer::endTrace("reset fences");
 
     for (auto& [id, light] : scene.lights) {
+        glm::vec3 lightDir = scene.sceneGraph.getNode(light.nodeIndex).forward();
+        glm::vec3 lightPos = scene.sceneGraph.getNode(light.nodeIndex).getWorldPosition();
+
+        bool matricesUpdated = false;
         if (light.castsShadows == 1) {
-            glm::vec3 lightDir = scene.sceneGraph.getNode(light.nodeIndex).forward(); 
-            glm::vec3 lightPos = scene.sceneGraph.getNode(light.nodeIndex).getWorldPosition();
             if (light.type == LightType::Directional) {
-                // CSM depends on camera — always recalculate
+                // CSM depends on camera — always recalculate.
                 calculateCascadedLightSpaceMatrices(light, scene.activeCamera, this);
-                bindless.descriptorSet->updateFixedBufferWithOffset<GPULight>(lightBufferIndex, id, light.toGPU(lightPos,lightDir), gpu.currentFrame);
+                matricesUpdated = true;
             } else if (light.type == LightType::Point && light.shadowDirty) {
                 calculatePointLightFaceMatrices(light, lightPos);
-                bindless.descriptorSet->updateFixedBufferWithOffset<GPULight>(lightBufferIndex, id, light.toGPU(lightPos,lightDir), gpu.currentFrame);
+                matricesUpdated = true;
             }
+        }
+        if (matricesUpdated) light.gpuDirtyFrames = MAX_FRAMES_IN_FLIGHT;
+
+        // Fan out the GPULight write across every frame-in-flight slice so the
+        // per-frame buffer stays coherent instead of one slice winning the race.
+        if (light.gpuDirtyFrames > 0) {
+            bindless.descriptorSet->updateFixedBufferWithOffset<GPULight>(lightBufferIndex, id, light.toGPU(lightPos, lightDir), gpu.currentFrame);
+            light.gpuDirtyFrames--;
         }
     }
     Tracer::startTrace("record command buffer");

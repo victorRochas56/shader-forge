@@ -642,6 +642,11 @@ struct Light {
     std::array<Cascade, 3> cascades;
     std::array<PointShadowFace,6> cubeMapIndices;
     bool shadowDirty = true;
+    // Countdown for fanning out a GPULight write across every frame-in-flight slice of the
+    // per-frame light buffer. Set to MAX_FRAMES_IN_FLIGHT whenever any field feeding
+    // Light::toGPU changes (position, direction, range, matrices, color, flags, etc.).
+    // The per-frame renderer loop writes the current frame's slice and decrements.
+    uint32_t gpuDirtyFrames = 0;
     // Point-light only: node indices whose world AABB currently overlaps this light's sphere.
     // Maintained exclusively by LightInfluence — do not mutate elsewhere.
     std::unordered_set<uint32_t> influencedNodes;

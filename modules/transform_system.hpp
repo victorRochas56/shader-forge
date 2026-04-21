@@ -66,6 +66,7 @@ namespace TransformSystem {
             Light& L = lights[node.lightIndex];
             L.direction = glm::normalize(node.worldTransform[2]);
             L.shadowDirty = true;
+            L.gpuDirtyFrames = MAX_FRAMES_IN_FLIGHT;
             LightInfluence::rebuildLightSet(L, nodes);
         }
 
