@@ -669,6 +669,7 @@ void Renderer::createSDFResources(uint32_t width, uint32_t height) {
 
 void Renderer::createVolumetricResources(uint32_t width, uint32_t height) {
     createOrResizeRenderTarget(volTextureIndex,width,height,gpu.getSwapchain().getSwapChainImageFormat(),"internal/volumetrics");
+    createOrResizeRenderTarget(volBlurTextureIndex,width,height,gpu.getSwapchain().getSwapChainImageFormat(),"internal/volumetrics_blur");
 
     if (volPipelineIndex == 0xFFFFFFFF) {
         volPipelineIndex = 
@@ -1429,6 +1430,9 @@ void Renderer::recordVolumetricsPass(vk::raii::CommandBuffer& cmd, uint32_t imag
                             .volumeCount = static_cast<uint32_t>(scene.volumes.size()),
                             .invViewProjection = glm::inverse(scene.activeCamera.viewProjection)
                        }, vk::AttachmentLoadOp::eClear);
+
+    //TODO make blur controllable
+    blurAttachment(cmd,volTextureIndex,volBlurTextureIndex,extent.width,extent.height,2.0f,defaultSamplerIndex);
 
     drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[volApplyPipelineIndex], *gpu.getSwapchain().getSwapChainImageViews()[imageIndex],
                        gpu.getSwapchain().getSwapChainExtent(),

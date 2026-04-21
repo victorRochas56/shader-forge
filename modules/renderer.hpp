@@ -155,6 +155,7 @@ class Renderer {
     // Volume rendering
     uint32_t                            volPipelineIndex = 0xFFFFFFFF;
     uint32_t                            volTextureIndex = 0xFFFFFFFF;
+    uint32_t                            volBlurTextureIndex = 0xFFFFFFFF;
     uint32_t                            volPassDataBufferIndex = 0xFFFFFFFF;
     uint32_t                            volApplyPipelineIndex = 0xFFFFFFFF;
 

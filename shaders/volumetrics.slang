@@ -116,7 +116,7 @@ FragmentOutput fragMain(VSOutput input) {
 
     // Same unprojection at the scene-depth sample gives the surface point so
     // volumetrics never scatter light from behind solid geometry.
-    float sceneDepth = textures[volPc.depthTextureIndex].Sample(samplers[volPc.depthSamplerIndex], input.texCoord).r;
+    float sceneDepth = textures[volPc.depthTextureIndex].SampleLevel(samplers[volPc.depthSamplerIndex], input.texCoord, 0).r;
     float4 surfaceWorld = mul(volPc.invViewProjection, float4(ndc, sceneDepth, 1.0));
     surfaceWorld.xyz /= surfaceWorld.w;
     float surfaceDist = dot(surfaceWorld.xyz - volPc.cameraPos, pixelRayDir);
@@ -143,8 +143,8 @@ FragmentOutput fragMain(VSOutput input) {
         float transparency = 1.0f;
         float3 result = float3(0);
 
-        for (int n = 0; n <= volPc.numSteps; n++) {
-            float3 sample_pos = hitPointA + (n + 0.5f * rand(seed)) * stepDist * pixelRayDir;
+        for (int n = 0; n < volPc.numSteps; n++) {
+            float3 sample_pos = hitPointA + (n + rand(seed)) * stepDist * pixelRayDir;
 
             float sample_attenuation = exp(-stepDist * vol.density * (SIGMA_A + SIGMA_S));
             transparency *= sample_attenuation;
