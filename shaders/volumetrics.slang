@@ -151,20 +151,24 @@ FragmentOutput fragMain(VSOutput input) {
 
             for (uint li = 0; li < volPc.lightCount; li++) {
                 Light* light = &volPc.lights[li];
-                float3 toLight;
-                float lightDist;
-                if(light.type == LightType::Point){
-                    toLight = light.position - sample_pos;
-                    lightDist = length(toLight);
-                    if (lightDist > light.range) continue;
-                }
-                else if(light.type == LightType::Directional){
-                    lightDist = 0;
-                    toLight = light.direction;
+                float3 toLight = -light.direction;
+                if(light.type == LightType::Point)
+                    toLight = (light.position - sample_pos);
+                float lightDist = length(toLight);
+                if (light.type == LightType::Point && lightDist > light.range) continue;
+
+                float3 lightDir = normalize(toLight);
+                float3 exitA, exitB;
+                float distInMedium = 0.0;
+                if (rayIntersectSphere(sample_pos, lightDir, vol.center, vol.radius, exitA, exitB)) {
+                    distInMedium = length(exitB - sample_pos);
+                    if (light.type == LightType::Point) {
+                        distInMedium = min(distInMedium, lightDist);
+                    }
                 }
 
-                float cos_theta = dot(pixelRayDir, normalize(toLight));
-                float light_attenuation = exp(-lightDist * vol.density * (SIGMA_A + SIGMA_S));
+                float cos_theta = dot(pixelRayDir, lightDir);
+                float light_attenuation = exp(-distInMedium * vol.density * (SIGMA_A + SIGMA_S));
 
                 float shadow = 0.0;
                 if (light.castsShadows == 1) {

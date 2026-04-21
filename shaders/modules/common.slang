@@ -127,36 +127,43 @@ float calculateDirectionalShadow(float3 fragWorldPos, float3 cameraPos, float3 c
         return cascadeIndex;
     }
 
-    Cascade cascade = light.cascades[cascadeIndex];
+    // Walk outward from the split-selected cascade; if the sample lands outside
+    // a tile's bounds, try the next-larger cascade rather than returning lit.
+    // This prevents block-shaped unshadowed regions on jittered volume samples
+    // near cascade XY edges.
+    for (int c = cascadeIndex; c < int(light.numCascades); c++) {
+        Cascade cascade = light.cascades[c];
 
-    float NdotL = abs(dot(geometricNormal, normalize(L + float3(1e-8))));
-    float normalOffset = cascade.worldTexelSize * (1.0 - NdotL) * 2.0;
-    float3 biasedPos = fragWorldPos + geometricNormal * normalOffset;
+        float NdotL = abs(dot(geometricNormal, normalize(L + float3(1e-8))));
+        float normalOffset = cascade.worldTexelSize * (1.0 - NdotL) * 2.0;
+        float3 biasedPos = fragWorldPos + geometricNormal * normalOffset;
 
-    float4 fragPosLightSpace = mul(cascade.lightSpaceMatrix, float4(biasedPos, 1.0));
-    float3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
-    projCoords.x = projCoords.x * 0.5 + 0.5;
-    projCoords.y = projCoords.y * 0.5 + 0.5;
+        float4 fragPosLightSpace = mul(cascade.lightSpaceMatrix, float4(biasedPos, 1.0));
+        float3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
+        projCoords.x = projCoords.x * 0.5 + 0.5;
+        projCoords.y = projCoords.y * 0.5 + 0.5;
 
-    float texelSize = cascade.texelSize;
-    if (projCoords.x < texelSize || projCoords.x > 1.0 - texelSize ||
-        projCoords.y < texelSize || projCoords.y > 1.0 - texelSize ||
-        projCoords.z < 0.0 || projCoords.z > 1.0) {
-        return 0.0;
+        float texelSize = cascade.texelSize;
+        if (projCoords.x < texelSize || projCoords.x > 1.0 - texelSize ||
+            projCoords.y < texelSize || projCoords.y > 1.0 - texelSize ||
+            projCoords.z < 0.0 || projCoords.z > 1.0) {
+            continue;
+        }
+
+        float currentDepth = projCoords.z - 0.0001f;
+
+        float2 rangeMin  = cascade.shadowAtlasRange.xy;
+        float2 rangeSpan = cascade.shadowAtlasRange.zw - cascade.shadowAtlasRange.xy;
+
+        float2 atlasUV = rangeMin + projCoords.xy * rangeSpan;
+        float lit = textures[shadowAtlasIdx].SampleCmpLevelZero(
+            shadowCmpSampler,
+            atlasUV,
+            currentDepth
+        );
+        return 1.0 - lit;
     }
-
-    float currentDepth = projCoords.z - 0.0001f;
-
-    float2 rangeMin  = cascade.shadowAtlasRange.xy;
-    float2 rangeSpan = cascade.shadowAtlasRange.zw - cascade.shadowAtlasRange.xy;
-
-    float2 atlasUV = rangeMin + projCoords.xy * rangeSpan;
-    float lit = textures[shadowAtlasIdx].SampleCmpLevelZero(
-        shadowCmpSampler,
-        atlasUV,
-        currentDepth
-    );
-    return 1.0 - lit;
+    return 0.0;
 }
 
 float calculatePointShadow(float3 fragWorldPos, float3 geometricNormal, float3 L, Light* light, uint shadowAtlasIdx)
