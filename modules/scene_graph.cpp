@@ -50,6 +50,10 @@ void SceneGraph::killNode(uint32_t idx) {
     node.alive = false;
     unlinkChild(idx);
     deallocateNodeGPU(node);
+
+    if(node.lightIndex != MAX_LIGHTS)
+        renderer->scene.removeLight(renderer->bindless,renderer->getLightBufferIndex(),node.lightIndex);
+    
     renderer->removeNodeFromRenderList(idx);
 
     // Clear selection if this node was selected
@@ -100,6 +104,4 @@ void SceneGraph::allocateNodeGPU(Node& node) {
 
 void SceneGraph::deallocateNodeGPU(Node& node) {
     (*renderer->bindless.descriptorSet).freeFixedBuffer(renderer->getModelMatrixBufferIndex(), node.modelMatrixIndices[0]);
-    (*renderer->bindless.descriptorSet).freeFixedBuffer(renderer->getLightBufferIndex(), node.lightIndex);
-    renderer->scene.lights.erase(node.lightIndex);
 }

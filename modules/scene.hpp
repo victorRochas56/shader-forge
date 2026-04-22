@@ -81,6 +81,26 @@ class Scene {
         lights.clear();
     }
 
+    void removeLight(BindlessSystem& bindless, uint32_t lightBufferIndex, uint32_t lightIndex) {
+        Light& light = lights[lightIndex];
+        bindless.descriptorSet->freeFixedBuffer(lightBufferIndex, lightIndex);
+        if (light.castsShadows) {
+            switch (light.type) {
+                case LightType::Directional:
+                    for (int i = 0; i < light.numCascades; i++)
+                        shadowAtlas.freeShadowMap(light.cascades[i].shadowAtlasTile);
+                    break;
+                case LightType::Point:
+                    for (int i = 0; i < 6; i++)
+                        shadowAtlas.freeShadowMap(light.cubeMapIndices[i].shadowAtlasTile);
+                    break;
+                default:
+                    break;
+            }
+        }
+        lights.erase(lightIndex);
+    }
+
     // --- volumes -------------------------------------------------------
     const std::map<uint32_t, Volume>& getVolumes() const { return volumes; }
     std::map<uint32_t, Volume>&       getVolumesMutable() { return volumes; }
