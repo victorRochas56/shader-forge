@@ -904,7 +904,7 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
 
     LitPassData litPassData {
         .samplerIndex = defaultSamplerIndex,
-        .lightCount = static_cast<uint32_t>(scene.lights.size()),
+        .lightCount = scene.getLightLoopBound(),
         .shadowSamplerIndex = shadowSamplerIndex,
         .shadowAtlasIndex = scene.shadowAtlas.textureIndex,
         .cameraPosition = scene.activeCamera.position,
@@ -1418,16 +1418,17 @@ void Renderer::recordVolumetricsPass(vk::raii::CommandBuffer& cmd, uint32_t imag
                        extent,
                        VolumetricPushConstants {
                             .lightsAddress = bindless.descriptorSet->getFixedBuffers()[lightBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(GPULight),
-                            .lightCount = static_cast<uint32_t>(scene.lights.size()),
+                            .volumeBufferAddress = bindless.descriptorSet->getFixedBuffers()[volumeBufferIndex]->address /* + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(Volume)*/,
+                            .lightCount = scene.getLightLoopBound(),
                             .shadowAtlasIndex = scene.shadowAtlas.textureIndex,
-                            .cameraPos = scene.activeCamera.position,
                             .depthTextureIndex = gpu.getSwapchain().getDepthResolveIndex(),
-                            .cameraDir = scene.activeCamera.getLookDir(),
                             .depthSamplerIndex = depthSamplerIndex,
-                            .screenSize = {extent.width, extent.height},
-                            .volumeBufferIndex = bindless.descriptorSet->getFixedBuffers()[volumeBufferIndex]->address /* + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(Volume)*/,
+                            .cameraPos = scene.activeCamera.position,
                             .numSteps = static_cast<uint32_t>(features.volumetrics.numSteps),
-                            .volumeCount = static_cast<uint32_t>(scene.volumes.size()),
+                            .cameraDir = scene.activeCamera.getLookDir(),
+                            .volumeCount = scene.getVolumeLoopBound(),
+                            .screenSize = {extent.width, extent.height},
+                            .maxDist = features.volumetrics.maxDist,
                             .invViewProjection = glm::inverse(scene.activeCamera.viewProjection)
                        }, vk::AttachmentLoadOp::eClear);
 

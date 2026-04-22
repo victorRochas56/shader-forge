@@ -135,7 +135,8 @@ struct SSRSettings {
 struct VolumetricSettings {
     bool enabled = true;
     float resolutionScale = 0.5f;
-    int numSteps = 8;
+    int numSteps = 16;
+    float maxDist = 35.0f;
 };
 
 struct RenderFeatures {
@@ -283,19 +284,18 @@ struct SDFApplyPushConstants {
 
 struct VolumetricPushConstants {
     uint64_t lightsAddress;            // 0
+    uint64_t volumeBufferAddress;        // 56
     uint32_t lightCount;               // 8
     uint32_t shadowAtlasIndex;         // 12
-    glm::vec3 cameraPos;               // 16
     uint32_t depthTextureIndex;        // 28
-    glm::vec3 cameraDir;               // 32
     uint32_t depthSamplerIndex;        // 44
-    uint32_t screenSize[2];            // 48
-    uint64_t volumeBufferIndex;        // 56
+    glm::vec3 cameraPos;               // 16
     uint32_t numSteps;                 // 64
-    uint32_t _pad0;                    // 68 (uint2 _pad aligns to 8)
-    uint32_t _pad1[2];                 // 72  shader: uint2 _pad
+    glm::vec3 cameraDir;               // 32
     uint32_t volumeCount;              // 80
-    uint32_t _pad2[3];                 // 84 (mat4 aligns to 16 -> 96)
+    uint32_t screenSize[2];            // 48
+    float    maxDist;                    // 68 (uint2 _pad aligns to 8)
+    uint32_t _pad;                 // 72  shader: uint2 _pad
     glm::mat4 invViewProjection;       // 96, ends at 160
 };
 

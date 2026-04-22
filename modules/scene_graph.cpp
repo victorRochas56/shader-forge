@@ -51,8 +51,15 @@ void SceneGraph::killNode(uint32_t idx) {
     unlinkChild(idx);
     deallocateNodeGPU(node);
 
-    if(node.lightIndex != MAX_LIGHTS)
+    if(node.lightIndex != MAX_LIGHTS) {
         renderer->scene.removeLight(renderer->bindless,renderer->getLightBufferIndex(),node.lightIndex);
+        node.lightIndex = MAX_LIGHTS;
+    }
+
+    if(node.volumeIndex != 0xFFFFFFFF) {
+        renderer->scene.removeVolume(renderer->bindless,renderer->getVolumeBufferIndex(),node.volumeIndex);
+        node.volumeIndex = 0xFFFFFFFF;
+    }
     
     renderer->removeNodeFromRenderList(idx);
 

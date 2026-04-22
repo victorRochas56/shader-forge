@@ -72,6 +72,9 @@ FragmentOutput fragMain(VertexOutput input)
     for(int i = 0; i < pc.litPassData.lightCount; i++){
         Light* currentLight = &pc.lights[i];
 
+        // Sparse slot skip: removed lights leave a zeroed sentinel in the buffer.
+        if(currentLight.intensity <= 0.0) continue;
+
         if(currentLight.type != 1) {
             float distance = length(currentLight.position - input.worldPos);
             if(distance > currentLight.range){

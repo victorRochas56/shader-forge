@@ -12,17 +12,18 @@ struct Volume {
 
 struct VolumetricPushConstants {
     Light* lights;
+    Volume* vols;
     uint lightCount;
     uint shadowAtlasIndex;
-    float3 cameraPos;
     uint depthTextureIndex;
-    float3 cameraDir;
     uint depthSamplerIndex;
-    uint2 screenSize;
-    Volume* vols;
+    float3 cameraPos;
     uint numSteps;
-    uint2 _pad;
+    float3 cameraDir;
     uint volumeCount;
+    uint2 screenSize;
+    float maxDist;
+    uint _pad;
     float4x4 invViewProjection;
 }
 
@@ -124,6 +125,7 @@ FragmentOutput fragMain(VSOutput input) {
     for (uint i = 0; i < volPc.volumeCount; i++) {
         //if (volPc.vols[i].type != 0) continue;
         Volume* vol = &volPc.vols[i];
+        if (vol.density <= 0.0) continue;
 
         float3 hitPointA;
         float3 hitPointB;
@@ -138,6 +140,10 @@ FragmentOutput fragMain(VSOutput input) {
             tB = surfaceDist;
             hitPointB = volPc.cameraPos + tB * pixelRayDir;
         }
+        float dist = length(hitPointB - hitPointA);
+        if( dist > volPc.maxDist){
+            hitPointB -= pixelRayDir * (dist - volPc.maxDist); 
+        }
 
         float stepDist = length(hitPointB - hitPointA) / volPc.numSteps;
         float transparency = 1.0f;
@@ -151,6 +157,7 @@ FragmentOutput fragMain(VSOutput input) {
 
             for (uint li = 0; li < volPc.lightCount; li++) {
                 Light* light = &volPc.lights[li];
+                if (light.intensity <= 0.0) continue;
                 float3 toLight = -light.direction;
                 if(light.type == LightType::Point)
                     toLight = (light.position - sample_pos);

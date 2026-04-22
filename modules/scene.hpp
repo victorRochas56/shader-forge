@@ -5,6 +5,7 @@
 
 #include "asset_manager.hpp"
 #include "bindless_system.hpp"
+#include "constants.hpp"
 #include "scene_elements.hpp"
 #include "scene_graph.hpp"
 #include "structs.hpp"
@@ -58,6 +59,14 @@ class Scene {
     void                             addLight(uint32_t index, Light light) { lights[index] = light; }
     Light&                           getLight(uint32_t index) { return lights[index]; }
 
+    // Shader loop bound for the (sparse) light buffer. Slots are never compacted,
+    // so the highest live key defines how far the shader must iterate. Gaps in
+    // the range are kept skippable by writing a disabled GPULight sentinel
+    // (intensity == 0) in removeLight — see below.
+    uint32_t getLightLoopBound() const {
+        return lights.empty() ? 0u : lights.rbegin()->first + 1u;
+    }
+
     // Clears lights AND frees every shadow-atlas tile those lights held.
     // Caller supplies the bindless system and the light buffer index so Scene
     // doesn't have to store either.
@@ -83,6 +92,17 @@ class Scene {
 
     void removeLight(BindlessSystem& bindless, uint32_t lightBufferIndex, uint32_t lightIndex) {
         Light& light = lights[lightIndex];
+
+        // Stamp a disabled sentinel into every frame slice. freeFixedBuffer only
+        // touches CPU bookkeeping; without this write, the slot keeps its last
+        // GPULight contents and the shader (which iterates 0..maxSlot) would
+        // still light the scene from the dead slot.
+        GPULight disabled{};
+        disabled.intensity = 0.0f;
+        disabled.castsShadows = 0;
+        for (uint32_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++) {
+            bindless.descriptorSet->updateFixedBufferWithOffset<GPULight>(lightBufferIndex, lightIndex, disabled, frame);
+        }
         bindless.descriptorSet->freeFixedBuffer(lightBufferIndex, lightIndex);
         if (light.castsShadows) {
             switch (light.type) {
@@ -106,9 +126,25 @@ class Scene {
     std::map<uint32_t, Volume>&       getVolumesMutable() { return volumes; }
     void                              addVolume(uint32_t index, Volume volume) { volumes[index] = volume; }
     Volume&                           getVolume(uint32_t index) { return volumes[index]; }
+
+    // Same rationale as getLightLoopBound — volumes share the sparse-slot model.
+    uint32_t getVolumeLoopBound() const {
+        return volumes.empty() ? 0u : volumes.rbegin()->first + 1u;
+    }
+
     void clearVolumes(BindlessSystem& bindless, uint32_t volumeBufferIndex) {
         bindless.descriptorSet->clearFixedBuffer(volumeBufferIndex);
         volumes.clear();
+    }
+
+    void removeVolume(BindlessSystem& bindless, uint32_t volumeBufferIndex, uint32_t volumeIndex) {
+        // Same dead-slot trick as removeLight: density == 0 makes the shader skip.
+        Volume disabled{};
+        disabled.density = 0.0f;
+        disabled.radius = 0.0f;
+        bindless.descriptorSet->updateFixedBuffer<Volume>(volumeBufferIndex, volumeIndex, disabled);
+        bindless.descriptorSet->freeFixedBuffer(volumeBufferIndex,volumeIndex);
+        volumes.erase(volumeIndex);
     }
 
     // --- defaults / skybox ---------------------------------------------
