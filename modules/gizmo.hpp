@@ -151,24 +151,26 @@ class Gizmos {
         g.addLineToBuffer({.startPoint = corners[3], .endPoint = corners[7], .color = color});
     }
 
-    static void drawSphere(glm::vec3 center, float radius, glm::vec4 color, int segments = 32) {
+    static void drawCircle(glm::vec3 center, float radius, glm::vec3 axis, glm::vec4 color, int segments = 32) {
         auto& g = instance();
+        glm::vec3 n = glm::normalize(axis);
+        glm::vec3 ref = glm::abs(n.y) < 0.9999f ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0);
+        glm::vec3 u = glm::normalize(glm::cross(ref, n));
+        glm::vec3 v = glm::cross(n, u);
         float step = glm::two_pi<float>() / static_cast<float>(segments);
         for (int i = 0; i < segments; i++) {
             float a0 = step * i;
             float a1 = step * (i + 1);
-            float c0 = glm::cos(a0), s0 = glm::sin(a0);
-            float c1 = glm::cos(a1), s1 = glm::sin(a1);
-            // XY ring
-            g.addLineToBuffer({.startPoint = center + glm::vec3(c0, s0, 0.0f) * radius,
-                                .endPoint   = center + glm::vec3(c1, s1, 0.0f) * radius, .color = color});
-            // XZ ring
-            g.addLineToBuffer({.startPoint = center + glm::vec3(c0, 0.0f, s0) * radius,
-                                .endPoint   = center + glm::vec3(c1, 0.0f, s1) * radius, .color = color});
-            // YZ ring
-            g.addLineToBuffer({.startPoint = center + glm::vec3(0.0f, c0, s0) * radius,
-                                .endPoint   = center + glm::vec3(0.0f, c1, s1) * radius, .color = color});
+            glm::vec3 p0 = center + (u * glm::cos(a0) + v * glm::sin(a0)) * radius;
+            glm::vec3 p1 = center + (u * glm::cos(a1) + v * glm::sin(a1)) * radius;
+            g.addLineToBuffer({.startPoint = p0, .endPoint = p1, .color = color});
         }
+    }
+
+    static void drawSphere(glm::vec3 center, float radius, glm::vec4 color, int segments = 32) {
+        drawCircle(center, radius, glm::vec3(0, 0, 1), color, segments);
+        drawCircle(center, radius, glm::vec3(0, 1, 0), color, segments);
+        drawCircle(center, radius, glm::vec3(1, 0, 0), color, segments);
     }
 
     static void drawGrid(glm::vec3 origin, glm::vec3 normal, float spacing) {}

@@ -13,6 +13,7 @@ reads inputs through GLFW, stores this frame's and last frame's inputs in 2 Inpu
 
 struct InputState {
     glm::vec2 mousePos = glm::vec2(0);
+    glm::vec2 ndcMousePos = glm::vec2(0);
     glm::vec2 mouseDelta = glm::vec2(0);
     glm::vec2 normalizedMouseDelta = glm::vec2(0);
     glm::vec2 scroll = glm::vec2(0);

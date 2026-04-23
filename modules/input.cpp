@@ -6,6 +6,12 @@
 void InputManager::tickInputState() { //should be only called once in the main app loop
     InputManager& inst = getInstance();
 
+    int w = 0, h = 0;
+    glfwGetWindowSize(inst.renderer->gpu.getWindow(), &w, &h);
+    inst.current.mouseDelta = inst.current.mousePos - inst.previous.mousePos;
+    inst.current.normalizedMouseDelta = glm::vec2(inst.current.mouseDelta.x / w, inst.current.mouseDelta.y / h);
+    inst.current.ndcMousePos = glm::vec2((inst.current.mousePos.x / w) * 2.0f - 1.0f, (inst.current.mousePos.y / h) * 2.0f - 1.0f);
+
     //rotating viewport when holding right click
     if (inst.current.mouse_button == 1 && inst.current.mouse_action == 1) {
         inst.renderer->scene.activeCamera.rotatePitch(inst.current.mouseDelta.y * -0.1f);
@@ -37,13 +43,9 @@ void InputManager::tickInputState() { //should be only called once in the main a
 
     // raycast on left click for selection or material picking
     if (inst.current.mouse_button == 0 && inst.current.mouse_action == 1 && inst.previous.mouse_action != 1) {
-        int width = 0, height = 0;
-        glfwGetWindowSize(inst.renderer->gpu.getWindow(), &width, &height);
-        float NDCx = (inst.current.mousePos.x / width) * 2.0 - 1.0;
-        float NDCy = (inst.current.mousePos.y / height) * 2.0 - 1.0;
         glm::vec3 origin;
         glm::vec3 direction;
-        inst.renderer->scene.activeCamera.rayFromScreenCoords(NDCx, NDCy, &origin, &direction);
+        inst.renderer->scene.activeCamera.rayFromScreenCoords(inst.current.ndcMousePos.x, inst.current.ndcMousePos.y, origin, direction);
 
         if (inst.materialPickMode) {
             auto hit = Raycast::castMeshes(origin, direction, inst.renderer->scene.sceneGraph.getNodes(), inst.renderer->scene.sceneGraph.getLastNode(),
@@ -101,10 +103,5 @@ void InputManager::tickInputState() { //should be only called once in the main a
         inst.renderer->toggleDepthView();
     }*/
     inst.canMove = true;
-    inst.current.mouseDelta = inst.current.mousePos - inst.previous.mousePos;
-    int w;
-    int h;
-    glfwGetWindowSize(inst.renderer->gpu.getWindow(),&w,&h);
-    inst.current.normalizedMouseDelta = glm::vec2(inst.current.mouseDelta.x / w, inst.current.mouseDelta.y / h);
     inst.previous = inst.current;
 }

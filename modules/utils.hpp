@@ -52,6 +52,49 @@ static uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags prop
     throw std::runtime_error("failed to find suitable memory type!");
 }
 
+inline bool intersectPlane(const glm::vec3 &normal, const glm::vec3 &planeCenter, const glm::vec3 &rayOrigin, const glm::vec3 &rayDir, float& outParamDist)
+{
+    // Assuming vectors are all normalized
+    float denom = glm::dot(normal, rayDir);
+    if (std::abs(denom) > 1e-6f) {
+        glm::vec3 planeRayDir = planeCenter - rayOrigin;
+        outParamDist = glm::dot(planeRayDir, normal) / denom;
+        return (outParamDist >= 0);
+    }
+    return false;
+}
+
+inline bool intersectDisk(const glm::vec3 &normal, const glm::vec3 &planeCenter, const float &radius, const glm::vec3 &rayOrigin, const glm::vec3 &rayDir)
+{
+    float t = 0;
+    if (intersectPlane(normal, planeCenter, rayOrigin, rayDir, t)) {
+        glm::vec3 p = rayOrigin + rayDir * t; // Calculate intersection point
+        glm::vec3 v = p - planeCenter; // Vector from disk center to intersection point
+        float d2 = glm::dot(v, v); // Squared distance from disk center to intersection point
+        return d2 <= radius * radius; // Compare squared distances (more efficient)
+    }
+    return false;
+}
+
+inline bool intersectCircle(const glm::vec3 &normal, const glm::vec3 &planeCenter, const float &radius, const float& thickness, const glm::vec3 &rayOrigin, const glm::vec3 &rayDir, float& outParamDist)
+{
+    float t = 0;
+    if (intersectPlane(normal, planeCenter, rayOrigin, rayDir, t)) {
+        glm::vec3 p = rayOrigin + rayDir * t; // Calculate intersection point
+        glm::vec3 v = p - planeCenter; // Vector from disk center to intersection point
+        float d2 = glm::dot(v, v); // Squared distance from disk center to intersection point
+        bool condA = d2 <= (radius + thickness) * (radius + thickness); // Compare squared distances (more efficient)
+        bool condB = d2 >= (radius - thickness) * (radius - thickness); // Compare squared distances (more efficient)
+        if (condA && condB) {
+            outParamDist = t;
+            return true;
+        }
+        outParamDist = 0;
+        return false;
+    }
+    return false;
+}
+
 static vk::Format findDepthFormat(Device& device) {
     return findSupportedFormat({vk::Format::eD32Sfloat, vk::Format::eD32SfloatS8Uint, vk::Format::eD24UnormS8Uint}, vk::ImageTiling::eOptimal,
                                 vk::FormatFeatureFlagBits::eDepthStencilAttachment, device);

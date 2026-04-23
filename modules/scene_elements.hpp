@@ -120,7 +120,7 @@ struct Camera {
     float yaw = -90.0f;
     float pitch = 0.0f;
 
-    void rayFromScreenCoords(float x, float y, glm::vec3* origin, glm::vec3* direction) {
+    void rayFromScreenCoords(float x, float y, glm::vec3& outOrigin, glm::vec3& outDirection) {
 
         glm::vec4 nearClip = glm::vec4(x, y, -1.0f, 1.0f);
         glm::vec4 farClip = glm::vec4(x, y, 1.0f, 1.0f);
@@ -138,8 +138,8 @@ struct Camera {
         glm::vec4 farWorld = glm::inverse(viewMatrix) * farView;
 
         // Ray from near to far
-        *origin = glm::vec3(nearWorld);
-        *direction = glm::normalize(glm::vec3(farWorld - nearWorld));
+        outOrigin = glm::vec3(nearWorld);
+        outDirection = glm::normalize(glm::vec3(farWorld - nearWorld));
     }
 
     void rotateYaw(float deltaYaw = 0.0f) {

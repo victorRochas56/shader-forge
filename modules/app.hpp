@@ -25,6 +25,7 @@
 #include "profiling.hpp"
 #include "events.hpp"
 #include "material_editor_state.hpp"
+#include "manipulators.hpp"
 
 #define GLM_FORCE_RADIANS
 #define GLM_DEPTH_ZERO_TO_ONE
@@ -106,8 +107,10 @@ class App {
 
             //draw axes visualization for every node
             Node* currentNode = &scene.sceneGraph.getRootNode();
-            if(scene.sceneGraph.selectedNode != 0)
+            if(scene.sceneGraph.selectedNode != 0) {
                 currentNode = &scene.sceneGraph.getNode(scene.sceneGraph.selectedNode);
+                Manip::showManipulator(*currentNode,scene.activeCamera,InputManager::getCurrentState().ndcMousePos);
+            }
 
             Gizmos::drawAxes(currentNode->getTransform(),0.15f);
             scene.sceneGraph.forEachChild(*currentNode,[](Node& child){

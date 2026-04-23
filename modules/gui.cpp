@@ -378,7 +378,7 @@ void showActionMenu(uint32_t context, GLFWwindow* window, Camera& camera,
         glm::vec3 origin, direction;
         int w = 0, h = 0;
         glfwGetWindowSize(window, &w, &h);
-        camera.rayFromScreenCoords((posX / w) * 2.0 - 1.0, (posY / h) * 2.0 - 1.0, &origin, &direction);
+        camera.rayFromScreenCoords((posX / w) * 2.0 - 1.0, (posY / h) * 2.0 - 1.0, origin, direction);
         sceneGraph.addNode(false, SceneGraph::ROOT_INDEX, origin + direction);
     }
     ImGui::End();
