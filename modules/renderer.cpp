@@ -378,6 +378,7 @@ void Renderer::removeNodeFromRenderList(uint32_t nodeIndex) {
 }
 void Renderer::clearRenderList() { renderEntries.clear(); shaderDrawRanges.clear(); renderListDirty = false; }
 void Renderer::clearLights() { scene.clearLights(bindless, lightBufferIndex); }
+void Renderer::clearVolumes() { scene.clearVolumes(bindless, volumeBufferIndex); }
 
 void Renderer::toggleVsync() {
     gpu.vSync = !gpu.vSync;

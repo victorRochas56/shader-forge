@@ -48,14 +48,19 @@ class InputManager {
 
     static void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) { getInstance().current.keyStates[key] = action; }
 
-    static void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {}
+    static void scrocll_callback(GLFWwindow* window, double xoffset, double yoffset) {}
 
     static void setRenderer(Renderer* pRenderer) { getInstance().renderer = pRenderer; }
     static void setMaterialEditorState(MaterialEditorState* state) { getInstance().materialEditorState = state; }
 
-    static InputState& getCurrentState(){
+    static const InputState& getCurrentState(){
         auto& i = getInstance();
         return i.current;
+    }
+
+    static const InputState& getPreviousState(){
+        auto& i = getInstance();
+        return i.previous;
     }
 
   private:

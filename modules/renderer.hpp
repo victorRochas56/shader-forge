@@ -198,6 +198,7 @@ class Renderer {
 
     void clearRenderList();
     void clearLights();
+    void clearVolumes();
 
     void toggleVsync();
 

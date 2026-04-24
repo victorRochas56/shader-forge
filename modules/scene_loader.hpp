@@ -141,6 +141,7 @@ class SceneLoader {
         renderer.scene.sceneGraph.resetLastNode();
         renderer.clearRenderList();
         renderer.clearLights();
+        renderer.clearVolumes();
         renderer.scene.sceneGraph.init(&renderer);
         std::cout << "Scene cleared successfully!" << std::endl;
     }
