@@ -31,8 +31,9 @@ class Scene {
     AssetManager               assetManager;
     Camera                     activeCamera;
     ShadowAtlas                shadowAtlas;
-    std::map<uint32_t, Light>  lights;
-    std::map<uint32_t, Volume> volumes;
+    std::unordered_map<uint32_t, Light>  lights;
+    std::unordered_map<uint32_t, Volume> volumes;
+    std::unordered_map<uint32_t, Billboard> billboards;
     std::vector<Material>      materials;
     Shader                     fallbackLitShader;
     uint32_t                   fallbackDefaultMaterialIndex = 0;
@@ -54,17 +55,17 @@ class Scene {
     }
 
     // --- lights --------------------------------------------------------
-    const std::map<uint32_t, Light>& getLights() const { return lights; }
-    std::map<uint32_t, Light>&       getLightsMutable() { return lights; }
-    void                             addLight(uint32_t index, Light light) { lights[index] = light; }
-    Light&                           getLight(uint32_t index) { return lights[index]; }
+    const std::unordered_map<uint32_t, Light>& getLights() const { return lights; }
+    std::unordered_map<uint32_t, Light>&       getLightsMutable() { return lights; }
+    void                                       addLight(uint32_t index, Light light) { lights[index] = light; }
+    Light&                                     getLight(uint32_t index) { return lights[index]; }
 
     // Shader loop bound for the (sparse) light buffer. Slots are never compacted,
     // so the highest live key defines how far the shader must iterate. Gaps in
     // the range are kept skippable by writing a disabled GPULight sentinel
     // (intensity == 0) in removeLight — see below.
     uint32_t getLightLoopBound() const {
-        return lights.empty() ? 0u : lights.rbegin()->first + 1u;
+        return lights.empty() ? 0u : lights.size();
     }
 
     // Clears lights AND frees every shadow-atlas tile those lights held.
@@ -122,14 +123,14 @@ class Scene {
     }
 
     // --- volumes -------------------------------------------------------
-    const std::map<uint32_t, Volume>& getVolumes() const { return volumes; }
-    std::map<uint32_t, Volume>&       getVolumesMutable() { return volumes; }
-    void                              addVolume(uint32_t index, Volume volume) { volumes[index] = volume; }
-    Volume&                           getVolume(uint32_t index) { return volumes[index]; }
+    const std::unordered_map<uint32_t, Volume>& getVolumes() const { return volumes; }
+    std::unordered_map<uint32_t, Volume>&       getVolumesMutable() { return volumes; }
+    void                                        addVolume(uint32_t index, Volume volume) { volumes[index] = volume; }
+    Volume&                                     getVolume(uint32_t index) { return volumes[index]; }
 
     // Same rationale as getLightLoopBound — volumes share the sparse-slot model.
     uint32_t getVolumeLoopBound() const {
-        return volumes.empty() ? 0u : volumes.rbegin()->first + 1u;
+        return volumes.empty() ? 0u : volumes.size();
     }
 
     void clearVolumes(BindlessSystem& bindless, uint32_t volumeBufferIndex) {
@@ -146,6 +147,13 @@ class Scene {
         bindless.descriptorSet->freeFixedBuffer(volumeBufferIndex,volumeIndex);
         volumes.erase(volumeIndex);
     }
+
+    const std::unordered_map<uint32_t, Billboard>& getBillboards() const { return billboards; }
+    std::unordered_map<uint32_t, Billboard>&       getBillboardsMutable() { return billboards; }
+    void addBillboard(uint32_t index, Billboard billboard) { billboards[index] = billboard; }
+    Billboard& getBillboard(uint32_t index) { return billboards[index]; }
+    void removeBillboard(uint32_t index) { billboards.erase(index); }
+    void clearBillboards() { billboards.clear(); }
 
     // --- defaults / skybox ---------------------------------------------
     Shader   getFallBackShader() const    { return fallbackLitShader; }

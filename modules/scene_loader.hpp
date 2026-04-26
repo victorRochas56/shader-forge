@@ -78,7 +78,6 @@ class SceneLoader {
   private:
     std::fstream ofs;
     std::unordered_set<uint32_t> savedMaterialIDs;
-    std::unordered_map<std::string, std::vector<uint32_t>> loadedMeshFiles; // sourceFile -> mesh indices
 
     // trims whitespace from line
     void trim(std::string& str) {
@@ -117,7 +116,6 @@ class SceneLoader {
 
     void clearSceneInternal(Renderer& renderer) { // meshes and textures remain loaded in memory for reuse (TODO check on load for unused?)
         std::cout << "Clearing scene..." << std::endl;
-        loadedMeshFiles.clear();
 
         auto& nodes = renderer.scene.sceneGraph.getNodes();
         Node& rootNode = renderer.scene.sceneGraph.getRootNode();
@@ -137,6 +135,8 @@ class SceneLoader {
             materials.push_back(defaultMaterial);
         }
 
+        renderer.bindless.descriptorSet->clearFixedBuffer(renderer.getModelMatrixBufferIndex());
+        renderer.scene.clearBillboards();
         renderer.scene.sceneGraph.getNodes().clear();
         renderer.scene.sceneGraph.resetLastNode();
         renderer.clearRenderList();
@@ -441,12 +441,8 @@ class SceneLoader {
         // Load mesh if specified
         if (!meshPath.empty()) {
             try {
-                // Load the file once and cache the resulting mesh indices
-                if (loadedMeshFiles.find(meshPath) == loadedMeshFiles.end()) {
-                    auto loadResult = renderer.scene.assetManager.loadMeshFromFile(meshPath);
-                    loadedMeshFiles[meshPath] = std::move(loadResult.meshIndices);
-                }
-                auto& meshIndices = loadedMeshFiles[meshPath];
+                auto loadResult = renderer.scene.assetManager.loadMeshFromFile(meshPath);
+                auto& meshIndices = loadResult.meshIndices;
 
                 // Find the specific sub-mesh by name, or fall back to the first one
                 uint32_t meshIdx = meshIndices[0];

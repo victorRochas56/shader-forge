@@ -23,7 +23,7 @@ BEFORE_GEOMETRY is only used by shadow rendering
 GEOMETRY is the main pass with 2 color attachments (color + roughness/metallic)
 POSTPROCESS are passes that process color attachments
 */
-enum class PipelineCategory { BEFORE_GEOMETRY, GEOMETRY, POSTPROCESS, POSTPROCESS_MULTIPLY, POSTPROCESS_ALPHA_BLEND, SHADOW, DEPTH_PREPASS };
+enum class PipelineCategory { BEFORE_GEOMETRY, LIT_GEOMETRY, ALPHA_GEOMETRY, POSTPROCESS, POSTPROCESS_MULTIPLY, POSTPROCESS_ALPHA_BLEND, SHADOW, DEPTH_PREPASS };
 
 class PipelineManager;
 
@@ -157,8 +157,9 @@ class PipelineManager {
 
         // Format variables must persist beyond the switch scope since pointers to them are used
         vk::Format pcfFormat = vk::Format::eR32Sfloat; // PCF uses R32F for raw depth values
-        vk::Format mrtFormats[3] = {swapchain.getSwapChainImageFormat(), vk::Format::eR8G8B8A8Unorm, vk::Format::eR8G8B8A8Unorm};
-        vk::PipelineColorBlendAttachmentState mrtBlendAttachments[3] = {
+        vk::Format mrtFormats[4] = {swapchain.getSwapChainImageFormat(), vk::Format::eR8G8B8A8Unorm, vk::Format::eR8G8B8A8Unorm, vk::Format::eR8G8B8A8Unorm};
+        vk::PipelineColorBlendAttachmentState mrtBlendAttachments[4] = {
+            {.blendEnable = vk::False, .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA},
             {.blendEnable = vk::False, .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA},
             {.blendEnable = vk::False, .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA},
             {.blendEnable = vk::False, .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA}
@@ -247,8 +248,8 @@ class PipelineManager {
             pipeline->layout = vk::raii::PipelineLayout(device.getDevice(), pipelineLayoutInfo);
             break;
         }
-        case PipelineCategory::GEOMETRY: {
-            pipelineRenderingCreateInfo = {.colorAttachmentCount = 3, .pColorAttachmentFormats = mrtFormats, .depthAttachmentFormat = depthFormat};
+        case PipelineCategory::LIT_GEOMETRY: {
+            pipelineRenderingCreateInfo = {.colorAttachmentCount = 4, .pColorAttachmentFormats = mrtFormats, .depthAttachmentFormat = depthFormat};
             inputAssembly = {.topology = topology};
             rasterizer = {.depthClampEnable = vk::False,
                           .rasterizerDiscardEnable = vk::False,
@@ -264,7 +265,40 @@ class PipelineManager {
                             .depthCompareOp = vk::CompareOp::eLessOrEqual,
                             .depthBoundsTestEnable = vk::False,
                             .stencilTestEnable = vk::False};
-            colorBlending = {.logicOpEnable = vk::False, .logicOp = vk::LogicOp::eCopy, .attachmentCount = 3, .pAttachments = mrtBlendAttachments};
+            colorBlending = {.logicOpEnable = vk::False, .logicOp = vk::LogicOp::eCopy, .attachmentCount = 4, .pAttachments = mrtBlendAttachments};
+            pushConstantRange = {.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, .offset = 0, .size = sizeof(T)};
+            vk::PipelineLayoutCreateInfo pipelineLayoutInfo{
+                .setLayoutCount = 1, .pSetLayouts = &*setLayout, .pushConstantRangeCount = 1, .pPushConstantRanges = &pushConstantRange};
+            pipeline->layout = vk::raii::PipelineLayout(device.getDevice(), pipelineLayoutInfo);
+            break;
+        }
+        case PipelineCategory::ALPHA_GEOMETRY: {
+            pipelineRenderingCreateInfo = {.colorAttachmentCount = 1, .pColorAttachmentFormats = &swapchain.getSwapChainImageFormat(), .depthAttachmentFormat = depthFormat};
+            inputAssembly = {.topology = topology};
+            rasterizer = {.depthClampEnable = vk::False,
+                          .rasterizerDiscardEnable = vk::False,
+                          .polygonMode = vk::PolygonMode::eFill,
+                          .cullMode = cullMode,
+                          .frontFace = vk::FrontFace::eCounterClockwise,
+                          .depthBiasEnable = vk::False,
+                          .depthBiasSlopeFactor = 1.0f,
+                          .lineWidth = 1.0f};
+            multisampling = {.rasterizationSamples = msaaSamples, .sampleShadingEnable = vk::False};
+            depthStencil = {.depthTestEnable = depthTestEnable,
+                            .depthWriteEnable = depthWriteEnable,
+                            .depthCompareOp = vk::CompareOp::eLessOrEqual,
+                            .depthBoundsTestEnable = vk::False,
+                            .stencilTestEnable = vk::False};
+            colorBlendAttachment = {.blendEnable = vk::True,
+                                    .srcColorBlendFactor = vk::BlendFactor::eSrcAlpha,
+                                    .dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha,
+                                    .colorBlendOp = vk::BlendOp::eAdd,
+                                    .srcAlphaBlendFactor = vk::BlendFactor::eOne,
+                                    .dstAlphaBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha,
+                                    .alphaBlendOp = vk::BlendOp::eAdd,
+                                    .colorWriteMask =
+                                        vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA};
+            colorBlending = {.logicOpEnable = vk::False, .logicOp = vk::LogicOp::eCopy, .attachmentCount = 1, .pAttachments = &colorBlendAttachment};
             pushConstantRange = {.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, .offset = 0, .size = sizeof(T)};
             vk::PipelineLayoutCreateInfo pipelineLayoutInfo{
                 .setLayoutCount = 1, .pSetLayouts = &*setLayout, .pushConstantRangeCount = 1, .pPushConstantRanges = &pushConstantRange};
@@ -366,7 +400,8 @@ class PipelineManager {
         case PipelineCategory::BEFORE_GEOMETRY:
         case PipelineCategory::DEPTH_PREPASS:
             return &beforeGeometryPipelines;
-        case PipelineCategory::GEOMETRY:
+        case PipelineCategory::LIT_GEOMETRY:
+        case PipelineCategory::ALPHA_GEOMETRY:
             return &geometryPipelines;
         case PipelineCategory::POSTPROCESS:
         case PipelineCategory::POSTPROCESS_MULTIPLY:

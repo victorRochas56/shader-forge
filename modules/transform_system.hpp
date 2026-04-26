@@ -33,7 +33,7 @@ namespace TransformSystem {
     // Sync a node's world transform to GPU buffers, update light direction, and recompute bounding box
     template<typename MeshArray>
     void syncToGPU(Node& node, std::vector<Node>& nodes, DescriptorSet& ds, uint32_t modelMatrixBufferIndex,
-                   const MeshArray& meshes, std::map<uint32_t, Light>& lights) {
+                   const MeshArray& meshes, std::unordered_map<uint32_t, Light>& lights) {
         // Update model matrix for all frames
         glm::mat4 offsetTransform = makeTransform(node.getWorldPosition(), node.getWorldRotation(), node.getWorldScale());
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
@@ -83,7 +83,7 @@ namespace TransformSystem {
     // Full update: recompute transforms then sync to GPU (replaces Node::update())
     template<typename MeshArray>
     void updateAll(Node& node, std::vector<Node>& nodes, DescriptorSet& ds, uint32_t modelMatrixBufferIndex,
-                   const MeshArray& meshes, std::map<uint32_t, Light>& lights) {
+                   const MeshArray& meshes, std::unordered_map<uint32_t, Light>& lights) {
         recomputeTransforms(node, nodes);
         syncToGPU(node, nodes, ds, modelMatrixBufferIndex, meshes, lights);
     }

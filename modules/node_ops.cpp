@@ -107,4 +107,9 @@ void assignVolume(Node& node, Volume volume, Renderer& renderer) {
     renderer.scene.addVolume(node.volumeIndex,volume);
 }
 
+void assignBillboard(Node& node, Billboard billboard, Renderer& renderer) {
+    billboard.nodeIndex = node.nodeIndex;
+    renderer.scene.addBillboard(node.nodeIndex,billboard);
+}
+
 }

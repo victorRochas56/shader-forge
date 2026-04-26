@@ -135,6 +135,7 @@ struct SSRSettings {
 struct VolumetricSettings {
     bool enabled = true;
     float resolutionScale = 0.5f;
+    float blurRadius = 2.0f;
     int numSteps = 16;
     float maxDist = 35.0f;
 };
@@ -251,6 +252,43 @@ enum SDFType {
     CYLINDER,
     CONE,
     PYRAMID
+};
+
+struct BillboardPushConstants {
+    glm::mat4 invViewProj;
+    uint64_t billboardBufferAddress;
+    uint32_t billboardCount;
+    uint32_t samplerIndex;
+    glm::uvec2 resolution;
+};
+
+struct GPUBillboard {
+    glm::vec3 position;
+    uint32_t screenSpace;
+    float size;
+    uint32_t textureIndex;
+    bool alphaBlend;
+    float clipThreshold;
+};
+
+struct Billboard {
+    uint32_t textureIndex;
+    uint32_t nodeIndex;
+    bool hidden = false;
+    float clipThreshold = 0.5f;
+    bool screenSpaceSize = false;
+    float size = 0.1f;
+    
+    GPUBillboard toGPU(glm::vec3& position) {
+        GPUBillboard out;
+        out.position = position;
+        out.clipThreshold = clipThreshold;
+        out.textureIndex = textureIndex;
+        out.screenSpace = screenSpaceSize ? 1 : 0;
+        out.size = size;
+        out.alphaBlend = false;
+        return out;
+    }
 };
 
 struct SDF {

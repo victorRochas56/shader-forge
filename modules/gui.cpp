@@ -419,6 +419,7 @@ void showToggles(RenderFeatures& f){
     if(f.volumetrics.enabled){
         ImGui::SliderInt("Steps", &f.volumetrics.numSteps,4,32);
         ImGui::SliderFloat("Max Distance", &f.volumetrics.maxDist, 5.0f, 50.0f);
+        ImGui::SliderFloat("Blur Radius", &f.volumetrics.blurRadius, 0.0f, 4.0f);
     }
     if(ImGui::Button("Show BBOXes")){
         f.showBBoxes = !f.showBBoxes;

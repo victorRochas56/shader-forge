@@ -533,6 +533,13 @@ class ResourceManager {
             barrier.dstStageMask = vk::PipelineStageFlagBits2::eTransfer;
         }
 
+        else if (oldLayout == vk::ImageLayout::eShaderReadOnlyOptimal && newLayout == vk::ImageLayout::eTransferSrcOptimal) {
+            barrier.srcAccessMask = vk::AccessFlagBits2::eShaderRead;
+            barrier.dstAccessMask = vk::AccessFlagBits2::eTransferRead;
+            barrier.srcStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+            barrier.dstStageMask = vk::PipelineStageFlagBits2::eTransfer;
+        }
+
         else {
             throw std::invalid_argument("unsupported layout transition!");
         }

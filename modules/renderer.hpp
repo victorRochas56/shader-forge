@@ -49,6 +49,8 @@ class Renderer {
     RenderFeatures                      features;
     float                               cullFovScale = 1.0f;
     uint32_t                            culledCount = 0;
+    uint32_t                            defaultAlbedoIndex;
+    uint32_t                            nodeTextureIndex;
 
   private:
     bool                                framebufferResized = false;
@@ -61,6 +63,7 @@ class Renderer {
     uint32_t                            imageViewPipelineIndex;
     uint32_t                            blurPipelineIndex;
     uint32_t                            depthPipelineIndex;
+    uint32_t                            billboardPipelineIndex;
 
     //defaults
     uint32_t                            defaultSamplerIndex;
@@ -85,6 +88,7 @@ class Renderer {
     uint32_t                            vertexBufferIndex;
     uint32_t                            indexBufferIndex;
     uint32_t                            modelMatrixBufferIndex;
+    uint32_t                            billboardBufferIndex;
     uint32_t                            lightBufferIndex;
     uint32_t                            volumeBufferIndex;
     uint32_t                            shadowDrawDataBufferIndex;
@@ -236,6 +240,8 @@ class Renderer {
 
     void recordHiZPass(vk::raii::CommandBuffer& cmd);
     void recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex);
+    void recordBillboardBlendPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex);
+    void recordResolveToSwapchainCopy(vk::raii::CommandBuffer& cmd, uint32_t imageIndex);
     void recordOverlayPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex);
     void recordSSAOPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex);
     void recordSSRPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex);

@@ -24,6 +24,7 @@ class AssetManager {
     std::queue<uint32_t>                freeMeshes;
     std::map<std::string, uint32_t>     loadedTextures;
     std::map<std::string, uint32_t>     loadedCubemaps;
+    std::map<std::string, MeshLoadResult> loadedMeshes;
 
     void init(ResourceManager* resourceManager, DescriptorSet* descriptorSet, uint32_t vertexBufferIndex, uint32_t indexBufferIndex) {
         this->resourceManager = resourceManager;
@@ -35,6 +36,10 @@ class AssetManager {
     // Loads an OBJ and returns mesh indices plus material grouping info.
     // Each mesh is a single draw unit with its own vertex/index data.
     MeshLoadResult loadMeshFromFile(std::string filePath) {
+        if (auto it = loadedMeshes.find(filePath); it != loadedMeshes.end()) {
+            return it->second;
+        }
+
         MeshLoadResult result;
 
 #if DEBUG == 1
@@ -99,6 +104,7 @@ class AssetManager {
             }
         }
 
+        loadedMeshes[filePath] = result;
         return result;
     }
 

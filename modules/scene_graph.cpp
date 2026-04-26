@@ -1,4 +1,5 @@
 #include "scene_graph.hpp"
+#include "node_ops.hpp"
 #include "light_influence.hpp"
 #include "renderer.hpp"
 
@@ -38,6 +39,8 @@ uint32_t SceneGraph::addNode(bool internal,uint32_t parentIndex, glm::vec3 posit
     allocateNodeGPU(newNode);
     TransformSystem::updateAll(newNode, nodes, (*renderer->bindless.descriptorSet), renderer->getModelMatrixBufferIndex(),
                                renderer->scene.assetManager.meshes, renderer->scene.getLightsMutable());
+
+    NodeOps::assignBillboard(newNode,{.textureIndex = renderer->nodeTextureIndex, .hidden = true, .screenSpaceSize = false, .size = 0.25f},*renderer);
     return newIndex;
 }
 
@@ -60,7 +63,9 @@ void SceneGraph::killNode(uint32_t idx) {
         renderer->scene.removeVolume(renderer->bindless,renderer->getVolumeBufferIndex(),node.volumeIndex);
         node.volumeIndex = 0xFFFFFFFF;
     }
-    
+
+    renderer->scene.removeBillboard(idx);
+
     renderer->removeNodeFromRenderList(idx);
 
     // Clear selection if this node was selected

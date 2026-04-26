@@ -9,6 +9,7 @@ namespace NodeOps {
     void assignMaterial(Node& node, uint32_t materialIndex, Renderer& renderer);
     void assignLight(Node& node, Light light, Renderer& renderer);
     void assignVolume(Node& node, Volume volume, Renderer& renderer);
+    void assignBillboard(Node& node, Billboard billboard, Renderer& renderer);
     void enableLightShadows(Light& light, const std::string& nodeName, Renderer& renderer);
     void disableLightShadows(Light& light, Renderer& renderer);
 }

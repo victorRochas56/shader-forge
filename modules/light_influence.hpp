@@ -38,7 +38,7 @@ namespace LightInfluence {
     // Reconcile a single meshed node against every shadow-casting point light.
     // Called once per node-with-AABB update inside syncToGPU.
     inline void onMeshedNodeTouched(const Node& node, const std::vector<Node>& nodes,
-                                    std::map<uint32_t, Light>& lights) {
+                                    std::unordered_map<uint32_t, Light>& lights) {
         if (node.meshIndex >= MAX_MESHES || !node.boundingBoxValid) return;
         for (auto& [id, L] : lights) {
             if (L.type != LightType::Point || !L.castsShadows) continue;
@@ -81,7 +81,7 @@ namespace LightInfluence {
 
     // Called from killNode. Drops the node from every light's set and, if the
     // node carried a point light, clears that light's set.
-    inline void onNodeRemoved(const Node& node, std::map<uint32_t, Light>& lights) {
+    inline void onNodeRemoved(const Node& node, std::unordered_map<uint32_t, Light>& lights) {
         for (auto& [id, L] : lights) {
             if (L.type != LightType::Point) continue;
             if (L.influencedNodes.erase(node.nodeIndex) != 0) L.shadowDirty = true;

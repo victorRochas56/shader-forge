@@ -59,8 +59,10 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     indexBufferIndex = bindless.descriptorSet->createVariableBuffer(128 * 1024 * 1024, vk::BufferUsageFlagBits::eIndexBuffer); // index buffer (128 MB)
     scene.assetManager.init(bindless.resourceManager.get(), bindless.descriptorSet.get(), vertexBufferIndex, indexBufferIndex);
 
+    billboardBufferIndex = bindless.descriptorSet->createFixedBuffer<GPUBillboard>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
     sdfPassDataBufferIndex = bindless.descriptorSet->createFixedBuffer<SDF>(MAX_FIXED_BUFFER);
-    volumeBufferIndex = bindless.descriptorSet->createFixedBuffer<Volume>(MAX_FIXED_BUFFER, false);
+    volumeBufferIndex = bindless.descriptorSet->createFixedBuffer<Volume>(MAX_FIXED_BUFFER);
+
 
     // these buffers store the data once per frame in flight since they are usually accessed every frame by the CPU
     modelMatrixBufferIndex = bindless.descriptorSet->createFixedBuffer<glm::mat4>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
@@ -76,6 +78,7 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
         bindless.descriptorSet->setBufferFrameOffset(shadowDrawDataBufferIndex, i, MAX_SHADOW_CASTERS * MAX_FIXED_BUFFER * i);
         bindless.descriptorSet->setBufferFrameOffset(litPassDataBufferIndex,i, MAX_FIXED_BUFFER * i);
         bindless.descriptorSet->setBufferFrameOffset(ssrPassDataBufferIndex,i,i);
+        bindless.descriptorSet->setBufferFrameOffset(billboardBufferIndex, i, MAX_FIXED_BUFFER * i);
     }
 
     
@@ -141,7 +144,7 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     // Default albedo (white)
     std::array<uint8_t, 4> whiteColor = {255, 255, 255, 255};
     auto [albedoImage, albedoMemory, albedoImageView] = bindless.resourceManager->createTexture(whiteColor.data(), 1, 1, vk::Format::eR8G8B8A8Srgb);
-    uint32_t defaultAlbedoIndex = bindless.descriptorSet->allocateTexture(std::move(albedoImage), std::move(albedoMemory), std::move(albedoImageView));
+    defaultAlbedoIndex = bindless.descriptorSet->allocateTexture(std::move(albedoImage), std::move(albedoMemory), std::move(albedoImageView));
 
     // Default normal (flat normal = 0.5, 0.5, 1.0 in RGB)
     std::array<uint8_t, 4> normalColor = {128, 128, 255, 255};
@@ -160,7 +163,7 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
 
     /////S=================================================PIPELINES=================================================/////
     skyboxPipelineIndex =
-        bindless.pipelineManager->createPipeline<SkyBoxPushConstants>(PipelineCategory::GEOMETRY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
+        bindless.pipelineManager->createPipeline<SkyBoxPushConstants>(PipelineCategory::LIT_GEOMETRY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
                                                              vk::False, "shaders/skybox.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet());
 
     shadowPipelineIndex = bindless.pipelineManager->createPipeline<ShadowPushConstants>(PipelineCategory::SHADOW, vk::PrimitiveTopology::eTriangleList,
@@ -174,8 +177,11 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
         bindless.pipelineManager->createPipeline<LitPushConstants>(PipelineCategory::DEPTH_PREPASS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eBack,vk::True,
                                                                         vk::True,"shaders/depth_prepass.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet());
 
-    litPipelineIndex = bindless.pipelineManager->createPipeline<LitPushConstants>(PipelineCategory::GEOMETRY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eBack, vk::True,
+    litPipelineIndex = bindless.pipelineManager->createPipeline<LitPushConstants>(PipelineCategory::LIT_GEOMETRY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eBack, vk::True,
                                                                          vk::True, "shaders/lit.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet());
+
+    billboardPipelineIndex = bindless.pipelineManager->createPipeline<BillboardPushConstants>(PipelineCategory::ALPHA_GEOMETRY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::True,
+                                                                                            vk::False,"shaders/billboard.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet());
     gizmoPipelineIndex =
         bindless.pipelineManager->createPipeline<LinePushConstants>(PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eLineList, vk::CullModeFlagBits::eNone, vk::False, vk::False,
                                                            "shaders/line.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet());
@@ -715,15 +721,20 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
     recordGeometryPass(cmd, imageIndex);
     Tracer::endTrace("record geo pass");
 
-    Tracer::startTrace("record ssr pass");
-    if (features.ssr.enabled && ssrPipelineIndex != 0xFFFFFFFF)
-        recordSSRPass(cmd, imageIndex);
-    Tracer::endTrace("record ssr pass");
-
     Tracer::startTrace("record ssao pass");
     if (features.ssao.enabled && ssaoPipelineIndex != 0xFFFFFFFF)
         recordSSAOPass(cmd, imageIndex);
     Tracer::endTrace("record ssao pass");
+
+    if (billboardPipelineIndex != 0xFFFFFFFF)
+        recordBillboardBlendPass(cmd, imageIndex);
+
+    recordResolveToSwapchainCopy(cmd, imageIndex);
+
+    Tracer::startTrace("record ssr pass");
+    if (features.ssr.enabled && ssrPipelineIndex != 0xFFFFFFFF)
+        recordSSRPass(cmd, imageIndex);
+    Tracer::endTrace("record ssr pass");
 
     Tracer::startTrace("record Volumetric pass");
     if(features.volumetrics.enabled && volPipelineIndex != 0xFFFFFFFF) {
@@ -1058,26 +1069,11 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
 
     cmd.endRendering();
 
-    // Copy color resolve to swapchain image
+    // Transition: color resolve to shader readable, roughness-metal to shader readable for SSR.
+    // Swapchain is no longer touched here — recordResolveToSwapchainCopy() seeds it after the billboard pass.
     bindless.resourceManager->transitionImageLayouts(cmd, {
-        {*colorResolve.image,                         vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eTransferSrcOptimal},
-        {gpu.getSwapchain().getSwapChainImages()[imageIndex],  vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eTransferDstOptimal},
-    });
-
-    vk::ImageCopy copyRegion{
-        .srcSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor, .layerCount = 1},
-        .dstSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor, .layerCount = 1},
-        .extent = {gpu.getSwapchain().getSwapChainExtent().width, gpu.getSwapchain().getSwapChainExtent().height, 1}
-    };
-    cmd.copyImage(*colorResolve.image, vk::ImageLayout::eTransferSrcOptimal,
-                  gpu.getSwapchain().getSwapChainImages()[imageIndex], vk::ImageLayout::eTransferDstOptimal,
-                  copyRegion);
-
-    // Transition back: color resolve to shader readable, swapchain to color attachment, roughness-metal to shader readable for SSR
-    bindless.resourceManager->transitionImageLayouts(cmd, {
-        {*colorResolve.image,                                                    vk::ImageLayout::eTransferSrcOptimal,    vk::ImageLayout::eShaderReadOnlyOptimal},
-        {gpu.getSwapchain().getSwapChainImages()[imageIndex],                             vk::ImageLayout::eTransferDstOptimal,    vk::ImageLayout::eColorAttachmentOptimal},
-        {*bindless.descriptorSet->getTextureResource(roughnessMetalTextureIndex).image,   vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal},
+        {*colorResolve.image,                                                            vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal},
+        {*bindless.descriptorSet->getTextureResource(roughnessMetalTextureIndex).image,  vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal},
     });
 
     // Generate normal mips inline for SSR pre-filtering
@@ -1089,6 +1085,100 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
     // Transition motion vecs to shader read only
     bindless.resourceManager->transitionImageLayout(&cmd, *bindless.descriptorSet->getTextureResource(motionVectorTextureIndex).image,
                                            vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+}
+
+void Renderer::recordBillboardBlendPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
+
+    if(scene.billboards.empty())
+        return;
+
+    auto extent = gpu.getSwapchain().getSwapChainExtent();
+    auto& colorResolve = bindless.descriptorSet->getTextureResource(colorResolveTextureIndex);
+    bindless.resourceManager->transitionImageLayout(&cmd, *colorResolve.image,
+        vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
+
+    vk::RenderingAttachmentInfo colorAttachment = {.imageView = gpu.getSwapchain().getColorImageView(),
+                                                   .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+                                                   .resolveMode = vk::ResolveModeFlagBits::eAverage,
+                                                   .resolveImageView = *colorResolve.imageView,
+                                                   .resolveImageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+                                                   .loadOp = vk::AttachmentLoadOp::eLoad,
+                                                   .storeOp = vk::AttachmentStoreOp::eStore};
+    vk::RenderingAttachmentInfo depthAttachment = {.imageView = gpu.getSwapchain().getDepthImageView(),
+                                                   .imageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
+                                                   .loadOp = vk::AttachmentLoadOp::eLoad,
+                                                   .storeOp = vk::AttachmentStoreOp::eStore};
+    vk::RenderingInfo renderInfo = {.renderArea = {.offset = {0,0}, .extent = extent},
+                                    .layerCount = 1,
+                                    .colorAttachmentCount = 1,
+                                    .pColorAttachments = &colorAttachment,
+                                    .pDepthAttachment = &depthAttachment};
+
+
+    std::vector<std::pair<float, GPUBillboard>> sortedBB;
+    sortedBB.reserve(scene.billboards.size());
+    for (auto& kv : scene.billboards) {
+        const uint32_t& nodeIdx = kv.first;
+        Billboard& billboard = kv.second;
+        if(billboard.hidden || !scene.sceneGraph.isNodeValid(billboard.nodeIndex))
+            continue;
+        glm::vec3 nodePos = scene.sceneGraph.getNode(nodeIdx).getWorldPosition();
+        glm::vec3 d = scene.activeCamera.position - nodePos;
+        float dist2 = glm::dot(d, d);
+
+        sortedBB.emplace_back(dist2, billboard.toGPU(nodePos));
+    }
+    std::sort(sortedBB.begin(), sortedBB.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+
+    cmd.beginRendering(renderInfo);
+    setFullscreenViewport(cmd, extent);
+    auto& pipeline = bindless.pipelineManager->getGeoPipelines()[billboardPipelineIndex];
+    bindPipeline(cmd, *pipeline);
+
+    auto* billboardPtr = bindless.descriptorSet->getFixedBufferMappedData<GPUBillboard>(billboardBufferIndex);
+    uint32_t frameOffset = gpu.currentFrame * MAX_FIXED_BUFFER;
+    for (size_t i = 0; i < sortedBB.size(); ++i) {
+        billboardPtr[frameOffset + i] = sortedBB[i].second;
+    }
+
+    BillboardPushConstants pc = { 
+        .invViewProj = scene.activeCamera.viewProjection,
+        .billboardBufferAddress = bindless.descriptorSet->getFixedBuffers()[billboardBufferIndex]->address + frameOffset * sizeof(GPUBillboard),
+        .billboardCount = static_cast<uint32_t>(sortedBB.size()),
+        .samplerIndex = defaultSamplerIndex,
+        .resolution = glm::uvec2(extent.width, extent.height)
+    };
+    cmd.pushConstants<BillboardPushConstants>(*pipeline->layout,vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pc);
+    cmd.draw(6,sortedBB.size(),0,0);
+    cmd.endRendering();
+
+    bindless.resourceManager->transitionImageLayout(&cmd, *colorResolve.image,
+        vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+
+}
+
+void Renderer::recordResolveToSwapchainCopy(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
+    auto& colorResolve = bindless.descriptorSet->getTextureResource(colorResolveTextureIndex);
+    auto extent = gpu.getSwapchain().getSwapChainExtent();
+
+    bindless.resourceManager->transitionImageLayouts(cmd, {
+        {*colorResolve.image,                                 vk::ImageLayout::eShaderReadOnlyOptimal,  vk::ImageLayout::eTransferSrcOptimal},
+        {gpu.getSwapchain().getSwapChainImages()[imageIndex], vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eTransferDstOptimal},
+    });
+
+    vk::ImageCopy copyRegion{
+        .srcSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor, .layerCount = 1},
+        .dstSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor, .layerCount = 1},
+        .extent = {extent.width, extent.height, 1}
+    };
+    cmd.copyImage(*colorResolve.image, vk::ImageLayout::eTransferSrcOptimal,
+                  gpu.getSwapchain().getSwapChainImages()[imageIndex], vk::ImageLayout::eTransferDstOptimal,
+                  copyRegion);
+
+    bindless.resourceManager->transitionImageLayouts(cmd, {
+        {*colorResolve.image,                                 vk::ImageLayout::eTransferSrcOptimal, vk::ImageLayout::eShaderReadOnlyOptimal},
+        {gpu.getSwapchain().getSwapChainImages()[imageIndex], vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eColorAttachmentOptimal},
+    });
 }
 
 void Renderer::recordOverlayPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
@@ -1119,7 +1209,7 @@ void Renderer::recordOverlayPass(vk::raii::CommandBuffer& cmd, uint32_t imageInd
         cmd.pushConstants<LinePushConstants>(*gizmoPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, lineConstants);
         cmd.draw(Gizmos::getVertexCount(), 1, 0, 0);
     }
-    // GUI
+    // IMGUI
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), *cmd);
     cmd.endRendering();
 }
@@ -1433,8 +1523,7 @@ void Renderer::recordVolumetricsPass(vk::raii::CommandBuffer& cmd, uint32_t imag
                             .invViewProjection = glm::inverse(scene.activeCamera.viewProjection)
                        }, vk::AttachmentLoadOp::eClear);
 
-    //TODO make blur controllable
-    blurAttachment(cmd,volTextureIndex,volBlurTextureIndex,extent.width,extent.height,2.0f,defaultSamplerIndex);
+    blurAttachment(cmd,volTextureIndex,volBlurTextureIndex,extent.width,extent.height,features.volumetrics.blurRadius,defaultSamplerIndex);
 
     drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[volApplyPipelineIndex], *gpu.getSwapchain().getSwapChainImageViews()[imageIndex],
                        gpu.getSwapchain().getSwapChainExtent(),

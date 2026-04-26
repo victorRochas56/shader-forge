@@ -57,6 +57,8 @@ class App {
         renderer.scene.getMaterials()[renderer.scene.getFallBackMaterial()].environmentMapIndex = cubeMapIndex;
         renderer.scene.setSkyBox(cubeMapIndex);
 
+        renderer.nodeTextureIndex = renderer.scene.assetManager.loadTextureFromFile("textures/node.png");
+
         printf("SIZE OF NODE : %zu",sizeof(Node));
         //start of render loop
         mainLoop();
@@ -112,10 +114,16 @@ class App {
                 Manip::showManipulator(*currentNode,scene.activeCamera,InputManager::getCurrentState().ndcMousePos);
             }
 
-            Gizmos::drawAxes(currentNode->getTransform(),0.15f);
-            scene.sceneGraph.forEachChild(*currentNode,[](Node& child){
-                Gizmos::drawAxes(child.getTransform(),0.15f);
-            });
+            for(auto& bb : scene.billboards){
+                bb.second.hidden = true;
+            }
+            if(renderer.features.showGizmos){
+                Gizmos::drawAxes(currentNode->getTransform(),0.15f);
+                scene.getBillboardsMutable()[currentNode->nodeIndex].hidden = false;
+                scene.sceneGraph.forEachChild(*currentNode, [this](Node& child){
+                    scene.getBillboardsMutable()[child.nodeIndex].hidden = false;
+                });
+            }
 
             EventSystem::pollListeners();
             EventSystem::pollEvents();
@@ -131,7 +139,7 @@ class App {
         gpu.getDevice().getDevice().waitIdle();
         cleanup();
         //TODO : improve cleanup, prompt for save & exit?
-    }
+    } 
 
     void drawGui() {
         ImGui_ImplVulkan_NewFrame();
