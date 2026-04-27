@@ -1,8 +1,8 @@
 #include "material_editor_state.hpp"
-#include "renderer.hpp"
+#include "scene.hpp"
 #include <sstream>
 
-void MaterialEditorState::loadFromMaterial(int index, Material& mat, Renderer* renderer) {
+void MaterialEditorState::loadFromMaterial(int index, Material& mat, Scene& scene) {
     selectedIndex = index;
     strncpy(nameBuffer, mat.name.empty() ? ("Material " + std::to_string(index)).c_str() : mat.name.c_str(), sizeof(nameBuffer));
     color[0] = mat.color.r; color[1] = mat.color.g; color[2] = mat.color.b; color[3] = mat.color.a;
@@ -13,16 +13,16 @@ void MaterialEditorState::loadFromMaterial(int index, Material& mat, Renderer* r
         strncpy(dest, src.c_str(), destSize);
         dest[destSize - 1] = '\0';
     };
-    copyPath(albedoPath, sizeof(albedoPath), renderer->scene.assetManager.getTexturePathFromIndex(mat.albedoTextureIndex));
-    copyPath(metallicPath, sizeof(metallicPath), renderer->scene.assetManager.getTexturePathFromIndex(mat.metallicTextureIndex));
-    copyPath(roughnessPath, sizeof(roughnessPath), renderer->scene.assetManager.getTexturePathFromIndex(mat.roughnessTextureIndex));
-    copyPath(normalPath, sizeof(normalPath), renderer->scene.assetManager.getTexturePathFromIndex(mat.normalTextureIndex));
+    copyPath(albedoPath, sizeof(albedoPath), scene.assetManager.getTexturePathFromIndex(mat.albedoTextureIndex));
+    copyPath(metallicPath, sizeof(metallicPath), scene.assetManager.getTexturePathFromIndex(mat.metallicTextureIndex));
+    copyPath(roughnessPath, sizeof(roughnessPath), scene.assetManager.getTexturePathFromIndex(mat.roughnessTextureIndex));
+    copyPath(normalPath, sizeof(normalPath), scene.assetManager.getTexturePathFromIndex(mat.normalTextureIndex));
 
     flipNormal = (mat.flags & MaterialFlags::FLIP_NORMAL) != 0;
     alphaClip = mat.alphaClip;
     alphaCutoff = mat.alphaCutoff;
 
-    std::string cubemapPath = renderer->scene.assetManager.getCubemapPathFromIndex(mat.environmentMapIndex);
+    std::string cubemapPath = scene.assetManager.getCubemapPathFromIndex(mat.environmentMapIndex);
     for (int i = 0; i < 6; i++) envMapPaths[i][0] = '\0';
     if (!cubemapPath.empty()) {
         // Format: "posX|negX|posY|negY|posZ|negZ"

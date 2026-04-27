@@ -41,7 +41,7 @@ class App {
 
     void run() {
         initWindow();
-        InputManager::setRenderer(&renderer);
+        InputManager::init(renderer, scene);
         InputManager::setMaterialEditorState(&materialEditorState);
 
         gpu.initCore(window);
@@ -49,15 +49,15 @@ class App {
         bindless.descriptorSet->debugDescriptorSet("after_initVulkan");
         initIMGUI(gpu.getDevice(), *gpu.getInstance(), gpu.getGraphicsIndex(),
                   gpu.getSwapchain(), window);
-        EventSystem::init(renderer.scene.sceneGraph);
+        EventSystem::init(scene.sceneGraph);
         
         //load a default environment map on startup
         uint32_t cubeMapIndex =
-            renderer.scene.assetManager.loadCubemapFromFile("textures/sky2/posx.jpg", "textures/sky2/posy.jpg", "textures/sky2/posz.jpg", "textures/sky2/negx.jpg", "textures/sky2/negy.jpg", "textures/sky2/negz.jpg");
-        renderer.scene.getMaterials()[renderer.scene.getFallBackMaterial()].environmentMapIndex = cubeMapIndex;
-        renderer.scene.setSkyBox(cubeMapIndex);
+            scene.assetManager.loadCubemapFromFile("textures/sky2/posx.jpg", "textures/sky2/posy.jpg", "textures/sky2/posz.jpg", "textures/sky2/negx.jpg", "textures/sky2/negy.jpg", "textures/sky2/negz.jpg");
+        scene.getMaterials()[scene.getFallBackMaterial()].environmentMapIndex = cubeMapIndex;
+        scene.setSkyBox(cubeMapIndex);
 
-        renderer.nodeTextureIndex = renderer.scene.assetManager.loadTextureFromFile("textures/node.png");
+        renderer.buffers.nodeTextureIndex = scene.assetManager.loadTextureFromFile("textures/node.png");
 
         printf("SIZE OF NODE : %zu",sizeof(Node));
         //start of render loop
@@ -127,12 +127,12 @@ class App {
 
             EventSystem::pollListeners();
             EventSystem::pollEvents();
-            renderer.scene.sceneGraph.syncDirtyNodes();
+            scene.sceneGraph.syncDirtyNodes();
 
             //main draw loop
             renderer.drawFrame();
 
-            renderer.scene.activeCamera.updatePrevVPM(); // kinda ulgy to put here .. TODO: find a place for it
+            scene.activeCamera.updatePrevVPM(); // kinda ulgy to put here .. TODO: find a place for it
 
             Tracer::endTrace("frame time");
         }
@@ -147,21 +147,21 @@ class App {
         ImGui::NewFrame();
 
         ImGui::Begin("node tree");
-        traverseNodeTree(renderer.scene.sceneGraph.getRootNode(), 0, renderer.scene.sceneGraph.selectedNode, renderer.scene.sceneGraph);
+        traverseNodeTree(scene.sceneGraph.getRootNode(), 0, scene.sceneGraph.selectedNode, scene.sceneGraph);
         ImGui::End();
         
-        showNodeInfo(renderer.scene.sceneGraph.getNodes()[renderer.scene.sceneGraph.selectedNode], renderer);
+        showNodeInfo(scene.sceneGraph.getNodes()[scene.sceneGraph.selectedNode], scene, bindless, renderer.getLightBufferIndex(), renderer.getVolumeBufferIndex());
         if (InputManager::getInstance().contextMenuShown) {
-            showActionMenu(0, gpu.getWindow(), renderer.scene.activeCamera, renderer.scene.sceneGraph, InputManager::getInstance().contextMenuPinX, InputManager::getInstance().contextMenuPinY);
+            showActionMenu(0, gpu.getWindow(), scene.activeCamera, scene.sceneGraph, InputManager::getInstance().contextMenuPinX, InputManager::getInstance().contextMenuPinY);
         }
         
-        showMaterialEditor(materialEditorState, &renderer);
-        showImageViewList(&renderer);
-        showBufferAllocs(*bindless.descriptorSet,renderer.scene.assetManager,renderer.getIndirectCommands());
+        showMaterialEditor(materialEditorState, scene);
+        showImageViewList(bindless, renderer.features);
+        showBufferAllocs(*bindless.descriptorSet,scene.assetManager,renderer.getIndirectCommands());
         showDebugWindow(renderer.culledCount,renderer.cullFovScale);
         showTraces();
         showToggles(renderer.features);
-        showScenesMenu(&renderer, &sceneLoader);
+        showScenesMenu(scene, bindless, renderer.buffers, sceneLoader);
         ImGui::Render();
     }
 

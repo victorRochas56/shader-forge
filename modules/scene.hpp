@@ -39,6 +39,24 @@ class Scene {
     uint32_t                   fallbackDefaultMaterialIndex = 0;
     uint32_t                   skyboxIndex = 0;
 
+    // Render list — derived index of (node, material, shader) tuples that the
+    // renderer iterates each frame. Lives on Scene because every mutation
+    // (assignMaterial, node delete, scene clear) is already a scene-level
+    // operation; the renderer only reads + sorts during draw.
+    struct RenderEntry {
+        uint32_t nodeIndex;
+        uint32_t materialIndex;       // index into materials vector
+        uint32_t shaderPipelineIndex;
+    };
+    struct ShaderDrawRange {
+        uint32_t pipelineIndex;
+        uint32_t firstCommand;
+        uint32_t commandCount;
+    };
+    std::vector<RenderEntry>     renderEntries;
+    std::vector<ShaderDrawRange> shaderDrawRanges;
+    bool                         renderListDirty = false;
+
     void init(BindlessSystem& bindless, uint32_t vertexBufferIndex, uint32_t indexBufferIndex) {
         assetManager.init(bindless.resourceManager.get(), bindless.descriptorSet.get(), vertexBufferIndex, indexBufferIndex);
     }
@@ -57,7 +75,14 @@ class Scene {
     // --- lights --------------------------------------------------------
     const std::unordered_map<uint32_t, Light>& getLights() const { return lights; }
     std::unordered_map<uint32_t, Light>&       getLightsMutable() { return lights; }
-    void                                       addLight(uint32_t index, Light light) { lights[index] = light; }
+    // Allocates a bindless slot for the GPULight payload and stores the CPU-side
+    // Light against the same key. Returns the assigned index. Callers don't have
+    // to manage the bindless allocation separately — same rationale as removeLight.
+    uint32_t addLight(BindlessSystem& bindless, uint32_t lightBufferIndex, Light light, GPULight gpuLight) {
+        uint32_t idx = bindless.descriptorSet->allocateFixedBuffer<GPULight>(lightBufferIndex, gpuLight);
+        lights[idx] = light;
+        return idx;
+    }
     Light&                                     getLight(uint32_t index) { return lights[index]; }
 
     // Shader loop bound for the (sparse) light buffer. Slots are never compacted,
@@ -125,7 +150,13 @@ class Scene {
     // --- volumes -------------------------------------------------------
     const std::unordered_map<uint32_t, Volume>& getVolumes() const { return volumes; }
     std::unordered_map<uint32_t, Volume>&       getVolumesMutable() { return volumes; }
-    void                                        addVolume(uint32_t index, Volume volume) { volumes[index] = volume; }
+    // Same shape as addLight: allocates the bindless slot and stores the volume
+    // under the assigned index, which is returned to the caller.
+    uint32_t addVolume(BindlessSystem& bindless, uint32_t volumeBufferIndex, Volume volume) {
+        uint32_t idx = bindless.descriptorSet->allocateFixedBuffer<Volume>(volumeBufferIndex, volume);
+        volumes[idx] = volume;
+        return idx;
+    }
     Volume&                                     getVolume(uint32_t index) { return volumes[index]; }
 
     // Same rationale as getLightLoopBound — volumes share the sparse-slot model.
@@ -154,6 +185,54 @@ class Scene {
     Billboard& getBillboard(uint32_t index) { return billboards[index]; }
     void removeBillboard(uint32_t index) { billboards.erase(index); }
     void clearBillboards() { billboards.clear(); }
+
+    // --- render list ---------------------------------------------------
+    void addMeshToShader(uint32_t nodeIndex, Shader shader, Material material) {
+        uint32_t matIdx = 0;
+        for (uint32_t i = 0; i < materials.size(); i++) {
+            if (materials[i] == material) { matIdx = i; break; }
+        }
+        for (const auto& e : renderEntries) {
+            if (e.nodeIndex == nodeIndex && e.materialIndex == matIdx && e.shaderPipelineIndex == shader.pipelineIndex)
+                return;
+        }
+        renderEntries.push_back({nodeIndex, matIdx, shader.pipelineIndex});
+        renderListDirty = true;
+    }
+
+    void removeMeshFromShader(uint32_t nodeIndex, Shader shader, Material material) {
+        uint32_t matIdx = 0;
+        for (uint32_t i = 0; i < materials.size(); i++) {
+            if (materials[i] == material) { matIdx = i; break; }
+        }
+        for (size_t i = 0; i < renderEntries.size(); ++i) {
+            if (renderEntries[i].nodeIndex == nodeIndex &&
+                renderEntries[i].materialIndex == matIdx && renderEntries[i].shaderPipelineIndex == shader.pipelineIndex) {
+                renderEntries[i] = renderEntries.back();
+                renderEntries.pop_back();
+                renderListDirty = true;
+                return;
+            }
+        }
+    }
+
+    void removeNodeFromRenderList(uint32_t nodeIndex) {
+        for (size_t i = 0; i < renderEntries.size();) {
+            if (renderEntries[i].nodeIndex == nodeIndex) {
+                renderEntries[i] = renderEntries.back();
+                renderEntries.pop_back();
+                renderListDirty = true;
+            } else {
+                ++i;
+            }
+        }
+    }
+
+    void clearRenderList() {
+        renderEntries.clear();
+        shaderDrawRanges.clear();
+        renderListDirty = false;
+    }
 
     // --- defaults / skybox ---------------------------------------------
     Shader   getFallBackShader() const    { return fallbackLitShader; }

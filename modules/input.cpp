@@ -14,8 +14,8 @@ void InputManager::tickInputState() { //should be only called once in the main a
 
     //rotating viewport when holding right click
     if (inst.current.mouse_button == 1 && inst.current.mouse_action == 1) {
-        inst.renderer->scene.activeCamera.rotatePitch(inst.current.mouseDelta.y * -0.1f);
-        inst.renderer->scene.activeCamera.rotateYaw(inst.current.mouseDelta.x * 0.1f);
+        inst.scene->activeCamera.rotatePitch(inst.current.mouseDelta.y * -0.1f);
+        inst.scene->activeCamera.rotateYaw(inst.current.mouseDelta.x * 0.1f);
     }
 
     glm::vec3 moveVector(0.0f);
@@ -38,29 +38,29 @@ void InputManager::tickInputState() { //should be only called once in the main a
 
     // Apply the combined movement
     if (glm::length(moveVector) > 0) {
-        inst.renderer->scene.activeCamera.moveCamera(moveVector);
+        inst.scene->activeCamera.moveCamera(moveVector);
     }
 
     // raycast on left click for selection or material picking
     if (inst.current.mouse_button == 0 && inst.current.mouse_action == 1 && inst.previous.mouse_action != 1) {
         glm::vec3 origin;
         glm::vec3 direction;
-        inst.renderer->scene.activeCamera.rayFromScreenCoords(inst.current.ndcMousePos.x, inst.current.ndcMousePos.y, origin, direction);
+        inst.scene->activeCamera.rayFromScreenCoords(inst.current.ndcMousePos.x, inst.current.ndcMousePos.y, origin, direction);
 
         if (inst.materialPickMode) {
-            auto hit = Raycast::castMeshes(origin, direction, inst.renderer->scene.sceneGraph.getNodes(), inst.renderer->scene.sceneGraph.getLastNode(),
-                                           inst.renderer->scene.assetManager.meshes);
+            auto hit = Raycast::castMeshes(origin, direction, inst.scene->sceneGraph.getNodes(), inst.scene->sceneGraph.getLastNode(),
+                                           inst.scene->assetManager.meshes);
             if (hit.nodeIndex != 0) {
-                auto& node = inst.renderer->scene.sceneGraph.getNodes()[hit.nodeIndex];
+                auto& node = inst.scene->sceneGraph.getNodes()[hit.nodeIndex];
                 if (node.getMaterialIndex() != 0xFFFFFFFF) {
                     inst.pickedMaterialIndex = static_cast<int>(node.getMaterialIndex());
                 }
             }
             inst.materialPickMode = false;
         } else {
-            std::vector<uint32_t> hitNodes = Raycast::castNodes(origin, direction, inst.renderer->scene.sceneGraph.getNodes(), inst.renderer->scene.sceneGraph.getLastNode());
+            std::vector<uint32_t> hitNodes = Raycast::castNodes(origin, direction, inst.scene->sceneGraph.getNodes(), inst.scene->sceneGraph.getLastNode());
             if (!hitNodes.empty()) {
-                inst.renderer->scene.sceneGraph.selectNode(hitNodes.front());
+                inst.scene->sceneGraph.selectNode(hitNodes.front());
             }
         }
     }
@@ -81,7 +81,7 @@ void InputManager::tickInputState() { //should be only called once in the main a
         } else if (inst.materialEditorState != nullptr && inst.materialEditorState->showEditor) {
             inst.materialEditorState->showEditor = false;
         } else {
-            inst.renderer->scene.sceneGraph.deSelectNode();
+            inst.scene->sceneGraph.deSelectNode();
         }
     }
     if (inst.current.keyStates[GLFW_KEY_V] == GLFW_PRESS && inst.previous.keyStates[GLFW_KEY_V] != GLFW_PRESS) {

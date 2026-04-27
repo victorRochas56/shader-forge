@@ -5,6 +5,7 @@
 
 // Forward declarations
 class Renderer;
+class Scene;
 struct MaterialEditorState;
 
 /*
@@ -50,7 +51,10 @@ class InputManager {
 
     static void scrocll_callback(GLFWwindow* window, double xoffset, double yoffset) {}
 
-    static void setRenderer(Renderer* pRenderer) { getInstance().renderer = pRenderer; }
+    static void init(Renderer& renderer, Scene& scene) { 
+        getInstance().renderer = &renderer;
+        getInstance().scene = &scene;
+    }
     static void setMaterialEditorState(MaterialEditorState* state) { getInstance().materialEditorState = state; }
 
     static const InputState& getCurrentState(){
@@ -66,5 +70,6 @@ class InputManager {
   private:
     InputState current, previous;
     Renderer* renderer;
+    Scene* scene;
     MaterialEditorState* materialEditorState = nullptr;
 };

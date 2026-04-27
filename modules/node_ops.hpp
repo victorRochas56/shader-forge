@@ -2,14 +2,16 @@
 #include "scene_elements.hpp"
 
 class Renderer;
+class Scene;
+class BindlessSystem;
 
 namespace NodeOps {
 
-    void assignMesh(Node& node, uint32_t meshIndex, Renderer& renderer);
-    void assignMaterial(Node& node, uint32_t materialIndex, Renderer& renderer);
-    void assignLight(Node& node, Light light, Renderer& renderer);
-    void assignVolume(Node& node, Volume volume, Renderer& renderer);
-    void assignBillboard(Node& node, Billboard billboard, Renderer& renderer);
-    void enableLightShadows(Light& light, const std::string& nodeName, Renderer& renderer);
-    void disableLightShadows(Light& light, Renderer& renderer);
+    void assignMesh(Node& node, uint32_t meshIndex, Scene& scene);
+    void assignMaterial(Node& node, uint32_t materialIndex, Scene& scene);
+    void assignLight(Node& node, Light light, Scene& scene, BindlessSystem& bindless, uint32_t lightBufferIndex);
+    void assignVolume(Node& node, Volume volume, Scene& scene, BindlessSystem& bindless, uint32_t volumeBufferIndex);
+    void assignBillboard(Node& node, Billboard billboard, Scene& scene);
+    void enableLightShadows(Light& light, const std::string& nodeName, Scene& scene);
+    void disableLightShadows(Light& light, Scene& scene);
 }

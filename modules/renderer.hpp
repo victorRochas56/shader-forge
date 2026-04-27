@@ -29,6 +29,7 @@
 #include "scene_graph.hpp"
 #include "gpu_context.hpp"
 #include "bindless_system.hpp"
+#include "render_buffers.hpp"
 #include "scene.hpp"
 
 // Forward declarations — full definitions only needed in renderer.cpp
@@ -44,16 +45,16 @@ class Renderer {
 #pragma region VARS
   public:
     GpuContext&                         gpu;
-    BindlessSystem&                     bindless;
     Scene&                              scene;
+    RenderBuffers                       buffers;
     RenderFeatures                      features;
     float                               cullFovScale = 1.0f;
     uint32_t                            culledCount = 0;
     uint32_t                            defaultAlbedoIndex;
-    uint32_t                            nodeTextureIndex;
 
   private:
     bool                                framebufferResized = false;
+    BindlessSystem&                     bindless;
 
     //pipelines
     uint32_t                            skyboxPipelineIndex;
@@ -71,26 +72,9 @@ class Renderer {
     uint32_t                            shadowSamplerIndex;
     uint32_t                            defaultNormalIndex;
 
-    struct RenderEntry {
-        uint32_t nodeIndex;
-        uint32_t materialIndex;       // index into materials vector
-        uint32_t shaderPipelineIndex;
-    };
-    struct ShaderDrawRange {
-        uint32_t pipelineIndex;
-        uint32_t firstCommand;
-        uint32_t commandCount;
-    };
-    std::vector<RenderEntry>            renderEntries;
-    bool                                renderListDirty = false;
-    std::vector<ShaderDrawRange>        shaderDrawRanges;
-
     uint32_t                            vertexBufferIndex;
     uint32_t                            indexBufferIndex;
-    uint32_t                            modelMatrixBufferIndex;
     uint32_t                            billboardBufferIndex;
-    uint32_t                            lightBufferIndex;
-    uint32_t                            volumeBufferIndex;
     uint32_t                            shadowDrawDataBufferIndex;
     uint32_t                            litDrawDataBufferIndex;
     uint32_t                            litPassDataBufferIndex;
@@ -196,11 +180,6 @@ class Renderer {
     uint32_t getVolumeBufferIndex();
     uint32_t getShadowDrawDataBufferIndex();
 
-    void addMeshToShader(uint32_t nodeIndex, Shader shader, Material material);
-    void removeMeshFromShader(uint32_t nodeIndex, Shader shader, Material material);
-    void removeNodeFromRenderList(uint32_t nodeIndex);
-
-    void clearRenderList();
     void clearLights();
     void clearVolumes();
 

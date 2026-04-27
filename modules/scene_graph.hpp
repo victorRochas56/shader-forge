@@ -8,32 +8,36 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include "constants.hpp"
+#include "render_buffers.hpp"
 #include "scene_elements.hpp"
 #include "transform_system.hpp"
 
-class Renderer;
+class Scene;
+class BindlessSystem;
 
 class SceneGraph {
   public:
-    uint32_t selectedNode = 0; // 0 = none selected
 
     SceneGraph() { nodes.reserve(MAX_NODES); }
     ~SceneGraph() = default;
-
-    void init(Renderer* renderer);
+    void init(Scene& scene, BindlessSystem& bindless, const RenderBuffers& buffers);
+    // Wipes node storage and re-creates the null sentinel + root using the
+    // resources cached at init(). Caller is responsible for clearing any
+    // bindless slots tied to dead nodes before calling.
+    void reset();
 
     static constexpr uint32_t ROOT_INDEX = 1;
+    uint32_t selectedNode = 0; // 0 = none selected
 
     Node& getRootNode() { return nodes[ROOT_INDEX]; }
-
     std::vector<Node>& getNodes() { return nodes; }
-
     Node& getNode(uint32_t idx) { return nodes[idx]; }
     const Node& getNode(uint32_t idx) const { return nodes[idx]; }
+    uint32_t getLastNode() { return lastNode; }
+    bool isNodeValid(uint32_t idx) { return idx > 0 && idx < nodes.size() && nodes[idx].alive; }
 
-    uint32_t addNode(bool internal = false, uint32_t parentIndex = ROOT_INDEX, glm::vec3 position = glm::vec3(0.0f), glm::quat rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
-                     glm::vec3 scale = glm::vec3(1.0f));
-
+    uint32_t addNode(bool internal = false, uint32_t parentIndex = ROOT_INDEX, glm::vec3 position = glm::vec3(0.0f),
+                     glm::quat rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f), glm::vec3 scale = glm::vec3(1.0f));
     void removeNode(uint32_t index);
     void syncDirtyNodes();
 
@@ -49,17 +53,6 @@ class SceneGraph {
             nodes[selectedNode].isSelected = false;
         } 
         selectedNode = 0;
-    }
-
-    uint32_t getNodeCount() { return lastNode; } // excludes null node at 0
-    uint32_t getLastNode() { return lastNode; }
-
-    bool isNodeValid(uint32_t idx) { return idx > 0 && idx < nodes.size() && nodes[idx].alive; }
-
-    void resetLastNode() {
-        lastNode = 0;
-        selectedNode = 0;
-        freeSlots = {};
     }
 
     // Link child into parent's sibling list (firstChild/nextSibling)
@@ -141,7 +134,13 @@ class SceneGraph {
     }
 
   private:
-    Renderer* renderer = nullptr;
+    Scene* scene = nullptr;
+    BindlessSystem* bindless = nullptr;
+    // Non-owning view of the renderer-owned RenderBuffers. Read every access
+    // (do not cache the indices locally) so any future buffer recreation in
+    // the renderer is observed automatically.
+    const RenderBuffers* buffers = nullptr;
+
     std::vector<Node> nodes;
     uint32_t lastNode = 0;
     std::queue<uint32_t> freeSlots;

@@ -3,7 +3,7 @@
 #include <cstring>
 
 // Forward declarations
-class Renderer;
+class Scene;
 struct Material;
 
 struct MaterialEditorState {
@@ -40,5 +40,5 @@ struct MaterialEditorState {
         for (int i = 0; i < 6; i++) envMapPaths[i][0] = '\0';
     }
 
-    void loadFromMaterial(int index, Material& mat, Renderer* renderer);
+    void loadFromMaterial(int index, Material& mat, Scene& scene);
 };

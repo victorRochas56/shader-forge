@@ -1,10 +1,22 @@
 #include "scene_graph.hpp"
-#include "node_ops.hpp"
+#include "bindless_system.hpp"
 #include "light_influence.hpp"
-#include "renderer.hpp"
+#include "node_ops.hpp"
+#include "scene.hpp"
 
-void SceneGraph::init(Renderer* renderer) {
-    this->renderer = renderer;
+void SceneGraph::init(Scene& sceneRef, BindlessSystem& bindlessRef, const RenderBuffers& buffersRef) {
+    this->scene = &sceneRef;
+    this->bindless = &bindlessRef;
+    this->buffers = &buffersRef;
+    reset();
+}
+
+void SceneGraph::reset() {
+    nodes.clear();
+    lastNode = 0;
+    selectedNode = 0;
+    freeSlots = {};
+
     // Index 0 is the null/invalid node sentinel
     nodes.push_back({0});
     // Index 1 is the root node
@@ -12,8 +24,8 @@ void SceneGraph::init(Renderer* renderer) {
     nodes[ROOT_INDEX].name = "root";
     lastNode = ROOT_INDEX;
     allocateNodeGPU(nodes[ROOT_INDEX]);
-    TransformSystem::updateAll(nodes[ROOT_INDEX], nodes, (*renderer->bindless.descriptorSet), renderer->getModelMatrixBufferIndex(),
-                               renderer->scene.assetManager.meshes, renderer->scene.getLightsMutable());
+    TransformSystem::updateAll(nodes[ROOT_INDEX], nodes, *bindless->descriptorSet, buffers->modelMatrixBufferIndex,
+                               scene->assetManager.meshes, scene->getLightsMutable());
 }
 
 uint32_t SceneGraph::addNode(bool internal,uint32_t parentIndex, glm::vec3 position, glm::quat rotation, glm::vec3 scale) {
@@ -37,10 +49,10 @@ uint32_t SceneGraph::addNode(bool internal,uint32_t parentIndex, glm::vec3 posit
     newNode.worldTransform = parent.worldTransform * newNode.localTransform;
 
     allocateNodeGPU(newNode);
-    TransformSystem::updateAll(newNode, nodes, (*renderer->bindless.descriptorSet), renderer->getModelMatrixBufferIndex(),
-                               renderer->scene.assetManager.meshes, renderer->scene.getLightsMutable());
+    TransformSystem::updateAll(newNode, nodes, *bindless->descriptorSet, buffers->modelMatrixBufferIndex,
+                               scene->assetManager.meshes, scene->getLightsMutable());
 
-    NodeOps::assignBillboard(newNode,{.textureIndex = renderer->nodeTextureIndex, .hidden = true, .screenSpaceSize = false, .size = 0.25f},*renderer);
+    NodeOps::assignBillboard(newNode,{.textureIndex = buffers->nodeTextureIndex, .hidden = true, .screenSpaceSize = false, .size = 0.25f}, *scene);
     return newIndex;
 }
 
@@ -48,25 +60,25 @@ void SceneGraph::killNode(uint32_t idx) {
     Node& node = nodes[idx];
     if (!node.alive) return;
 
-    LightInfluence::onNodeRemoved(node, renderer->scene.getLightsMutable());
+    LightInfluence::onNodeRemoved(node, scene->getLightsMutable());
 
     node.alive = false;
     unlinkChild(idx);
     deallocateNodeGPU(node);
 
     if(node.lightIndex != MAX_LIGHTS) {
-        renderer->scene.removeLight(renderer->bindless,renderer->getLightBufferIndex(),node.lightIndex);
+        scene->removeLight(*bindless, buffers->lightBufferIndex, node.lightIndex);
         node.lightIndex = MAX_LIGHTS;
     }
 
     if(node.volumeIndex != 0xFFFFFFFF) {
-        renderer->scene.removeVolume(renderer->bindless,renderer->getVolumeBufferIndex(),node.volumeIndex);
+        scene->removeVolume(*bindless, buffers->volumeBufferIndex, node.volumeIndex);
         node.volumeIndex = 0xFFFFFFFF;
     }
 
-    renderer->scene.removeBillboard(idx);
+    scene->removeBillboard(idx);
 
-    renderer->removeNodeFromRenderList(idx);
+    scene->removeNodeFromRenderList(idx);
 
     // Clear selection if this node was selected
     if (selectedNode == idx) deSelectNode();
@@ -98,22 +110,22 @@ void SceneGraph::syncDirtyNodes() {
     for (uint32_t i = ROOT_INDEX; i <= lastNode; i++) {
         if (!nodes[i].alive || !nodes[i].transformDirty) continue;
         nodes[i].transformDirty = false;
-        TransformSystem::updateAll(nodes[i], nodes, (*renderer->bindless.descriptorSet), renderer->getModelMatrixBufferIndex(),
-                                   renderer->scene.assetManager.meshes, renderer->scene.getLightsMutable());
+        TransformSystem::updateAll(nodes[i], nodes, *bindless->descriptorSet, buffers->modelMatrixBufferIndex,
+                                   scene->assetManager.meshes, scene->getLightsMutable());
         if(nodes[i].volumeIndex != 0xFFFFFFFF) {
-            renderer->scene.volumes[nodes[i].volumeIndex].center = nodes[i].getWorldPosition();
-            renderer->bindless.descriptorSet->updateFixedBuffer<Volume>(renderer->getVolumeBufferIndex(),nodes[i].volumeIndex,renderer->scene.volumes[nodes[i].volumeIndex]);
+            scene->volumes[nodes[i].volumeIndex].center = nodes[i].getWorldPosition();
+            bindless->descriptorSet->updateFixedBuffer<Volume>(buffers->volumeBufferIndex, nodes[i].volumeIndex, scene->volumes[nodes[i].volumeIndex]);
         }
     }
 }
 
 void SceneGraph::allocateNodeGPU(Node& node) {
-    uint32_t singleIndex = (*renderer->bindless.descriptorSet).allocateFixedBuffer(renderer->getModelMatrixBufferIndex(), glm::mat4(1.0f));
+    uint32_t singleIndex = bindless->descriptorSet->allocateFixedBuffer(buffers->modelMatrixBufferIndex, glm::mat4(1.0f));
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         node.modelMatrixIndices[i] = singleIndex;
     }
 }
 
 void SceneGraph::deallocateNodeGPU(Node& node) {
-    (*renderer->bindless.descriptorSet).freeFixedBuffer(renderer->getModelMatrixBufferIndex(), node.modelMatrixIndices[0]);
+    bindless->descriptorSet->freeFixedBuffer(buffers->modelMatrixBufferIndex, node.modelMatrixIndices[0]);
 }

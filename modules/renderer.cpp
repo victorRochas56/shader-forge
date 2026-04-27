@@ -61,20 +61,20 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
 
     billboardBufferIndex = bindless.descriptorSet->createFixedBuffer<GPUBillboard>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
     sdfPassDataBufferIndex = bindless.descriptorSet->createFixedBuffer<SDF>(MAX_FIXED_BUFFER);
-    volumeBufferIndex = bindless.descriptorSet->createFixedBuffer<Volume>(MAX_FIXED_BUFFER);
+    buffers.volumeBufferIndex = bindless.descriptorSet->createFixedBuffer<Volume>(MAX_FIXED_BUFFER);
 
 
     // these buffers store the data once per frame in flight since they are usually accessed every frame by the CPU
-    modelMatrixBufferIndex = bindless.descriptorSet->createFixedBuffer<glm::mat4>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
+    buffers.modelMatrixBufferIndex = bindless.descriptorSet->createFixedBuffer<glm::mat4>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
     shadowDrawDataBufferIndex = bindless.descriptorSet->createFixedBuffer<ShadowDrawData>(MAX_FRAMES_IN_FLIGHT * MAX_SHADOW_CASTERS * MAX_FIXED_BUFFER, true);
-    lightBufferIndex = bindless.descriptorSet->createFixedBuffer<GPULight>(MAX_LIGHTS * MAX_FRAMES_IN_FLIGHT, true);
+    buffers.lightBufferIndex = bindless.descriptorSet->createFixedBuffer<GPULight>(MAX_LIGHTS * MAX_FRAMES_IN_FLIGHT, true);
     litPassDataBufferIndex = bindless.descriptorSet->createFixedBuffer<LitPassData>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
     ssrPassDataBufferIndex = bindless.descriptorSet->createFixedBuffer<SSRPassData>(MAX_FRAMES_IN_FLIGHT, true);
 
     // sets the frame offsets for each buffer
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-        bindless.descriptorSet->setBufferFrameOffset(modelMatrixBufferIndex, i, MAX_FIXED_BUFFER * i);
-        bindless.descriptorSet->setBufferFrameOffset(lightBufferIndex, i, MAX_LIGHTS * i);
+        bindless.descriptorSet->setBufferFrameOffset(buffers.modelMatrixBufferIndex, i, MAX_FIXED_BUFFER * i);
+        bindless.descriptorSet->setBufferFrameOffset(buffers.lightBufferIndex, i, MAX_LIGHTS * i);
         bindless.descriptorSet->setBufferFrameOffset(shadowDrawDataBufferIndex, i, MAX_SHADOW_CASTERS * MAX_FIXED_BUFFER * i);
         bindless.descriptorSet->setBufferFrameOffset(litPassDataBufferIndex,i, MAX_FIXED_BUFFER * i);
         bindless.descriptorSet->setBufferFrameOffset(ssrPassDataBufferIndex,i,i);
@@ -210,8 +210,10 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     bindless.descriptorSet->debugDescriptorSet("after_pipeline_creation");
 #endif
 
-    // create the root node - end of initialization
-    scene.sceneGraph.init(this);
+    // create the root node - end of initialization. SceneGraph captures
+    // const RenderBuffers& — nodeTextureIndex is filled in later by App, the
+    // ref will pick that up automatically.
+    scene.sceneGraph.init(scene, bindless, buffers);
     bindless.descriptorSet->allocateFixedBuffer(litPassDataBufferIndex, LitPassData{.samplerIndex = defaultSamplerIndex,
                                                                            .lightCount = 0,
                                                                            .shadowSamplerIndex = shadowSamplerIndex,
@@ -288,7 +290,7 @@ void Renderer::drawFrame() {
         // Fan out the GPULight write across every frame-in-flight slice so the
         // per-frame buffer stays coherent instead of one slice winning the race.
         if (light.gpuDirtyFrames > 0) {
-            bindless.descriptorSet->updateFixedBufferWithOffset<GPULight>(lightBufferIndex, id, light.toGPU(lightPos, lightDir), gpu.currentFrame);
+            bindless.descriptorSet->updateFixedBufferWithOffset<GPULight>(buffers.lightBufferIndex, id, light.toGPU(lightPos, lightDir), gpu.currentFrame);
             light.gpuDirtyFrames--;
         }
     }
@@ -338,53 +340,13 @@ void Renderer::drawFrame() {
 
 /////=================================================GET/SET=================================================/////
 
-uint32_t Renderer::getModelMatrixBufferIndex() { return modelMatrixBufferIndex; }
-uint32_t Renderer::getLightBufferIndex() { return lightBufferIndex; }
-uint32_t Renderer::getVolumeBufferIndex() { return volumeBufferIndex; }
+uint32_t Renderer::getModelMatrixBufferIndex() { return buffers.modelMatrixBufferIndex; }
+uint32_t Renderer::getLightBufferIndex() { return buffers.lightBufferIndex; }
+uint32_t Renderer::getVolumeBufferIndex() { return buffers.volumeBufferIndex; }
 uint32_t Renderer::getShadowDrawDataBufferIndex() { return shadowDrawDataBufferIndex; }
 
-void Renderer::addMeshToShader(uint32_t nodeIndex, Shader shader, Material material) {
-    uint32_t matIdx = 0;
-    for (uint32_t i = 0; i < scene.materials.size(); i++) {
-        if (scene.materials[i] == material) { matIdx = i; break; }
-    }
-    for (const auto& e : renderEntries) {
-        if (e.nodeIndex == nodeIndex &&
-            e.materialIndex == matIdx && e.shaderPipelineIndex == shader.pipelineIndex)
-            return;
-    }
-    renderEntries.push_back({nodeIndex, matIdx, shader.pipelineIndex});
-    renderListDirty = true;
-}
-void Renderer::removeMeshFromShader(uint32_t nodeIndex, Shader shader, Material material) {
-    uint32_t matIdx = 0;
-    for (uint32_t i = 0; i < scene.materials.size(); i++) {
-        if (scene.materials[i] == material) { matIdx = i; break; }
-    }
-    for (size_t i = 0; i < renderEntries.size(); ++i) {
-        if (renderEntries[i].nodeIndex == nodeIndex &&
-            renderEntries[i].materialIndex == matIdx && renderEntries[i].shaderPipelineIndex == shader.pipelineIndex) {
-            renderEntries[i] = renderEntries.back();
-            renderEntries.pop_back();
-            renderListDirty = true;
-            return;
-        }
-    }
-}
-void Renderer::removeNodeFromRenderList(uint32_t nodeIndex) {
-    for (size_t i = 0; i < renderEntries.size();) {
-        if (renderEntries[i].nodeIndex == nodeIndex) {
-            renderEntries[i] = renderEntries.back();
-            renderEntries.pop_back();
-            renderListDirty = true;
-        } else {
-            ++i;
-        }
-    }
-}
-void Renderer::clearRenderList() { renderEntries.clear(); shaderDrawRanges.clear(); renderListDirty = false; }
-void Renderer::clearLights() { scene.clearLights(bindless, lightBufferIndex); }
-void Renderer::clearVolumes() { scene.clearVolumes(bindless, volumeBufferIndex); }
+void Renderer::clearLights() { scene.clearLights(bindless, buffers.lightBufferIndex); }
+void Renderer::clearVolumes() { scene.clearVolumes(bindless, buffers.volumeBufferIndex); }
 
 void Renderer::toggleVsync() {
     gpu.vSync = !gpu.vSync;
@@ -760,20 +722,20 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
 template <typename PerMeshFn>
 void Renderer::buildGeometryDrawCommands(const std::array<Plane, 6>& frustumPlanes, bool doCulling, PerMeshFn&& perMeshFn,
                                          const std::function<bool(const Node&)>& nodeFilter) {
-    if (renderListDirty) {
-        std::sort(renderEntries.begin(), renderEntries.end(), [](const RenderEntry& a, const RenderEntry& b) {
+    if (scene.renderListDirty) {
+        std::sort(scene.renderEntries.begin(), scene.renderEntries.end(), [](const Scene::RenderEntry& a, const Scene::RenderEntry& b) {
             return a.shaderPipelineIndex < b.shaderPipelineIndex;
         });
-        renderListDirty = false;
+        scene.renderListDirty = false;
     }
 
     indirectCommands.clear();
-    shaderDrawRanges.clear();
+    scene.shaderDrawRanges.clear();
 
     std::unordered_set<uint32_t> freedMeshes;
     uint32_t currentPipelineIdx = UINT32_MAX;
 
-    for (const auto& entry : renderEntries) {
+    for (const auto& entry : scene.renderEntries) {
         Node* node = &scene.sceneGraph.getNode(entry.nodeIndex);
         uint32_t meshIdx = node->getMeshIndex();
 
@@ -804,7 +766,7 @@ void Renderer::buildGeometryDrawCommands(const std::array<Plane, 6>& frustumPlan
 
         if (entry.shaderPipelineIndex != currentPipelineIdx) {
             currentPipelineIdx = entry.shaderPipelineIndex;
-            shaderDrawRanges.push_back({currentPipelineIdx, static_cast<uint32_t>(indirectCommands.size()), 0});
+            scene.shaderDrawRanges.push_back({currentPipelineIdx, static_cast<uint32_t>(indirectCommands.size()), 0});
         }
 
         indirectCommands.push_back({.indexCount    = mesh.indexCount,
@@ -812,7 +774,7 @@ void Renderer::buildGeometryDrawCommands(const std::array<Plane, 6>& frustumPlan
                                     .firstIndex    = static_cast<uint32_t>(mesh.indexOffset / sizeof(uint32_t)),
                                     .vertexOffset  = 0,
                                     .firstInstance = 0});
-        shaderDrawRanges.back().commandCount++;
+        scene.shaderDrawRanges.back().commandCount++;
 
         const Material& material = scene.materials[entry.materialIndex];
         perMeshFn(mesh, *node, material);
@@ -937,8 +899,8 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
         }
 
         LitPushConstants pushConstants = {.vertexBufferAddress  = bindless.descriptorSet->getVariableBuffers()[vertexBufferIndex]->address,
-                                          .modelMatricesAddress = bindless.descriptorSet->getFixedBuffers()[modelMatrixBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(glm::mat4),
-                                          .lightsAddress        = bindless.descriptorSet->getFixedBuffers()[lightBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(GPULight),
+                                          .modelMatricesAddress = bindless.descriptorSet->getFixedBuffers()[buffers.modelMatrixBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(glm::mat4),
+                                          .lightsAddress        = bindless.descriptorSet->getFixedBuffers()[buffers.lightBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(GPULight),
                                           .litDrawDataAddress   = bindless.descriptorSet->getFixedBuffers()[litDrawDataBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(LitDrawData),
                                           .litPassDataAddress   = bindless.descriptorSet->getFixedBuffers()[litPassDataBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(LitPassData)
                                         };
@@ -1052,13 +1014,13 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
         auto& geoPipelines = bindless.pipelineManager->getGeoPipelines();
 
         LitPushConstants pushConstants = {.vertexBufferAddress  = bindless.descriptorSet->getVariableBuffers()[vertexBufferIndex]->address,
-                                          .modelMatricesAddress = bindless.descriptorSet->getFixedBuffers()[modelMatrixBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(glm::mat4),
-                                          .lightsAddress        = bindless.descriptorSet->getFixedBuffers()[lightBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(GPULight),
+                                          .modelMatricesAddress = bindless.descriptorSet->getFixedBuffers()[buffers.modelMatrixBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(glm::mat4),
+                                          .lightsAddress        = bindless.descriptorSet->getFixedBuffers()[buffers.lightBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(GPULight),
                                           .litDrawDataAddress   = bindless.descriptorSet->getFixedBuffers()[litDrawDataBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(LitDrawData),
                                           .litPassDataAddress   = bindless.descriptorSet->getFixedBuffers()[litPassDataBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(LitPassData)
                                         };
 
-        for (const auto& range : shaderDrawRanges) {
+        for (const auto& range : scene.shaderDrawRanges) {
             auto currentPipeline = &(geoPipelines[range.pipelineIndex]);
             bindPipeline(cmd, **currentPipeline);
             cmd.pushConstants<LitPushConstants>((*currentPipeline)->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pushConstants);
@@ -1485,7 +1447,7 @@ void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light, uint
         if (!indirectCommands.empty()) {
             ShadowPushConstants pushConstants = {
                 .vertexBufferAddress   = bindless.descriptorSet->getVariableBuffers()[vertexBufferIndex]->address,
-                .modelMatricesAddress  = bindless.descriptorSet->getFixedBuffers()[modelMatrixBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(glm::mat4),
+                .modelMatricesAddress  = bindless.descriptorSet->getFixedBuffers()[buffers.modelMatrixBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(glm::mat4),
                 .shadowDrawDataAddress = bindless.descriptorSet->getFixedBuffers()[shadowDrawDataBufferIndex]->address + static_cast<vk::DeviceSize>(slotIdx) * MAX_FIXED_BUFFER * sizeof(ShadowDrawData),
                 .lightSpaceMatrix      = lightSpaceMatrix};
             cmd.pushConstants<ShadowPushConstants>(*currentPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pushConstants);
@@ -1508,8 +1470,8 @@ void Renderer::recordVolumetricsPass(vk::raii::CommandBuffer& cmd, uint32_t imag
     drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[volPipelineIndex], *bindless.descriptorSet->getTextureResource(volTextureIndex).imageView,
                        extent,
                        VolumetricPushConstants {
-                            .lightsAddress = bindless.descriptorSet->getFixedBuffers()[lightBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(GPULight),
-                            .volumeBufferAddress = bindless.descriptorSet->getFixedBuffers()[volumeBufferIndex]->address /* + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(Volume)*/,
+                            .lightsAddress = bindless.descriptorSet->getFixedBuffers()[buffers.lightBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(GPULight),
+                            .volumeBufferAddress = bindless.descriptorSet->getFixedBuffers()[buffers.volumeBufferIndex]->address /* + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(Volume)*/,
                             .lightCount = scene.getLightLoopBound(),
                             .shadowAtlasIndex = scene.shadowAtlas.textureIndex,
                             .depthTextureIndex = gpu.getSwapchain().getDepthResolveIndex(),
