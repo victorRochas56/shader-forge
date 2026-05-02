@@ -111,14 +111,13 @@ class App {
             Node* currentNode = &scene.sceneGraph.getRootNode();
             if(scene.sceneGraph.selectedNode != 0) {
                 currentNode = &scene.sceneGraph.getNode(scene.sceneGraph.selectedNode);
-                Manip::showManipulator(*currentNode,scene.activeCamera,InputManager::getCurrentState().ndcMousePos);
+                Manip::showManipulator(*currentNode,scene.activeCamera,InputManager::getCurrentState().ndcMousePos,scene.sceneGraph);
             }
 
             for(auto& bb : scene.billboards){
                 bb.second.hidden = true;
             }
             if(renderer.features.showGizmos){
-                Gizmos::drawAxes(currentNode->getTransform(),0.15f);
                 scene.getBillboardsMutable()[currentNode->nodeIndex].hidden = false;
                 scene.sceneGraph.forEachChild(*currentNode, [this](Node& child){
                     scene.getBillboardsMutable()[child.nodeIndex].hidden = false;

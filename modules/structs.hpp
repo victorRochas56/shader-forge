@@ -278,6 +278,7 @@ struct Billboard {
     float clipThreshold = 0.5f;
     bool screenSpaceSize = false;
     float size = 0.1f;
+    bool depthTest = false;
     
     GPUBillboard toGPU(glm::vec3& position) {
         GPUBillboard out;

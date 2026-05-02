@@ -31,6 +31,7 @@
 #include "bindless_system.hpp"
 #include "render_buffers.hpp"
 #include "scene.hpp"
+#include "render_pass.hpp"
 
 // Forward declarations — full definitions only needed in renderer.cpp
 struct GLFWwindow;
@@ -55,20 +56,20 @@ class Renderer {
   private:
     bool                                framebufferResized = false;
     BindlessSystem&                     bindless;
+    RenderPassResources                 passResources;
 
+    std::map<PassId,std::unique_ptr<RenderPass>>   passes;
     //pipelines
     uint32_t                            skyboxPipelineIndex;
     uint32_t                            shadowPipelineIndex;
     uint32_t                            litPipelineIndex;
     uint32_t                            gizmoPipelineIndex;
     uint32_t                            imageViewPipelineIndex;
-    uint32_t                            blurPipelineIndex;
     uint32_t                            depthPipelineIndex;
     uint32_t                            billboardPipelineIndex;
+    uint32_t                            billboardNoDepthPipelineIndex;
 
     //defaults
-    uint32_t                            defaultSamplerIndex;
-    uint32_t                            depthSamplerIndex;
     uint32_t                            shadowSamplerIndex;
     uint32_t                            defaultNormalIndex;
 
@@ -78,7 +79,6 @@ class Renderer {
     uint32_t                            shadowDrawDataBufferIndex;
     uint32_t                            litDrawDataBufferIndex;
     uint32_t                            litPassDataBufferIndex;
-    uint32_t                            ssrPassDataBufferIndex;
 
     // Persistent buffers for indirect drawing
     vk::raii::Buffer                    indirectDrawBuffer = nullptr;      // shadow pass
@@ -93,46 +93,19 @@ class Renderer {
     std::vector<ShadowDrawData>             drawDataList;
     std::vector<LitDrawData>                litDrawDataList;
 
-    //SSAO
-    uint32_t                            ssaoTextureIndex = 0xFFFFFFFF;
-    uint32_t                            ssaoBlurTextureIndex = 0xFFFFFFFF;
-    uint32_t                            ssaoNoiseTextureIndex = 0xFFFFFFFF;
-    uint32_t                            ssaoNoiseSamplerIndex = 0xFFFFFFFF;
-    uint32_t                            ssaoPipelineIndex = 0xFFFFFFFF;
-    uint32_t                            ssaoApplyPipelineIndex = 0xFFFFFFFF;
-
-    //number of mips for a full resolution fullscreen image
-    uint32_t                            fullscreenMipLevels = 1;
-
     // Roughness-metallic MRT from lit pass
-    uint32_t                            roughnessMetalTextureIndex = 0xFFFFFFFF;
     Image                               roughnessMetal;
 
     // World-space normals MRT from lit pass
-    uint32_t                            normalTextureIndex = 0xFFFFFFFF;
     uint32_t                            normalMipLevels = 1;
     Image                               normalMSAA;
 
-    uint32_t                            motionVectorTextureIndex = 0xFFFFFFFF;
     Image                               motionVectors;
 
-    //SSR
-    uint32_t                            ssrCurrentTextureIndex = 0xFFFFFFFF;
-    uint32_t                            ssrHistoryTextureIndices[2] = {0xFFFFFFFF, 0xFFFFFFFF};
-    uint32_t                            ssrHistoryFlip = 0;
-    bool                                ssrHistoryInvalid = true;
-    uint32_t                            ssrPipelineIndex = 0xFFFFFFFF;
-    uint32_t                            ssrAccumulatePipelineIndex = 0xFFFFFFFF;
-    uint32_t                            ssrApplyPipelineIndex = 0xFFFFFFFF;
-    uint32_t                            colorResolveTextureIndex = 0xFFFFFFFF;
-    std::vector<vk::raii::ImageView>    colorResolveMipViews;
-
-
     // Hi-Z (hierarchical depth pyramid)
-    uint32_t                            hiZTextureIndex = 0xFFFFFFFF;
-    uint32_t                            hiZMipLevels = 0;
     uint32_t                            hiZPipelineIndex = 0xFFFFFFFF;
     std::vector<vk::raii::ImageView>    hiZMipViews;
+    std::vector<vk::raii::ImageView>    colorResolveMipViews;
 
     // SDF rendering
     uint32_t                            sdfPipelineIndex = 0xFFFFFFFF;
@@ -141,15 +114,9 @@ class Renderer {
     uint32_t                            sdfApplyPipelineIndex = 0xFFFFFFFF;
 
     // Volume rendering
-    uint32_t                            volPipelineIndex = 0xFFFFFFFF;
-    uint32_t                            volTextureIndex = 0xFFFFFFFF;
-    uint32_t                            volBlurTextureIndex = 0xFFFFFFFF;
-    uint32_t                            volPassDataBufferIndex = 0xFFFFFFFF;
-    uint32_t                            volApplyPipelineIndex = 0xFFFFFFFF;
 
   private:
     // Temporary texture for gaussian blur (mipmapped for per-mip blur passes)
-    uint32_t                            tempBlurTextureIndex = 0xFFFFFFFF;
     std::vector<vk::raii::ImageView>    tempBlurMipViews;
 #pragma endregion
 
@@ -196,15 +163,12 @@ class Renderer {
   private:
 #pragma region CREATE RESOURCES
     void createShadowAtlas(uint32_t resolution);
-    void createSSAOResources(uint32_t width, uint32_t height);
     void createRoughnessMetalResources(uint32_t width, uint32_t height);
     void createNormalResources(uint32_t width, uint32_t height);
     void createColorResolveResources(uint32_t width, uint32_t height);
     void createMotionVectorResources(uint32_t width, uint32_t height);
-    void createSSRResources(uint32_t width, uint32_t height);
     void createHiZResources(uint32_t width, uint32_t height);
     void createSDFResources(uint32_t width, uint32_t height);
-    void createVolumetricResources(uint32_t width, uint32_t height);
 #pragma endregion
 
 
@@ -222,11 +186,8 @@ class Renderer {
     void recordBillboardBlendPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex);
     void recordResolveToSwapchainCopy(vk::raii::CommandBuffer& cmd, uint32_t imageIndex);
     void recordOverlayPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex);
-    void recordSSAOPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex);
-    void recordSSRPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex);
     void recordImageVisPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex);
     void recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light, uint32_t shadowSlot);
-    void recordVolumetricsPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex);
     void recordSDFPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex);
 
     void createOrResizeRenderTarget(uint32_t& index, uint32_t width, uint32_t height,

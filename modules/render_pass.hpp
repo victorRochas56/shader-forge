@@ -8,12 +8,37 @@ class GpuContext;
 class BindlessSystem;
 class Scene;
 struct RenderFeatures;
+struct RenderBuffers;
 
 // Bindless indices (and other handles) that are created once by the app and
 // shared across passes. Passes read from this; they do not own the resources.
 struct RenderPassResources {
     uint32_t blurPipelineIndex = 0xFFFFFFFF;
+
     uint32_t depthSamplerIndex = 0xFFFFFFFF;
+    uint32_t defaultSamplerIndex = 0xFFFFFFFF;
+
+    // gbuffer
+    uint32_t colorResolveTextureIndex = 0xFFFFFFFF;
+    uint32_t roughnessMetalTextureIndex = 0xFFFFFFFF;
+    uint32_t normalTextureIndex = 0xFFFFFFFF;
+    uint32_t motionVectorTextureIndex = 0xFFFFFFFF;
+    RenderBuffers& buffers;
+    // hiZ
+    uint32_t hiZTextureIndex = 0xFFFFFFFF;
+    uint32_t hiZMipLevels = 0;
+
+    // blurred color mip chain (for cone tracing)
+    uint32_t tempBlurTextureIndex = 0xFFFFFFFF;
+    uint32_t fullscreenMipLevels = 1;
+    std::vector<vk::raii::ImageView>* colorResolveMipViews = nullptr;
+    std::vector<vk::raii::ImageView>* tempBlurMipViews = nullptr;
+};
+
+enum PassId {
+    SSAO,
+    SSR,
+    VOLUMETRICS,
 };
 
 class RenderPass {

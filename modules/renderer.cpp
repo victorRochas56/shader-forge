@@ -21,6 +21,10 @@
 #include "profiling.hpp"
 #include "swapchain.hpp"
 
+#include "ssao_pass.hpp"
+#include "ssr_pass.hpp"
+#include "volumetrics_pass.hpp"
+
 // TODO clustered lights? (forward +)
 //      pass the N nearest lights to the lit shader
 // TODO spot and area lights
@@ -34,7 +38,8 @@ void calculatePointLightFaceMatrices(Light& light, const glm::vec3& lightPos);
 
 void calculateCascadedLightSpaceMatrices(Light& light, Camera& camera, Renderer* renderer);
 
-Renderer::Renderer(GpuContext& gpu, BindlessSystem& bindless, Scene& scene) : scene(scene), gpu(gpu), bindless(bindless) {}
+Renderer::Renderer(GpuContext& gpu, BindlessSystem& bindless, Scene& scene)
+    : scene(scene), gpu(gpu), bindless(bindless), passResources{.buffers = buffers} {}
 Renderer::~Renderer() = default;
 
 /////=================================================INIT=================================================/////
@@ -61,23 +66,20 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
 
     billboardBufferIndex = bindless.descriptorSet->createFixedBuffer<GPUBillboard>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
     sdfPassDataBufferIndex = bindless.descriptorSet->createFixedBuffer<SDF>(MAX_FIXED_BUFFER);
-    buffers.volumeBufferIndex = bindless.descriptorSet->createFixedBuffer<Volume>(MAX_FIXED_BUFFER);
 
 
     // these buffers store the data once per frame in flight since they are usually accessed every frame by the CPU
     buffers.modelMatrixBufferIndex = bindless.descriptorSet->createFixedBuffer<glm::mat4>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
     shadowDrawDataBufferIndex = bindless.descriptorSet->createFixedBuffer<ShadowDrawData>(MAX_FRAMES_IN_FLIGHT * MAX_SHADOW_CASTERS * MAX_FIXED_BUFFER, true);
-    buffers.lightBufferIndex = bindless.descriptorSet->createFixedBuffer<GPULight>(MAX_LIGHTS * MAX_FRAMES_IN_FLIGHT, true);
+    passResources.buffers.lightBufferIndex = bindless.descriptorSet->createFixedBuffer<GPULight>(MAX_LIGHTS * MAX_FRAMES_IN_FLIGHT, true);
     litPassDataBufferIndex = bindless.descriptorSet->createFixedBuffer<LitPassData>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
-    ssrPassDataBufferIndex = bindless.descriptorSet->createFixedBuffer<SSRPassData>(MAX_FRAMES_IN_FLIGHT, true);
 
     // sets the frame offsets for each buffer
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         bindless.descriptorSet->setBufferFrameOffset(buffers.modelMatrixBufferIndex, i, MAX_FIXED_BUFFER * i);
-        bindless.descriptorSet->setBufferFrameOffset(buffers.lightBufferIndex, i, MAX_LIGHTS * i);
+        bindless.descriptorSet->setBufferFrameOffset(passResources.buffers.lightBufferIndex, i, MAX_LIGHTS * i);
         bindless.descriptorSet->setBufferFrameOffset(shadowDrawDataBufferIndex, i, MAX_SHADOW_CASTERS * MAX_FIXED_BUFFER * i);
         bindless.descriptorSet->setBufferFrameOffset(litPassDataBufferIndex,i, MAX_FIXED_BUFFER * i);
-        bindless.descriptorSet->setBufferFrameOffset(ssrPassDataBufferIndex,i,i);
         bindless.descriptorSet->setBufferFrameOffset(billboardBufferIndex, i, MAX_FIXED_BUFFER * i);
     }
 
@@ -100,22 +102,26 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     bindless.descriptorSet->createDescriptorSet();
 
     gpu.createSwapchainAndSync();
-    uint32_t ssaoW = std::max(1u, static_cast<uint32_t>(startWidth * features.ssao.resolutionScale));
-    uint32_t ssaoH = std::max(1u, static_cast<uint32_t>(startHeight * features.ssao.resolutionScale));
-    uint32_t ssrW = std::max(1u, static_cast<uint32_t>(startWidth * features.ssr.resolutionScale));
-    uint32_t ssrH = std::max(1u, static_cast<uint32_t>(startHeight * features.ssr.resolutionScale));
-    uint32_t volW = std::max(1u, static_cast<uint32_t>(startWidth * features.volumetrics.resolutionScale));
-    uint32_t volH = std::max(1u, static_cast<uint32_t>(startHeight * features.volumetrics.resolutionScale));
-    createSSAOResources(ssaoW, ssaoH);
+
+    passResources.colorResolveMipViews = &colorResolveMipViews;
+    passResources.tempBlurMipViews = &tempBlurMipViews;
+    passResources.buffers = buffers;
+
+    passes.emplace(PassId::SSAO,std::make_unique<SSAOPass>(gpu, bindless, scene, features, passResources));
+    passes.emplace(PassId::SSR,std::make_unique<SSRPass>(gpu, bindless, scene, features, passResources));
+    passes.emplace(PassId::VOLUMETRICS,std::make_unique<VolumetricsPass>(gpu, bindless, scene, features, passResources));
+
     createShadowAtlas(SHADOW_ATLAS_SIZE);
     createRoughnessMetalResources(startWidth, startHeight);
     createNormalResources(startWidth, startHeight);
     createMotionVectorResources(startWidth,startHeight);
     createColorResolveResources(startWidth, startHeight);
-    createSSRResources(ssrW, ssrH);
     createHiZResources(startWidth, startHeight);
     createSDFResources(startWidth,startHeight);
-    createVolumetricResources(volW,volH);
+
+    for(auto& pass : passes) {
+        pass.second->init(startWidth, startHeight);
+    }
 
 #if DEBUG == 1
     bindless.descriptorSet->debugDescriptorSet("after_createDescriptorSet");
@@ -123,9 +129,9 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
 
     /////S=================================================DEFAULTS=================================================/////
 
-    defaultSamplerIndex = bindless.descriptorSet->allocateSampler(vk::Filter::eLinear, vk::SamplerMipmapMode::eLinear, vk::SamplerAddressMode::eRepeat, VK_TRUE, 16.0, VK_FALSE,
+    passResources.defaultSamplerIndex = bindless.descriptorSet->allocateSampler(vk::Filter::eLinear, vk::SamplerMipmapMode::eLinear, vk::SamplerAddressMode::eRepeat, VK_TRUE, 16.0, VK_FALSE,
                                                          vk::CompareOp::eLessOrEqual, vk::BorderColor::eFloatOpaqueBlack);
-    depthSamplerIndex = bindless.descriptorSet->allocateSampler(vk::Filter::eNearest, vk::SamplerMipmapMode::eNearest, vk::SamplerAddressMode::eClampToEdge, VK_FALSE, 16.0, VK_FALSE,
+    passResources.depthSamplerIndex = bindless.descriptorSet->allocateSampler(vk::Filter::eNearest, vk::SamplerMipmapMode::eNearest, vk::SamplerAddressMode::eClampToEdge, VK_FALSE, 16.0, VK_FALSE,
                                                        vk::CompareOp::eLessOrEqual, vk::BorderColor::eFloatOpaqueBlack);
     shadowSamplerIndex = bindless.descriptorSet->allocateSampler(vk::Filter::eNearest,
                                                         vk::SamplerMipmapMode::eNearest,
@@ -164,30 +170,43 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     /////S=================================================PIPELINES=================================================/////
     skyboxPipelineIndex =
         bindless.pipelineManager->createPipeline<SkyBoxPushConstants>(PipelineCategory::LIT_GEOMETRY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
-                                                             vk::False, "shaders/skybox.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet());
+                                                             vk::False, "shaders/skybox.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
+                                                             vk::Format::eUndefined);
 
     shadowPipelineIndex = bindless.pipelineManager->createPipeline<ShadowPushConstants>(PipelineCategory::SHADOW, vk::PrimitiveTopology::eTriangleList,
                                                                                vk::CullModeFlagBits::eNone, vk::True, vk::True, "shaders/shadow_geometry.spv",
-                                                                               bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet());
-    blurPipelineIndex =
+                                                                               bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
+                                                                               vk::Format::eUndefined);
+    // Blur is reused for many targets; callers re-bind the pipeline against the active attachment.
+    // Most blur sources are color-resolve mips (swapchain format), so create with that.
+    passResources.blurPipelineIndex =
         bindless.pipelineManager->createPipeline<BlurPushConstants>(PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
-                                                           vk::False, "shaders/blur.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet());
+                                                           vk::False, "shaders/blur.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
+                                                           gpu.getSwapchain().getSwapChainImageFormat());
 
     depthPipelineIndex =
         bindless.pipelineManager->createPipeline<LitPushConstants>(PipelineCategory::DEPTH_PREPASS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eBack,vk::True,
-                                                                        vk::True,"shaders/depth_prepass.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet());
+                                                                        vk::True,"shaders/depth_prepass.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
+                                                                        vk::Format::eUndefined);
 
     litPipelineIndex = bindless.pipelineManager->createPipeline<LitPushConstants>(PipelineCategory::LIT_GEOMETRY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eBack, vk::True,
-                                                                         vk::True, "shaders/lit.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet());
+                                                                         vk::True, "shaders/lit.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
+                                                                         vk::Format::eUndefined);
 
     billboardPipelineIndex = bindless.pipelineManager->createPipeline<BillboardPushConstants>(PipelineCategory::ALPHA_GEOMETRY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::True,
-                                                                                            vk::False,"shaders/billboard.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet());
+                                                                                            vk::False,"shaders/billboard.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
+                                                                                            vk::Format::eUndefined);
+    billboardNoDepthPipelineIndex = bindless.pipelineManager->createPipeline<BillboardPushConstants>(PipelineCategory::ALPHA_GEOMETRY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
+                                                                                            vk::False,"shaders/billboard.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
+                                                                                            vk::Format::eUndefined);
     gizmoPipelineIndex =
         bindless.pipelineManager->createPipeline<LinePushConstants>(PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eLineList, vk::CullModeFlagBits::eNone, vk::False, vk::False,
-                                                           "shaders/line.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet());
+                                                           "shaders/line.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
+                                                           gpu.getSwapchain().getSwapChainImageFormat());
     imageViewPipelineIndex =
         bindless.pipelineManager->createPipeline<ImageVisPushConstants>(PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
-                                                               vk::False, "shaders/image_view.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet());
+                                                               vk::False, "shaders/image_view.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
+                                                               gpu.getSwapchain().getSwapChainImageFormat());
 
     // default litshader / material
     scene.fallbackLitShader = Shader{.sourceFile = "shaders/lit.spv", .pipelineIndex = litPipelineIndex};
@@ -214,7 +233,7 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     // const RenderBuffers& — nodeTextureIndex is filled in later by App, the
     // ref will pick that up automatically.
     scene.sceneGraph.init(scene, bindless, buffers);
-    bindless.descriptorSet->allocateFixedBuffer(litPassDataBufferIndex, LitPassData{.samplerIndex = defaultSamplerIndex,
+    bindless.descriptorSet->allocateFixedBuffer(litPassDataBufferIndex, LitPassData{.samplerIndex = passResources.defaultSamplerIndex,
                                                                            .lightCount = 0,
                                                                            .shadowSamplerIndex = shadowSamplerIndex,
                                                                            .shadowAtlasIndex = scene.shadowAtlas.textureIndex,
@@ -232,17 +251,17 @@ void Renderer::drawFrame() {
     gpu.getDevice().getDevice().waitForFences(*gpu.getInFlightFence(gpu.currentFrame), vk::True, UINT64_MAX);
     Tracer::endTrace("wait for fences");
     //TODO make all full screen passes have a resolution scale that can be set dirty when changed/ needs to recreate
-    if (features.ssr.resolutionDirty) {
-        features.ssr.resolutionDirty = false;
-        gpu.getDevice().getDevice().waitIdle();
-        int w = 0, h = 0;
-        glfwGetFramebufferSize(gpu.getWindow(), &w, &h);
-        if (w > 0 && h > 0) {
-            uint32_t ssrW = std::max(1u, static_cast<uint32_t>(w * features.ssr.resolutionScale));
-            uint32_t ssrH = std::max(1u, static_cast<uint32_t>(h * features.ssr.resolutionScale));
-            createSSRResources(ssrW, ssrH);
-        }
-    }
+    //if (features.ssr.resolutionDirty) {
+    //    features.ssr.resolutionDirty = false;
+    //    gpu.getDevice().getDevice().waitIdle();
+    //    int w = 0, h = 0;
+    //    glfwGetFramebufferSize(gpu.getWindow(), &w, &h);
+    //    if (w > 0 && h > 0) {
+    //        uint32_t ssrW = std::max(1u, static_cast<uint32_t>(w * features.ssr.resolutionScale));
+    //        uint32_t ssrH = std::max(1u, static_cast<uint32_t>(h * features.ssr.resolutionScale));
+    //        createSSRResources(ssrW, ssrH);
+    //    }
+    //}
 
     Tracer::startTrace("acquire next image");
     auto [result, imageIndex] = gpu.getSwapchain().getSwapChain().acquireNextImage(UINT64_MAX, *gpu.getPresentCompleteSemaphore(gpu.currentFrame), nullptr);
@@ -290,7 +309,7 @@ void Renderer::drawFrame() {
         // Fan out the GPULight write across every frame-in-flight slice so the
         // per-frame buffer stays coherent instead of one slice winning the race.
         if (light.gpuDirtyFrames > 0) {
-            bindless.descriptorSet->updateFixedBufferWithOffset<GPULight>(buffers.lightBufferIndex, id, light.toGPU(lightPos, lightDir), gpu.currentFrame);
+            bindless.descriptorSet->updateFixedBufferWithOffset<GPULight>(passResources.buffers.lightBufferIndex, id, light.toGPU(lightPos, lightDir), gpu.currentFrame);
             light.gpuDirtyFrames--;
         }
     }
@@ -341,12 +360,12 @@ void Renderer::drawFrame() {
 /////=================================================GET/SET=================================================/////
 
 uint32_t Renderer::getModelMatrixBufferIndex() { return buffers.modelMatrixBufferIndex; }
-uint32_t Renderer::getLightBufferIndex() { return buffers.lightBufferIndex; }
-uint32_t Renderer::getVolumeBufferIndex() { return buffers.volumeBufferIndex; }
+uint32_t Renderer::getLightBufferIndex() { return passResources.buffers.lightBufferIndex; }
+uint32_t Renderer::getVolumeBufferIndex() { return passResources.buffers.volumeBufferIndex; }
 uint32_t Renderer::getShadowDrawDataBufferIndex() { return shadowDrawDataBufferIndex; }
 
-void Renderer::clearLights() { scene.clearLights(bindless, buffers.lightBufferIndex); }
-void Renderer::clearVolumes() { scene.clearVolumes(bindless, buffers.volumeBufferIndex); }
+void Renderer::clearLights() { scene.clearLights(bindless, passResources.buffers.lightBufferIndex); }
+void Renderer::clearVolumes() { scene.clearVolumes(bindless, passResources.buffers.volumeBufferIndex); }
 
 void Renderer::toggleVsync() {
     gpu.vSync = !gpu.vSync;
@@ -359,21 +378,16 @@ void Renderer::handleSwapchainResize() {
     int width = 0, height = 0;
     glfwGetFramebufferSize(gpu.getWindow(), &width, &height);
     if (width > 0 && height > 0) {
-        uint32_t ssaoW = std::max(1u, static_cast<uint32_t>(width * features.ssao.resolutionScale));
-        uint32_t ssaoH = std::max(1u, static_cast<uint32_t>(height * features.ssao.resolutionScale));
-        uint32_t ssrW = std::max(1u, static_cast<uint32_t>(width * features.ssr.resolutionScale));
-        uint32_t ssrH = std::max(1u, static_cast<uint32_t>(height * features.ssr.resolutionScale));
-        uint32_t volW = std::max(1u, static_cast<uint32_t>(width * features.volumetrics.resolutionScale));
-        uint32_t volH = std::max(1u, static_cast<uint32_t>(height * features.volumetrics.resolutionScale));
-        createSSAOResources(ssaoW, ssaoH);
         createRoughnessMetalResources(width, height);
         createNormalResources(width, height);
         createMotionVectorResources(width,height);
         createColorResolveResources(width, height);
-        createSSRResources(ssrW, ssrH);
         createHiZResources(width, height);
         createSDFResources(width, height);
-        createVolumetricResources(volW, volH);
+
+        for(auto& pass : passes) {
+            pass.second->init(width,height);
+        }
     }
     scene.activeCamera.aspectRatio = static_cast<float>(width) / static_cast<float>(height);
     scene.activeCamera.calculateViewProjectionMatrix();
@@ -382,7 +396,7 @@ void Renderer::handleSwapchainResize() {
 void Renderer::blurAttachment(vk::raii::CommandBuffer& cmd, uint32_t sourceTextureIndex, uint32_t tempTextureIndex, uint32_t width, uint32_t height, float blurRadius,
                     uint32_t samplerIndex) {
 
-    auto& blurPipeline = *bindless.pipelineManager->getPostProcessPipelines()[blurPipelineIndex];
+    auto& blurPipeline = *bindless.pipelineManager->getPostProcessPipelines()[passResources.blurPipelineIndex];
     auto& sourceTexture = bindless.descriptorSet->getTextureResource(sourceTextureIndex);
     auto& tempTexture = bindless.descriptorSet->getTextureResource(tempTextureIndex);
     vk::Extent2D extent{width, height};
@@ -417,62 +431,17 @@ void Renderer::createShadowAtlas(uint32_t resolution) {
     scene.shadowAtlas.textureIndex = bindless.descriptorSet->allocateTexture(std::move(image),std::move(memory),std::move(view),"internal/scene.shadowAtlas",false,resolution,resolution);
 }
 
-void Renderer::createSSAOResources(uint32_t width, uint32_t height) {
-    createOrResizeRenderTarget(ssaoTextureIndex, width, height, vk::Format::eR8Unorm, "internal/ssao");
-    createOrResizeRenderTarget(ssaoBlurTextureIndex, width, height, vk::Format::eR8Unorm, "internal/ssao_blur");
-
-    // 4x4 noise texture (RGBA8, random tangent-space rotation vectors)
-    // Only create once — noise doesn't depend on screen size
-    if (ssaoNoiseTextureIndex == 0xFFFFFFFF) {
-        std::mt19937 rng(42); // fixed seed for reproducibility
-        std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
-        std::array<uint8_t, 4 * 4 * 4> noiseData; // 4x4 RGBA8
-        for (int i = 0; i < 16; i++) {
-            float x = dist(rng);
-            float y = dist(rng);
-            // Rotate around Z in tangent space, so z=0
-            float len = std::sqrt(x * x + y * y);
-            if (len > 0.0f) { x /= len; y /= len; }
-            noiseData[i * 4 + 0] = static_cast<uint8_t>((x * 0.5f + 0.5f) * 255.0f);
-            noiseData[i * 4 + 1] = static_cast<uint8_t>((y * 0.5f + 0.5f) * 255.0f);
-            noiseData[i * 4 + 2] = 0;
-            noiseData[i * 4 + 3] = 255;
-        }
-        auto [noiseImage, noiseMemory, noiseImageView] =
-            bindless.resourceManager->createTexture(noiseData.data(), 4, 4, vk::Format::eR8G8B8A8Unorm, vk::ImageType::e2D, vk::ImageViewType::e2D, vk::SampleCountFlagBits::e1, false);
-        ssaoNoiseTextureIndex = bindless.descriptorSet->allocateTexture(std::move(noiseImage), std::move(noiseMemory), std::move(noiseImageView), "internal/ssao_noise");
-
-        // Noise sampler: repeat + nearest (tiled across screen)
-        ssaoNoiseSamplerIndex = bindless.descriptorSet->allocateSampler(vk::Filter::eNearest, vk::SamplerMipmapMode::eNearest, vk::SamplerAddressMode::eRepeat,
-                                                                VK_FALSE, 1.0f, VK_FALSE, vk::CompareOp::eNever, vk::BorderColor::eFloatOpaqueBlack);
-    }
-
-    // SSAO pipeline (only create once)
-    if (ssaoPipelineIndex == 0xFFFFFFFF) {
-        ssaoPipelineIndex = bindless.pipelineManager->createPipeline<SSAOPushConstants>(
-            PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone,
-            vk::False, vk::False, "shaders/ssao.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet());
-    }
-
-    // SSAO apply pipeline with multiplicative blending (only create once)
-    if (ssaoApplyPipelineIndex == 0xFFFFFFFF) {
-        ssaoApplyPipelineIndex = bindless.pipelineManager->createPipeline<SSAOApplyPushConstants>(
-            PipelineCategory::POSTPROCESS_MULTIPLY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone,
-            vk::False, vk::False, "shaders/ssao_apply.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet());
-    }
-}
-
 void Renderer::createRoughnessMetalResources(uint32_t width, uint32_t height) {
     createOrResizeMSAATarget(roughnessMetal, width, height, vk::Format::eR8G8B8A8Unorm);
-    createOrResizeRenderTarget(roughnessMetalTextureIndex, width, height, vk::Format::eR8G8B8A8Unorm, "internal/roughness_metal");
+    createOrResizeRenderTarget(passResources.roughnessMetalTextureIndex, width, height, vk::Format::eR8G8B8A8Unorm, "internal/roughness_metal");
 }
 
 void Renderer::createNormalResources(uint32_t width, uint32_t height) {
     createOrResizeMSAATarget(normalMSAA, width, height, vk::Format::eR8G8B8A8Unorm);
     // Create with mip levels for SSR normal pre-filtering
     normalMipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(width, height)))) + 1;
-    if (normalTextureIndex != 0xFFFFFFFF) {
-        bindless.descriptorSet->freeTexture(normalTextureIndex);
+    if (passResources.normalTextureIndex != 0xFFFFFFFF) {
+        bindless.descriptorSet->freeTexture(passResources.normalTextureIndex);
     }
     vk::raii::Image image = nullptr;
     vk::raii::DeviceMemory memory = nullptr;
@@ -482,28 +451,28 @@ void Renderer::createNormalResources(uint32_t width, uint32_t height) {
                                  vk::MemoryPropertyFlagBits::eDeviceLocal, image, memory, 1);
     auto view = bindless.resourceManager->createImageView(image, vk::Format::eR8G8B8A8Unorm, vk::ImageAspectFlagBits::eColor, normalMipLevels);
     bindless.resourceManager->transitionImageLayout(nullptr, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal, 0, normalMipLevels);
-    normalTextureIndex = bindless.descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(view), "internal/normals", false, width, height);
+    passResources.normalTextureIndex = bindless.descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(view), "internal/normals", false, width, height);
 }
 
 void Renderer::createColorResolveResources(uint32_t width, uint32_t height) {
     colorResolveMipViews.clear();
 
-    fullscreenMipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(width, height)))) + 1;
+    passResources.fullscreenMipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(width, height)))) + 1;
 
-    if (colorResolveTextureIndex != 0xFFFFFFFF) {
-        bindless.descriptorSet->freeTexture(colorResolveTextureIndex);
+    if (passResources.colorResolveTextureIndex != 0xFFFFFFFF) {
+        bindless.descriptorSet->freeTexture(passResources.colorResolveTextureIndex);
     }
 
     auto format = gpu.getSwapchain().getSwapChainImageFormat();
 
     vk::raii::Image image = nullptr;
     vk::raii::DeviceMemory memory = nullptr;
-    bindless.resourceManager->createImage(width, height, fullscreenMipLevels, vk::SampleCountFlagBits::e1, format, vk::ImageTiling::eOptimal,
+    bindless.resourceManager->createImage(width, height, passResources.fullscreenMipLevels, vk::SampleCountFlagBits::e1, format, vk::ImageTiling::eOptimal,
                                  vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferSrc,
                                  vk::MemoryPropertyFlagBits::eDeviceLocal, image, memory);
 
     // Create per-mip image views for rendering to individual levels
-    for (uint32_t mip = 0; mip < fullscreenMipLevels; ++mip) {
+    for (uint32_t mip = 0; mip < passResources.fullscreenMipLevels; ++mip) {
         vk::ImageViewCreateInfo viewInfo{.image = image,
                                          .viewType = vk::ImageViewType::e2D,
                                          .format = format,
@@ -512,24 +481,24 @@ void Renderer::createColorResolveResources(uint32_t width, uint32_t height) {
     }
 
     // Create a full-chain view for sampling
-    auto fullView = bindless.resourceManager->createImageView(image, format, vk::ImageAspectFlagBits::eColor, fullscreenMipLevels);
-    bindless.resourceManager->transitionImageLayout(nullptr, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal, 0, fullscreenMipLevels);
-    colorResolveTextureIndex = bindless.descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(fullView), "internal/color_resolve", false, width, height);
+    auto fullView = bindless.resourceManager->createImageView(image, format, vk::ImageAspectFlagBits::eColor, passResources.fullscreenMipLevels);
+    bindless.resourceManager->transitionImageLayout(nullptr, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal, 0, passResources.fullscreenMipLevels);
+    passResources.colorResolveTextureIndex = bindless.descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(fullView), "internal/color_resolve", false, width, height);
 
     // Temp texture for separable blur passes (mipmapped, matching color resolve)
     tempBlurMipViews.clear();
 
-    if (tempBlurTextureIndex != 0xFFFFFFFF) {
-        bindless.descriptorSet->freeTexture(tempBlurTextureIndex);
+    if (passResources.tempBlurTextureIndex != 0xFFFFFFFF) {
+        bindless.descriptorSet->freeTexture(passResources.tempBlurTextureIndex);
     }
 
     vk::raii::Image tempImage = nullptr;
     vk::raii::DeviceMemory tempMemory = nullptr;
-    bindless.resourceManager->createImage(width, height, fullscreenMipLevels, vk::SampleCountFlagBits::e1, format, vk::ImageTiling::eOptimal,
+    bindless.resourceManager->createImage(width, height, passResources.fullscreenMipLevels, vk::SampleCountFlagBits::e1, format, vk::ImageTiling::eOptimal,
                                  vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
                                  vk::MemoryPropertyFlagBits::eDeviceLocal, tempImage, tempMemory);
 
-    for (uint32_t mip = 0; mip < fullscreenMipLevels; ++mip) {
+    for (uint32_t mip = 0; mip < passResources.fullscreenMipLevels; ++mip) {
         vk::ImageViewCreateInfo viewInfo{.image = tempImage,
                                          .viewType = vk::ImageViewType::e2D,
                                          .format = format,
@@ -537,69 +506,36 @@ void Renderer::createColorResolveResources(uint32_t width, uint32_t height) {
         tempBlurMipViews.emplace_back(gpu.getDevice().getDevice(), viewInfo);
     }
 
-    auto tempFullView = bindless.resourceManager->createImageView(tempImage, format, vk::ImageAspectFlagBits::eColor, fullscreenMipLevels);
-    bindless.resourceManager->transitionImageLayout(nullptr, tempImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal, 0, fullscreenMipLevels);
-    tempBlurTextureIndex = bindless.descriptorSet->allocateTexture(std::move(tempImage), std::move(tempMemory), std::move(tempFullView), "internal/blur_temp", false, width, height);
+    auto tempFullView = bindless.resourceManager->createImageView(tempImage, format, vk::ImageAspectFlagBits::eColor, passResources.fullscreenMipLevels);
+    bindless.resourceManager->transitionImageLayout(nullptr, tempImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal, 0, passResources.fullscreenMipLevels);
+    passResources.tempBlurTextureIndex = bindless.descriptorSet->allocateTexture(std::move(tempImage), std::move(tempMemory), std::move(tempFullView), "internal/blur_temp", false, width, height);
 }
 
 void Renderer::createMotionVectorResources(uint32_t width, uint32_t height) {
     createOrResizeMSAATarget(motionVectors,width,height, vk::Format::eR16G16Sfloat);
-    createOrResizeRenderTarget(motionVectorTextureIndex, width, height, vk::Format::eR16G16Sfloat,"internal/motion_vectors");
-}
-
-void Renderer::createSSRResources(uint32_t width, uint32_t height) {
-
-    createOrResizeRenderTarget(ssrCurrentTextureIndex, width, height, gpu.getSwapchain().getSwapChainImageFormat(), "internal/ssr_current");
-    createOrResizeRenderTarget(ssrHistoryTextureIndices[0], width, height, gpu.getSwapchain().getSwapChainImageFormat(), "internal/ssr_history0");
-    createOrResizeRenderTarget(ssrHistoryTextureIndices[1], width, height, gpu.getSwapchain().getSwapChainImageFormat(), "internal/ssr_history1");
-
-    ssrHistoryInvalid = true;
-
-    // SSR pipeline (only created once)
-    if (ssrPipelineIndex == 0xFFFFFFFF) {
-        ssrPipelineIndex = bindless.pipelineManager->createPipeline<SSRPushConstants>(
-            PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone,
-            vk::False, vk::False, "shaders/ssr.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet());
-
-        //initialize pass data too
-        bindless.descriptorSet->allocateFixedBuffer(ssrPassDataBufferIndex,SSRPassData {});
-    }
-
-    // SSR accumulate pipeline (only created once)
-    if (ssrAccumulatePipelineIndex == 0xFFFFFFFF) {
-        ssrAccumulatePipelineIndex = bindless.pipelineManager->createPipeline<SSRAccumulatePushConstants>(
-            PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone,
-            vk::False, vk::False, "shaders/ssr_accumulate.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet());
-    }
-
-    // SSR apply pipeline (only created once)
-    if (ssrApplyPipelineIndex == 0xFFFFFFFF) {
-        ssrApplyPipelineIndex = bindless.pipelineManager->createPipeline<SSRApplyPushConstants>(
-            PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone,
-            vk::False, vk::False, "shaders/ssr_apply.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet());
-    }
+    createOrResizeRenderTarget(passResources.motionVectorTextureIndex, width, height, vk::Format::eR16G16Sfloat,"internal/motion_vectors");
 }
 
 void Renderer::createHiZResources(uint32_t width, uint32_t height) {
     hiZMipViews.clear();
 
     // Calculate mip levels for the Hi-Z pyramid
-    hiZMipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(width, height)))) + 1;
+    passResources.hiZMipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(width, height)))) + 1;
 
     // Free previous Hi-Z texture if it exists
-    if (hiZTextureIndex != 0xFFFFFFFF) {
-        bindless.descriptorSet->freeTexture(hiZTextureIndex);
+    if (passResources.hiZTextureIndex != 0xFFFFFFFF) {
+        bindless.descriptorSet->freeTexture(passResources.hiZTextureIndex);
     }
 
     // Create mipmapped R32Sfloat image
     vk::raii::Image image = nullptr;
     vk::raii::DeviceMemory memory = nullptr;
-    bindless.resourceManager->createImage(width, height, hiZMipLevels, vk::SampleCountFlagBits::e1, vk::Format::eR32Sfloat, vk::ImageTiling::eOptimal,
+    bindless.resourceManager->createImage(width, height, passResources.hiZMipLevels, vk::SampleCountFlagBits::e1, vk::Format::eR32Sfloat, vk::ImageTiling::eOptimal,
                                  vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
                                  vk::MemoryPropertyFlagBits::eDeviceLocal, image, memory);
 
     // Create per-mip image views for rendering to individual levels
-    for (uint32_t mip = 0; mip < hiZMipLevels; ++mip) {
+    for (uint32_t mip = 0; mip < passResources.hiZMipLevels; ++mip) {
         vk::ImageViewCreateInfo viewInfo{.image = image,
                                          .viewType = vk::ImageViewType::e2D,
                                          .format = vk::Format::eR32Sfloat,
@@ -608,15 +544,16 @@ void Renderer::createHiZResources(uint32_t width, uint32_t height) {
     }
 
     // Create a full-chain view for sampling
-    auto fullView = bindless.resourceManager->createImageView(image, vk::Format::eR32Sfloat, vk::ImageAspectFlagBits::eColor, hiZMipLevels);
-    bindless.resourceManager->transitionImageLayout(nullptr, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal, 0, hiZMipLevels);
-    hiZTextureIndex = bindless.descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(fullView), "internal/hiZ", false, width, height);
+    auto fullView = bindless.resourceManager->createImageView(image, vk::Format::eR32Sfloat, vk::ImageAspectFlagBits::eColor, passResources.hiZMipLevels);
+    bindless.resourceManager->transitionImageLayout(nullptr, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal, 0, passResources.hiZMipLevels);
+    passResources.hiZTextureIndex = bindless.descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(fullView), "internal/hiZ", false, width, height);
 
     // Hi-Z pipeline (only created once)
     if (hiZPipelineIndex == 0xFFFFFFFF) {
         hiZPipelineIndex = bindless.pipelineManager->createPipeline<HiZPushConstants>(
             PipelineCategory::BEFORE_GEOMETRY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone,
-            vk::False, vk::False, "shaders/hiz_reduce.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet());
+            vk::False, vk::False, "shaders/hiz_reduce.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
+            vk::Format::eUndefined);
     }
 }
 
@@ -624,32 +561,17 @@ void Renderer::createSDFResources(uint32_t width, uint32_t height) {
     createOrResizeRenderTarget(sdfTextureIndex,width,height,gpu.getSwapchain().getSwapChainImageFormat(),"internal/sdf");
 
     if (sdfPipelineIndex == 0xFFFFFFFF) {
-        sdfPipelineIndex = 
+        sdfPipelineIndex =
         bindless.pipelineManager->createPipeline<SDFPushConstants>(PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
-                                                           vk::False, "shaders/sdf.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet());
+                                                           vk::False, "shaders/sdf.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
+                                                           gpu.getSwapchain().getSwapChainImageFormat());
     }
-    // SDF apply pipeline
+    // SDF apply pipeline — composites onto swapchain
     if (sdfApplyPipelineIndex == 0xFFFFFFFF) {
         sdfApplyPipelineIndex = bindless.pipelineManager->createPipeline<SDFApplyPushConstants>(
             PipelineCategory::POSTPROCESS_ALPHA_BLEND, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone,
-            vk::False, vk::False, "shaders/sdf_apply.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet());
-    }
-}
-
-void Renderer::createVolumetricResources(uint32_t width, uint32_t height) {
-    createOrResizeRenderTarget(volTextureIndex,width,height,gpu.getSwapchain().getSwapChainImageFormat(),"internal/volumetrics");
-    createOrResizeRenderTarget(volBlurTextureIndex,width,height,gpu.getSwapchain().getSwapChainImageFormat(),"internal/volumetrics_blur");
-
-    if (volPipelineIndex == 0xFFFFFFFF) {
-        volPipelineIndex = 
-        bindless.pipelineManager->createPipeline<VolumetricPushConstants>(PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
-                                                           vk::False, "shaders/volumetrics.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet());
-    }
-    // apply pipeline
-    if (volApplyPipelineIndex == 0xFFFFFFFF) {
-        volApplyPipelineIndex = bindless.pipelineManager->createPipeline<VolumetricApplyPushConstants>(
-            PipelineCategory::POSTPROCESS_ALPHA_BLEND, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone,
-            vk::False, vk::False, "shaders/volumetrics_apply.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet());
+            vk::False, vk::False, "shaders/sdf_apply.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
+            gpu.getSwapchain().getSwapChainImageFormat());
     }
 }
 
@@ -683,25 +605,13 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
     recordGeometryPass(cmd, imageIndex);
     Tracer::endTrace("record geo pass");
 
-    Tracer::startTrace("record ssao pass");
-    if (features.ssao.enabled && ssaoPipelineIndex != 0xFFFFFFFF)
-        recordSSAOPass(cmd, imageIndex);
-    Tracer::endTrace("record ssao pass");
+    recordBillboardBlendPass(cmd, imageIndex);
 
-    if (billboardPipelineIndex != 0xFFFFFFFF)
-        recordBillboardBlendPass(cmd, imageIndex);
-
-    recordResolveToSwapchainCopy(cmd, imageIndex);
-
-    Tracer::startTrace("record ssr pass");
-    if (features.ssr.enabled && ssrPipelineIndex != 0xFFFFFFFF)
-        recordSSRPass(cmd, imageIndex);
-    Tracer::endTrace("record ssr pass");
-
-    Tracer::startTrace("record Volumetric pass");
-    if(features.volumetrics.enabled && volPipelineIndex != 0xFFFFFFFF) {
-        recordVolumetricsPass(cmd, imageIndex);
+    Tracer::startTrace("record passes");
+    for(auto& pass : passes) {
+        pass.second->record(cmd, imageIndex);
     }
+    Tracer::endTrace("record passes");
 
     Tracer::startTrace("record SDF pass");
     if(sdfPipelineIndex != 0xFFFFFFFF)
@@ -782,9 +692,9 @@ void Renderer::buildGeometryDrawCommands(const std::array<Plane, 6>& frustumPlan
 }
 
 void Renderer::recordHiZPass(vk::raii::CommandBuffer& cmd) {
-    if (hiZTextureIndex == 0xFFFFFFFF || hiZPipelineIndex == 0xFFFFFFFF) return;
+    if (passResources.hiZTextureIndex == 0xFFFFFFFF || hiZPipelineIndex == 0xFFFFFFFF) return;
 
-    auto& hiZRes = bindless.descriptorSet->getTextureResource(hiZTextureIndex);
+    auto& hiZRes = bindless.descriptorSet->getTextureResource(passResources.hiZTextureIndex);
     auto& pipeline = *bindless.pipelineManager->getBeforeGeoPipelines()[hiZPipelineIndex];
     uint32_t w = hiZRes.width;
     uint32_t h = hiZRes.height;
@@ -793,7 +703,7 @@ void Renderer::recordHiZPass(vk::raii::CommandBuffer& cmd) {
     bindless.resourceManager->transitionImageLayout(&cmd, *bindless.descriptorSet->getTextureResource(gpu.getSwapchain().getDepthResolveIndex()).image,
         vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
 
-    for (uint32_t mip = 0; mip < hiZMipLevels; ++mip) {
+    for (uint32_t mip = 0; mip < passResources.hiZMipLevels; ++mip) {
         uint32_t mipW = std::max(1u, w >> mip);
         uint32_t mipH = std::max(1u, h >> mip);
 
@@ -805,14 +715,14 @@ void Renderer::recordHiZPass(vk::raii::CommandBuffer& cmd) {
         if (mip == 0) {
             // Mip 0: copy from depth resolve
             hizPC = {.inputTextureIndex = gpu.getSwapchain().getDepthResolveIndex(),
-                     .samplerIndex = depthSamplerIndex,
+                     .samplerIndex = passResources.depthSamplerIndex,
                      .inputMipLevel = 0,
                      .reduceMode = 0,
                      .inputResolution = glm::uvec2(mipW, mipH)};
         } else {
             // Mip N: min-reduce from mip N-1 of the Hi-Z texture itself
-            hizPC = {.inputTextureIndex = hiZTextureIndex,
-                     .samplerIndex = depthSamplerIndex,
+            hizPC = {.inputTextureIndex = passResources.hiZTextureIndex,
+                     .samplerIndex = passResources.depthSamplerIndex,
                      .inputMipLevel = mip - 1,
                      .reduceMode = 1,
                      .inputResolution = glm::uvec2(std::max(1u, w >> (mip - 1)), std::max(1u, h >> (mip - 1)))};
@@ -837,12 +747,12 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
         {gpu.getSwapchain().getSwapChainImages()[imageIndex],                            vk::ImageLayout::eUndefined,              vk::ImageLayout::eColorAttachmentOptimal},
         {gpu.getSwapchain().getColorImage(),                                             vk::ImageLayout::eUndefined,              vk::ImageLayout::eColorAttachmentOptimal},
         {gpu.getSwapchain().getDepthImage(),                                             vk::ImageLayout::eUndefined,              vk::ImageLayout::eDepthStencilAttachmentOptimal},
-        {roughnessMetal.image,                                                   vk::ImageLayout::eUndefined,              vk::ImageLayout::eColorAttachmentOptimal},
-        {*bindless.descriptorSet->getTextureResource(roughnessMetalTextureIndex).image,   vk::ImageLayout::eShaderReadOnlyOptimal,  vk::ImageLayout::eColorAttachmentOptimal},
-        {normalMSAA.image,                                                       vk::ImageLayout::eUndefined,              vk::ImageLayout::eColorAttachmentOptimal},
-        {*bindless.descriptorSet->getTextureResource(normalTextureIndex).image,           vk::ImageLayout::eShaderReadOnlyOptimal,  vk::ImageLayout::eColorAttachmentOptimal},
-        {motionVectors.image,                                                    vk::ImageLayout::eUndefined,              vk::ImageLayout::eColorAttachmentOptimal},
-        {*bindless.descriptorSet->getTextureResource(motionVectorTextureIndex).image,     vk::ImageLayout::eShaderReadOnlyOptimal,  vk::ImageLayout::eColorAttachmentOptimal},
+        {roughnessMetal.image,                                                           vk::ImageLayout::eUndefined,              vk::ImageLayout::eColorAttachmentOptimal},
+        {*bindless.descriptorSet->getTextureResource(passResources.roughnessMetalTextureIndex).image,   vk::ImageLayout::eShaderReadOnlyOptimal,  vk::ImageLayout::eColorAttachmentOptimal},
+        {normalMSAA.image,                                                               vk::ImageLayout::eUndefined,              vk::ImageLayout::eColorAttachmentOptimal},
+        {*bindless.descriptorSet->getTextureResource(passResources.normalTextureIndex).image,           vk::ImageLayout::eShaderReadOnlyOptimal,  vk::ImageLayout::eColorAttachmentOptimal},
+        {motionVectors.image,                                                            vk::ImageLayout::eUndefined,              vk::ImageLayout::eColorAttachmentOptimal},
+        {*bindless.descriptorSet->getTextureResource(passResources.motionVectorTextureIndex).image,     vk::ImageLayout::eShaderReadOnlyOptimal,  vk::ImageLayout::eColorAttachmentOptimal},
     });
 
     vk::ClearValue clearColor{.color = vk::ClearColorValue(std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f})};
@@ -877,7 +787,7 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
     glm::vec3 cameraForward = glm::normalize(scene.activeCamera.target - scene.activeCamera.position);
 
     LitPassData litPassData {
-        .samplerIndex = defaultSamplerIndex,
+        .samplerIndex = passResources.defaultSamplerIndex,
         .lightCount = scene.getLightLoopBound(),
         .shadowSamplerIndex = shadowSamplerIndex,
         .shadowAtlasIndex = scene.shadowAtlas.textureIndex,
@@ -900,7 +810,7 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
 
         LitPushConstants pushConstants = {.vertexBufferAddress  = bindless.descriptorSet->getVariableBuffers()[vertexBufferIndex]->address,
                                           .modelMatricesAddress = bindless.descriptorSet->getFixedBuffers()[buffers.modelMatrixBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(glm::mat4),
-                                          .lightsAddress        = bindless.descriptorSet->getFixedBuffers()[buffers.lightBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(GPULight),
+                                          .lightsAddress        = bindless.descriptorSet->getFixedBuffers()[passResources.buffers.lightBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(GPULight),
                                           .litDrawDataAddress   = bindless.descriptorSet->getFixedBuffers()[litDrawDataBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(LitDrawData),
                                           .litPassDataAddress   = bindless.descriptorSet->getFixedBuffers()[litPassDataBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(LitPassData)
                                         };
@@ -915,7 +825,7 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
                                                               .storeOp = vk::AttachmentStoreOp::eStore,
                                                               .clearValue = clearDepth};
 
-        auto& motionVectorResolve = bindless.descriptorSet->getTextureResource(motionVectorTextureIndex);
+        auto& motionVectorResolve = bindless.descriptorSet->getTextureResource(passResources.motionVectorTextureIndex);
         vk::ClearValue clearMotionVectors{.color = vk::ClearColorValue(std::array<float, 4>{0.0f,0.0f,0.0f,1.0f})};
         vk::RenderingAttachmentInfo motionVectorAttachment = {  .imageView = motionVectors.view,
                                                                 .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
@@ -948,7 +858,7 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
     }
 
     // --- Lit geometry pass (2 color attachments: color + roughness/metallic) ---
-    auto& colorResolve = bindless.descriptorSet->getTextureResource(colorResolveTextureIndex);
+    auto& colorResolve = bindless.descriptorSet->getTextureResource(passResources.colorResolveTextureIndex);
     bindless.resourceManager->transitionImageLayout(&cmd, *colorResolve.image,
         vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
 
@@ -961,7 +871,7 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
                                                    .storeOp = vk::AttachmentStoreOp::eStore,
                                                    .clearValue = clearColor};
 
-    auto& roughnessMetalResolve = bindless.descriptorSet->getTextureResource(roughnessMetalTextureIndex);
+    auto& roughnessMetalResolve = bindless.descriptorSet->getTextureResource(passResources.roughnessMetalTextureIndex);
     vk::ClearValue clearRoughMetal{.color = vk::ClearColorValue(std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f})};
     vk::RenderingAttachmentInfo roughnessMetalAttachment = {.imageView = *roughnessMetal.view,
                                                              .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
@@ -972,7 +882,7 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
                                                              .storeOp = vk::AttachmentStoreOp::eStore,
                                                              .clearValue = clearRoughMetal};
 
-    auto& normalResolve = bindless.descriptorSet->getTextureResource(normalTextureIndex);
+    auto& normalResolve = bindless.descriptorSet->getTextureResource(passResources.normalTextureIndex);
     vk::ClearValue clearNormal{.color = vk::ClearColorValue(std::array<float, 4>{0.5f, 0.5f, 1.0f, 1.0f})};
     vk::RenderingAttachmentInfo normalAttachment = {.imageView = *normalMSAA.view,
                                                      .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
@@ -991,10 +901,10 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
                                                        .loadOp = vk::AttachmentLoadOp::eLoad,
                                                        .storeOp = vk::AttachmentStoreOp::eDontCare};
 
-    std::array<vk::RenderingAttachmentInfo, 4> colorAttachments = {colorAttachment, roughnessMetalAttachment, normalAttachment};
+    std::array<vk::RenderingAttachmentInfo, 3> colorAttachments = {colorAttachment, roughnessMetalAttachment, normalAttachment};
     vk::RenderingInfo renderingInfo = {.renderArea = {.offset = {0, 0}, .extent = gpu.getSwapchain().getSwapChainExtent()},
                                        .layerCount = 1,
-                                       .colorAttachmentCount = 4,
+                                       .colorAttachmentCount = 3,
                                        .pColorAttachments = colorAttachments.data(),
                                        .pDepthAttachment = &depthAttachmentInfo};
 
@@ -1015,7 +925,7 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
 
         LitPushConstants pushConstants = {.vertexBufferAddress  = bindless.descriptorSet->getVariableBuffers()[vertexBufferIndex]->address,
                                           .modelMatricesAddress = bindless.descriptorSet->getFixedBuffers()[buffers.modelMatrixBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(glm::mat4),
-                                          .lightsAddress        = bindless.descriptorSet->getFixedBuffers()[buffers.lightBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(GPULight),
+                                          .lightsAddress        = bindless.descriptorSet->getFixedBuffers()[passResources.buffers.lightBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(GPULight),
                                           .litDrawDataAddress   = bindless.descriptorSet->getFixedBuffers()[litDrawDataBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(LitDrawData),
                                           .litPassDataAddress   = bindless.descriptorSet->getFixedBuffers()[litPassDataBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(LitPassData)
                                         };
@@ -1035,17 +945,17 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
     // Swapchain is no longer touched here — recordResolveToSwapchainCopy() seeds it after the billboard pass.
     bindless.resourceManager->transitionImageLayouts(cmd, {
         {*colorResolve.image,                                                            vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal},
-        {*bindless.descriptorSet->getTextureResource(roughnessMetalTextureIndex).image,  vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal},
+        {*bindless.descriptorSet->getTextureResource(passResources.roughnessMetalTextureIndex).image,  vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal},
     });
 
     // Generate normal mips inline for SSR pre-filtering
-    auto& normalRes = bindless.descriptorSet->getTextureResource(normalTextureIndex);
+    auto& normalRes = bindless.descriptorSet->getTextureResource(passResources.normalTextureIndex);
     bindless.resourceManager->generateMipmaps(*normalRes.image, vk::Format::eR8G8B8A8Unorm,
         static_cast<int32_t>(normalRes.width), static_cast<int32_t>(normalRes.height),
         normalMipLevels, 1, &cmd, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
 
     // Transition motion vecs to shader read only
-    bindless.resourceManager->transitionImageLayout(&cmd, *bindless.descriptorSet->getTextureResource(motionVectorTextureIndex).image,
+    bindless.resourceManager->transitionImageLayout(&cmd, *bindless.descriptorSet->getTextureResource(passResources.motionVectorTextureIndex).image,
                                            vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
 }
 
@@ -1055,7 +965,7 @@ void Renderer::recordBillboardBlendPass(vk::raii::CommandBuffer& cmd, uint32_t i
         return;
 
     auto extent = gpu.getSwapchain().getSwapChainExtent();
-    auto& colorResolve = bindless.descriptorSet->getTextureResource(colorResolveTextureIndex);
+    auto& colorResolve = bindless.descriptorSet->getTextureResource(passResources.colorResolveTextureIndex);
     bindless.resourceManager->transitionImageLayout(&cmd, *colorResolve.image,
         vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
 
@@ -1077,8 +987,10 @@ void Renderer::recordBillboardBlendPass(vk::raii::CommandBuffer& cmd, uint32_t i
                                     .pDepthAttachment = &depthAttachment};
 
 
-    std::vector<std::pair<float, GPUBillboard>> sortedBB;
-    sortedBB.reserve(scene.billboards.size());
+    std::vector<std::pair<float, GPUBillboard>> depthTested;
+    std::vector<std::pair<float, GPUBillboard>> noDepthTest;
+    depthTested.reserve(scene.billboards.size());
+    noDepthTest.reserve(scene.billboards.size());
     for (auto& kv : scene.billboards) {
         const uint32_t& nodeIdx = kv.first;
         Billboard& billboard = kv.second;
@@ -1088,30 +1000,43 @@ void Renderer::recordBillboardBlendPass(vk::raii::CommandBuffer& cmd, uint32_t i
         glm::vec3 d = scene.activeCamera.position - nodePos;
         float dist2 = glm::dot(d, d);
 
-        sortedBB.emplace_back(dist2, billboard.toGPU(nodePos));
+        auto& bucket = billboard.depthTest ? depthTested : noDepthTest;
+        bucket.emplace_back(dist2, billboard.toGPU(nodePos));
     }
-    std::sort(sortedBB.begin(), sortedBB.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    auto sortFarToNear = [](const auto& a, const auto& b) { return a.first > b.first; };
+    std::sort(depthTested.begin(), depthTested.end(), sortFarToNear);
+    std::sort(noDepthTest.begin(), noDepthTest.end(), sortFarToNear);
 
     cmd.beginRendering(renderInfo);
     setFullscreenViewport(cmd, extent);
-    auto& pipeline = bindless.pipelineManager->getGeoPipelines()[billboardPipelineIndex];
-    bindPipeline(cmd, *pipeline);
 
     auto* billboardPtr = bindless.descriptorSet->getFixedBufferMappedData<GPUBillboard>(billboardBufferIndex);
     uint32_t frameOffset = gpu.currentFrame * MAX_FIXED_BUFFER;
-    for (size_t i = 0; i < sortedBB.size(); ++i) {
-        billboardPtr[frameOffset + i] = sortedBB[i].second;
+    for (size_t i = 0; i < depthTested.size(); ++i) {
+        billboardPtr[frameOffset + i] = depthTested[i].second;
+    }
+    for (size_t i = 0; i < noDepthTest.size(); ++i) {
+        billboardPtr[frameOffset + depthTested.size() + i] = noDepthTest[i].second;
     }
 
-    BillboardPushConstants pc = { 
-        .invViewProj = scene.activeCamera.viewProjection,
-        .billboardBufferAddress = bindless.descriptorSet->getFixedBuffers()[billboardBufferIndex]->address + frameOffset * sizeof(GPUBillboard),
-        .billboardCount = static_cast<uint32_t>(sortedBB.size()),
-        .samplerIndex = defaultSamplerIndex,
-        .resolution = glm::uvec2(extent.width, extent.height)
+    auto drawGroup = [&](uint32_t pipelineIdx, uint32_t groupOffset, uint32_t groupCount) {
+        if (groupCount == 0) return;
+        auto& pipeline = bindless.pipelineManager->getGeoPipelines()[pipelineIdx];
+        bindPipeline(cmd, *pipeline);
+        BillboardPushConstants pc = {
+            .invViewProj = scene.activeCamera.viewProjection,
+            .billboardBufferAddress = bindless.descriptorSet->getFixedBuffers()[billboardBufferIndex]->address + (frameOffset + groupOffset) * sizeof(GPUBillboard),
+            .billboardCount = groupCount,
+            .samplerIndex = passResources.defaultSamplerIndex,
+            .resolution = glm::uvec2(extent.width, extent.height)
+        };
+        cmd.pushConstants<BillboardPushConstants>(*pipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pc);
+        cmd.draw(6, groupCount, 0, 0);
     };
-    cmd.pushConstants<BillboardPushConstants>(*pipeline->layout,vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pc);
-    cmd.draw(6,sortedBB.size(),0,0);
+
+    drawGroup(billboardPipelineIndex, 0, static_cast<uint32_t>(depthTested.size()));
+    drawGroup(billboardNoDepthPipelineIndex, static_cast<uint32_t>(depthTested.size()), static_cast<uint32_t>(noDepthTest.size()));
+
     cmd.endRendering();
 
     bindless.resourceManager->transitionImageLayout(&cmd, *colorResolve.image,
@@ -1120,7 +1045,7 @@ void Renderer::recordBillboardBlendPass(vk::raii::CommandBuffer& cmd, uint32_t i
 }
 
 void Renderer::recordResolveToSwapchainCopy(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
-    auto& colorResolve = bindless.descriptorSet->getTextureResource(colorResolveTextureIndex);
+    auto& colorResolve = bindless.descriptorSet->getTextureResource(passResources.colorResolveTextureIndex);
     auto extent = gpu.getSwapchain().getSwapChainExtent();
 
     bindless.resourceManager->transitionImageLayouts(cmd, {
@@ -1166,7 +1091,7 @@ void Renderer::recordOverlayPass(vk::raii::CommandBuffer& cmd, uint32_t imageInd
         bindPipeline(cmd, *gizmoPipeline);
         LinePushConstants lineConstants = {.lineVertsAddress = Gizmos::getLineBufferAddress(),
                                         .depthTextureIndex = gpu.getSwapchain().getDepthResolveIndex(),
-                                        .depthSamplerIndex = depthSamplerIndex,
+                                        .depthSamplerIndex = passResources.depthSamplerIndex,
                                         .viewProjection = scene.activeCamera.viewProjection};
         cmd.pushConstants<LinePushConstants>(*gizmoPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, lineConstants);
         cmd.draw(Gizmos::getVertexCount(), 1, 0, 0);
@@ -1174,159 +1099,6 @@ void Renderer::recordOverlayPass(vk::raii::CommandBuffer& cmd, uint32_t imageInd
     // IMGUI
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), *cmd);
     cmd.endRendering();
-}
-
-void Renderer::recordSSAOPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
-    auto swapExtent = gpu.getSwapchain().getSwapChainExtent();
-    auto& ssaoTexture = bindless.descriptorSet->getTextureResource(ssaoTextureIndex);
-    vk::Extent2D ssaoExtent{ssaoTexture.width, ssaoTexture.height};
-
-    // Transition depth to readable, SSAO target to color attachment
-    bindless.resourceManager->transitionImageLayouts(cmd, {
-        {gpu.getSwapchain().getDepthImage(),  vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal},
-        {*ssaoTexture.image,          vk::ImageLayout::eShaderReadOnlyOptimal,          vk::ImageLayout::eColorAttachmentOptimal},
-    });
-
-    // Render SSAO at (potentially lower) SSAO resolution
-    drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[ssaoPipelineIndex], *ssaoTexture.imageView, ssaoExtent,
-        SSAOPushConstants{.invProjection = glm::inverse(scene.activeCamera.projectionMatrix),
-                          .depthIndex = gpu.getSwapchain().getDepthResolveIndex(),
-                          .depthSamplerIndex = depthSamplerIndex,
-                          .noiseIndex = ssaoNoiseTextureIndex,
-                          .noiseSamplerIndex = ssaoNoiseSamplerIndex,
-                          .resolution = glm::uvec2(ssaoExtent.width, ssaoExtent.height),
-                          .radius = features.ssao.radius,
-                          .bias = features.ssao.bias,
-                          .power = features.ssao.power,
-                          .kernelSize = 32},
-        vk::AttachmentLoadOp::eClear, {1.0f, 1.0f, 1.0f, 1.0f});
-
-    // Blur at SSAO resolution
-    bindless.resourceManager->transitionImageLayout(&cmd, *ssaoTexture.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
-    blurAttachment(cmd, ssaoTextureIndex, ssaoBlurTextureIndex, ssaoExtent.width, ssaoExtent.height, 2.0f, depthSamplerIndex);
-
-    // Apply to swapchain at full resolution (sampler handles upscale)
-    drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[ssaoApplyPipelineIndex], *gpu.getSwapchain().getSwapChainImageViews()[imageIndex], swapExtent,
-        SSAOApplyPushConstants{.ssaoTextureIndex = ssaoTextureIndex, .samplerIndex = depthSamplerIndex},
-        vk::AttachmentLoadOp::eLoad);
-
-    // Transition depth back
-    bindless.resourceManager->transitionImageLayout(&cmd, gpu.getSwapchain().getDepthImage(), vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
-}
-
-void Renderer::recordSSRPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
-    auto swapExtent = gpu.getSwapchain().getSwapChainExtent();
-    auto& ssrCurrent = bindless.descriptorSet->getTextureResource(ssrCurrentTextureIndex);
-    vk::Extent2D ssrExtent{ssrCurrent.width, ssrCurrent.height};
-
-    uint32_t readHistory = ssrHistoryTextureIndices[ssrHistoryFlip];
-    uint32_t writeHistory = ssrHistoryTextureIndices[1 - ssrHistoryFlip];
-    auto& ssrWriteHist = bindless.descriptorSet->getTextureResource(writeHistory);
-
-    // --- Sub-pass 0: Generate blurred mip chain for cone tracing (GPU Pro 5 style)
-    // Mip 0 is already populated by the geometry pass MSAA resolve.
-    // For each subsequent mip: 2-pass separable Gaussian blur reading mip N-1, writing to mip N.
-    auto& colorRes = bindless.descriptorSet->getTextureResource(colorResolveTextureIndex);
-    auto& tempTexture = bindless.descriptorSet->getTextureResource(tempBlurTextureIndex);
-    auto& blurPipeline = *bindless.pipelineManager->getPostProcessPipelines()[blurPipelineIndex];
-
-    uint32_t maxBlurMips = std::min(fullscreenMipLevels, 6u);
-    for (uint32_t mip = 1; mip < fullscreenMipLevels; ++mip) {
-        uint32_t mipW = std::max(1u, colorRes.width >> mip);
-        uint32_t mipH = std::max(1u, colorRes.height >> mip);
-        vk::Extent2D mipExtent{mipW, mipH};
-
-        // Horizontal blur: read colorResolve mip N-1 -> write temp mip N
-        bindless.resourceManager->transitionImageLayout(&cmd, *tempTexture.image,
-            vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal, mip, 1);
-
-        drawFullscreenPass(cmd, blurPipeline, *tempBlurMipViews[mip], mipExtent,
-            BlurPushConstants{.inputTextureIndex = colorResolveTextureIndex, .samplerIndex = defaultSamplerIndex,
-                              .isHorizontal = 1, .blurRadius = 1.0f, .resolution = glm::uvec2(mipW, mipH),
-                              .mipLevel = mip - 1});
-
-        bindless.resourceManager->transitionImageLayout(&cmd, *tempTexture.image,
-            vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, mip, 1);
-
-        // Vertical blur: read temp mip N -> write colorResolve mip N
-        bindless.resourceManager->transitionImageLayout(&cmd, *colorRes.image,
-            vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal, mip, 1);
-
-        drawFullscreenPass(cmd, blurPipeline, *colorResolveMipViews[mip], mipExtent,
-            BlurPushConstants{.inputTextureIndex = tempBlurTextureIndex, .samplerIndex = defaultSamplerIndex,
-                              .isHorizontal = 0, .blurRadius = 1.0f, .resolution = glm::uvec2(mipW, mipH),
-                              .mipLevel = mip});
-
-        bindless.resourceManager->transitionImageLayout(&cmd, *colorRes.image,
-            vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, mip, 1);
-    }
-
-    // --- Sub-pass 1: Ray trace -> ssrCurrentTextureIndex ---
-    bindless.resourceManager->transitionImageLayouts(cmd, {
-        {gpu.getSwapchain().getDepthImage(),  vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal},
-        {*ssrCurrent.image,           vk::ImageLayout::eShaderReadOnlyOptimal,          vk::ImageLayout::eColorAttachmentOptimal},
-    });
-
-    bindless.descriptorSet->updateFixedBufferWithOffset(ssrPassDataBufferIndex, 0,
-                                     SSRPassData{
-                                        .invViewProj = glm::inverse(scene.activeCamera.viewProjection),
-                                        .viewProj = scene.activeCamera.viewProjection,
-                                        .cameraPos = scene.activeCamera.position,
-                                        .depthIndex = hiZTextureIndex,
-                                        .depthSamplerIndex = depthSamplerIndex,
-                                        .colorIndex = colorResolveTextureIndex,
-                                        .colorSamplerIndex = defaultSamplerIndex,
-                                        .roughnessMetalIndex = roughnessMetalTextureIndex,
-                                        .roughnessMetalSamplerIndex = defaultSamplerIndex,
-                                        .normalIndex = normalTextureIndex,
-                                        .normalSamplerIndex = defaultSamplerIndex,
-                                        .resolution = glm::uvec2(ssrExtent.width, ssrExtent.height),
-                                        .hiZIndex = hiZTextureIndex,
-                                        .hiZMipLevels = hiZMipLevels,
-                                        .thickness = features.ssr.thickness,
-                                        .roughnessThreshold = features.ssr.roughnessThreshold,
-                                        .maxSteps = features.ssr.maxSteps,
-                                        .frameIndex = gpu.totalFrames,
-                                     }, gpu.currentFrame);
-
-    drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[ssrPipelineIndex], *ssrCurrent.imageView, ssrExtent,
-        SSRPushConstants{ .ssrPassDataAddress = bindless.descriptorSet->getFixedBuffers()[ssrPassDataBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * sizeof(SSRPassData)},
-        vk::AttachmentLoadOp::eClear, {0.0f, 0.0f, 0.0f, 0.0f});
-
-    // --- Sub-pass 2: Temporal accumulate -> writeHistory ---
-    bindless.resourceManager->transitionImageLayouts(cmd, {
-        {*ssrCurrent.image,    vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal},
-        {*ssrWriteHist.image,  vk::ImageLayout::eShaderReadOnlyOptimal,  vk::ImageLayout::eColorAttachmentOptimal},
-    });
-
-    drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[ssrAccumulatePipelineIndex], *ssrWriteHist.imageView, ssrExtent,
-        SSRAccumulatePushConstants{
-            .currentSSRIndex = ssrCurrentTextureIndex,
-            .historySSRIndex = readHistory,
-            .motionVectorIndex = motionVectorTextureIndex,
-            .samplerIndex = defaultSamplerIndex,
-            .temporalBlend = features.ssr.temporalBlend,
-            .historyValid = ssrHistoryInvalid ? 0u : 1u,
-        },
-        vk::AttachmentLoadOp::eClear, {0.0f, 0.0f, 0.0f, 0.0f});
-
-    bindless.resourceManager->transitionImageLayout(&cmd, *ssrWriteHist.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
-
-    // --- Sub-pass 3: Apply accumulated SSR to swapchain ---
-    drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[ssrApplyPipelineIndex], *gpu.getSwapchain().getSwapChainImageViews()[imageIndex], swapExtent,
-        SSRApplyPushConstants{
-            .samplerIndex = defaultSamplerIndex,
-            .sceneColorIndex = colorResolveTextureIndex,
-            .sceneSamplerIndex = defaultSamplerIndex,
-            .ssrTextureIndex = writeHistory,
-        },
-        vk::AttachmentLoadOp::eLoad);
-
-    // transition depth back
-    bindless.resourceManager->transitionImageLayout(&cmd, gpu.getSwapchain().getDepthImage(), vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
-
-    ssrHistoryFlip = 1 - ssrHistoryFlip;
-    ssrHistoryInvalid = false;
 }
 
 void Renderer::recordImageVisPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
@@ -1342,7 +1114,7 @@ void Renderer::recordImageVisPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
     drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[imageViewPipelineIndex], *gpu.getSwapchain().getSwapChainImageViews()[imageIndex],
                        extent,
                        ImageVisPushConstants{.imageIndex = features.imageVis.imageIndex,
-                                             .samplerIndex = defaultSamplerIndex,
+                                             .samplerIndex = passResources.defaultSamplerIndex,
                                              .flags = features.imageVis.flags,
                                              .nearPlane = scene.activeCamera.nearPlane,
                                              .farPlane = scene.activeCamera.farPlane,
@@ -1460,42 +1232,6 @@ void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light, uint
     cmd.endRendering();
 }
 
-void Renderer::recordVolumetricsPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
-    if (volTextureIndex == 0xFFFFFFFF)
-        return;
-
-    auto& volRes = bindless.descriptorSet->getTextureResource(volTextureIndex);
-    vk::Extent2D extent = {volRes.width, volRes.height};
-
-    drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[volPipelineIndex], *bindless.descriptorSet->getTextureResource(volTextureIndex).imageView,
-                       extent,
-                       VolumetricPushConstants {
-                            .lightsAddress = bindless.descriptorSet->getFixedBuffers()[buffers.lightBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(GPULight),
-                            .volumeBufferAddress = bindless.descriptorSet->getFixedBuffers()[buffers.volumeBufferIndex]->address /* + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(Volume)*/,
-                            .lightCount = scene.getLightLoopBound(),
-                            .shadowAtlasIndex = scene.shadowAtlas.textureIndex,
-                            .depthTextureIndex = gpu.getSwapchain().getDepthResolveIndex(),
-                            .depthSamplerIndex = depthSamplerIndex,
-                            .cameraPos = scene.activeCamera.position,
-                            .numSteps = static_cast<uint32_t>(features.volumetrics.numSteps),
-                            .cameraDir = scene.activeCamera.getLookDir(),
-                            .volumeCount = scene.getVolumeLoopBound(),
-                            .screenSize = {extent.width, extent.height},
-                            .maxDist = features.volumetrics.maxDist,
-                            .invViewProjection = glm::inverse(scene.activeCamera.viewProjection)
-                       }, vk::AttachmentLoadOp::eClear);
-
-    blurAttachment(cmd,volTextureIndex,volBlurTextureIndex,extent.width,extent.height,features.volumetrics.blurRadius,defaultSamplerIndex);
-
-    drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[volApplyPipelineIndex], *gpu.getSwapchain().getSwapChainImageViews()[imageIndex],
-                       gpu.getSwapchain().getSwapChainExtent(),
-                       VolumetricApplyPushConstants {
-                            .volumetricTextureIndex = volTextureIndex,
-                            .samplerIndex = defaultSamplerIndex
-                       }, vk::AttachmentLoadOp::eLoad);
-                    
-}
-
 void Renderer::recordSDFPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
     if (sdfTextureIndex == 0xFFFFFFFF)  
         return;
@@ -1515,7 +1251,7 @@ void Renderer::recordSDFPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) 
                        SDFPushConstants{.sdfDataAddress = bindless.descriptorSet->getFixedBuffers()[sdfPassDataBufferIndex]->address,
                                         .sdfCount = sdfCount,
                                         .depthTextureIndex = gpu.getSwapchain().getDepthResolveIndex(),
-                                        .depthSamplerIndex = depthSamplerIndex,
+                                        .depthSamplerIndex = passResources.depthSamplerIndex,
                                         .cameraPos = scene.activeCamera.position,
                                         .invViewProjection = glm::inverse(scene.activeCamera.viewProjection)
                                         }, vk::AttachmentLoadOp::eClear);
@@ -1523,7 +1259,7 @@ void Renderer::recordSDFPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) 
     drawFullscreenPass(cmd,*bindless.pipelineManager->getPostProcessPipelines()[sdfApplyPipelineIndex], *gpu.getSwapchain().getSwapChainImageViews()[imageIndex],
                        extent,
                        SDFApplyPushConstants{.sdfTextureIndex = sdfTextureIndex,
-                                             .samplerIndex = defaultSamplerIndex},
+                                             .samplerIndex = passResources.defaultSamplerIndex},
                                             vk::AttachmentLoadOp::eLoad);
 }
 
