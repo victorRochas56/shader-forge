@@ -58,7 +58,7 @@ public:
         // Apply composites onto the swapchain image.
         if (applyPipelineIndex == 0xFFFFFFFF) {
             applyPipelineIndex = bindless.pipelineManager->createPipeline<SSRApplyPushConstants>(
-                PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone,
+                PipelineCategory::POSTPROCESS_ALPHA_BLEND, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone,
                 vk::False, vk::False, "shaders/ssr_apply.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
                 gpu.getSwapchain().getSwapChainImageFormat());
         }
@@ -170,8 +170,6 @@ public:
         drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[applyPipelineIndex], *gpu.getSwapchain().getSwapChainImageViews()[imageIndex], swapExtent,
             SSRApplyPushConstants{
                 .samplerIndex = shared.defaultSamplerIndex,
-                .sceneColorIndex = shared.colorResolveTextureIndex,
-                .sceneSamplerIndex = shared.defaultSamplerIndex,
                 .ssrTextureIndex = writeHistory,
             },
             vk::AttachmentLoadOp::eLoad);

@@ -242,8 +242,6 @@ struct SSRAccumulatePushConstants {
 
 struct SSRApplyPushConstants {
     uint32_t samplerIndex;
-    uint32_t sceneColorIndex;
-    uint32_t sceneSamplerIndex;
     uint32_t ssrTextureIndex;
 };
 
@@ -260,6 +258,10 @@ struct BillboardPushConstants {
     uint32_t billboardCount;
     uint32_t samplerIndex;
     glm::uvec2 resolution;
+    uint32_t depthTextureIndex;
+    uint32_t depthSamplerIndex;
+    uint32_t depthTest;
+    uint32_t _pad;
 };
 
 struct GPUBillboard {

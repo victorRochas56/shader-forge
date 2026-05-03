@@ -193,12 +193,12 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
                                                                          vk::True, "shaders/lit.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
                                                                          vk::Format::eUndefined);
 
-    billboardPipelineIndex = bindless.pipelineManager->createPipeline<BillboardPushConstants>(PipelineCategory::ALPHA_GEOMETRY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::True,
+    // Billboards composite onto the swapchain after SSR/SSAO, so use a single-sample alpha-blend
+    // pipeline that targets the swapchain format. Depth test is performed in-shader by sampling
+    // the resolved depth.
+    billboardPipelineIndex = bindless.pipelineManager->createPipeline<BillboardPushConstants>(PipelineCategory::POSTPROCESS_ALPHA_BLEND, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
                                                                                             vk::False,"shaders/billboard.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
-                                                                                            vk::Format::eUndefined);
-    billboardNoDepthPipelineIndex = bindless.pipelineManager->createPipeline<BillboardPushConstants>(PipelineCategory::ALPHA_GEOMETRY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
-                                                                                            vk::False,"shaders/billboard.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
-                                                                                            vk::Format::eUndefined);
+                                                                                            gpu.getSwapchain().getSwapChainImageFormat());
     gizmoPipelineIndex =
         bindless.pipelineManager->createPipeline<LinePushConstants>(PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eLineList, vk::CullModeFlagBits::eNone, vk::False, vk::False,
                                                            "shaders/line.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
@@ -605,13 +605,15 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
     recordGeometryPass(cmd, imageIndex);
     Tracer::endTrace("record geo pass");
 
-    recordBillboardBlendPass(cmd, imageIndex);
+    recordResolveToSwapchainCopy(cmd, imageIndex);
 
     Tracer::startTrace("record passes");
     for(auto& pass : passes) {
         pass.second->record(cmd, imageIndex);
     }
     Tracer::endTrace("record passes");
+
+    recordBillboardBlendPass(cmd, imageIndex);
 
     Tracer::startTrace("record SDF pass");
     if(sdfPipelineIndex != 0xFFFFFFFF)
@@ -965,26 +967,20 @@ void Renderer::recordBillboardBlendPass(vk::raii::CommandBuffer& cmd, uint32_t i
         return;
 
     auto extent = gpu.getSwapchain().getSwapChainExtent();
-    auto& colorResolve = bindless.descriptorSet->getTextureResource(passResources.colorResolveTextureIndex);
-    bindless.resourceManager->transitionImageLayout(&cmd, *colorResolve.image,
-        vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
 
-    vk::RenderingAttachmentInfo colorAttachment = {.imageView = gpu.getSwapchain().getColorImageView(),
+    // Depth test is done in-shader by sampling the resolved depth, so make it shader-readable.
+    auto& depthResolveTex = bindless.descriptorSet->getTextureResource(gpu.getSwapchain().getDepthResolveIndex());
+    bindless.resourceManager->transitionImageLayout(&cmd, *depthResolveTex.image,
+        vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+
+    vk::RenderingAttachmentInfo colorAttachment = {.imageView = gpu.getSwapchain().getSwapChainImageViews()[imageIndex],
                                                    .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-                                                   .resolveMode = vk::ResolveModeFlagBits::eAverage,
-                                                   .resolveImageView = *colorResolve.imageView,
-                                                   .resolveImageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-                                                   .loadOp = vk::AttachmentLoadOp::eLoad,
-                                                   .storeOp = vk::AttachmentStoreOp::eStore};
-    vk::RenderingAttachmentInfo depthAttachment = {.imageView = gpu.getSwapchain().getDepthImageView(),
-                                                   .imageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
                                                    .loadOp = vk::AttachmentLoadOp::eLoad,
                                                    .storeOp = vk::AttachmentStoreOp::eStore};
     vk::RenderingInfo renderInfo = {.renderArea = {.offset = {0,0}, .extent = extent},
                                     .layerCount = 1,
                                     .colorAttachmentCount = 1,
-                                    .pColorAttachments = &colorAttachment,
-                                    .pDepthAttachment = &depthAttachment};
+                                    .pColorAttachments = &colorAttachment};
 
 
     std::vector<std::pair<float, GPUBillboard>> depthTested;
@@ -1019,28 +1015,32 @@ void Renderer::recordBillboardBlendPass(vk::raii::CommandBuffer& cmd, uint32_t i
         billboardPtr[frameOffset + depthTested.size() + i] = noDepthTest[i].second;
     }
 
-    auto drawGroup = [&](uint32_t pipelineIdx, uint32_t groupOffset, uint32_t groupCount) {
+    auto& pipeline = bindless.pipelineManager->getPostProcessPipelines()[billboardPipelineIndex];
+    bindPipeline(cmd, *pipeline);
+
+    auto drawGroup = [&](uint32_t groupOffset, uint32_t groupCount, uint32_t depthTest) {
         if (groupCount == 0) return;
-        auto& pipeline = bindless.pipelineManager->getGeoPipelines()[pipelineIdx];
-        bindPipeline(cmd, *pipeline);
         BillboardPushConstants pc = {
             .invViewProj = scene.activeCamera.viewProjection,
             .billboardBufferAddress = bindless.descriptorSet->getFixedBuffers()[billboardBufferIndex]->address + (frameOffset + groupOffset) * sizeof(GPUBillboard),
             .billboardCount = groupCount,
             .samplerIndex = passResources.defaultSamplerIndex,
-            .resolution = glm::uvec2(extent.width, extent.height)
+            .resolution = glm::uvec2(extent.width, extent.height),
+            .depthTextureIndex = gpu.getSwapchain().getDepthResolveIndex(),
+            .depthSamplerIndex = passResources.depthSamplerIndex,
+            .depthTest = depthTest,
         };
         cmd.pushConstants<BillboardPushConstants>(*pipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pc);
         cmd.draw(6, groupCount, 0, 0);
     };
 
-    drawGroup(billboardPipelineIndex, 0, static_cast<uint32_t>(depthTested.size()));
-    drawGroup(billboardNoDepthPipelineIndex, static_cast<uint32_t>(depthTested.size()), static_cast<uint32_t>(noDepthTest.size()));
+    drawGroup(0, static_cast<uint32_t>(depthTested.size()), 1);
+    drawGroup(static_cast<uint32_t>(depthTested.size()), static_cast<uint32_t>(noDepthTest.size()), 0);
 
     cmd.endRendering();
 
-    bindless.resourceManager->transitionImageLayout(&cmd, *colorResolve.image,
-        vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+    bindless.resourceManager->transitionImageLayout(&cmd, *depthResolveTex.image,
+        vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
 
 }
 

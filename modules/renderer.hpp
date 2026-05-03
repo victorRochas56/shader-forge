@@ -67,7 +67,6 @@ class Renderer {
     uint32_t                            imageViewPipelineIndex;
     uint32_t                            depthPipelineIndex;
     uint32_t                            billboardPipelineIndex;
-    uint32_t                            billboardNoDepthPipelineIndex;
 
     //defaults
     uint32_t                            shadowSamplerIndex;

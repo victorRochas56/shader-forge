@@ -1,7 +1,5 @@
 struct SSRApplyPushConstants {
     uint samplerIndex;
-    uint sceneColorIndex;
-    uint sceneSamplerIndex;
     uint ssrTextureIndex;
 };
 
@@ -26,7 +24,5 @@ VSOutput vertMain(uint vertexID : SV_VertexID) {
 [shader("fragment")]
 float4 fragMain(VSOutput input) : SV_Target {
     float4 ssr = textures[pc.ssrTextureIndex].Sample(samplers[pc.samplerIndex], input.texCoord);
-    float3 sceneColor = textures[pc.sceneColorIndex].Sample(samplers[pc.sceneSamplerIndex], input.texCoord).rgb;
-    float3 result = lerp(sceneColor, ssr.rgb, ssr.a);
-    return float4(result, 1.0);
+    return float4(ssr.rgb, ssr.a);
 }

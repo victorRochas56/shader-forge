@@ -15,6 +15,8 @@ enum ManipAction {
 bool wasClick = false;
 ManipAction prevAction;
 int prevAxis = 0;
+int hoveredAxis = 0;
+ManipAction hoveredAction = ROTATE;
 glm::quat baseRotation;
 glm::vec3 basePosition;
 glm::vec3 dragStartVec;
@@ -24,7 +26,7 @@ glm::vec3 rotLocalAxis;
 glm::vec3 moveParentAxis;
 float dragStartT = 0.0f;
 
-void showManipulator(Node& node, Camera& camera, const glm::vec2& ndcMousePos, SceneGraph& sceneGraph) {
+void handleInput(Node& node, Camera& camera, const glm::vec2& ndcMousePos, SceneGraph& sceneGraph) {
 
     glm::vec3 origin;
     glm::vec3 direction;
@@ -32,20 +34,8 @@ void showManipulator(Node& node, Camera& camera, const glm::vec2& ndcMousePos, S
     camera.rayFromScreenCoords(ndcMousePos.x, ndcMousePos.y, origin, direction);
     glm::vec3 worldPos = node.getWorldPosition();
 
-    //==========================ROTATION======================================
-    float rtX = 0;
-    glm::vec4 rxCol(1, 0, 0, 1);
-    float rtY = 0;
-    glm::vec4 ryCol(0, 1, 0, 1);
-    float rtZ = 0;
-    glm::vec4 rzCol(0, 0, 1, 1);
-
-    float mtX = 0;
-    glm::vec4 mxCol(1, 0, 0, 1);
-    float mtY = 0;
-    glm::vec4 myCol(0, 1, 0, 1);
-    float mtZ = 0;
-    glm::vec4 mzCol(0, 0, 1, 1);
+    float rtX = 0, rtY = 0, rtZ = 0;
+    float mtX = 0, mtY = 0, mtZ = 0;
 
     float radius = 0.1f * cameraDist;
     float length = 0.05f * cameraDist;
@@ -54,27 +44,15 @@ void showManipulator(Node& node, Camera& camera, const glm::vec2& ndcMousePos, S
     intersectCircle(node.up(), worldPos, radius, thickness, origin, direction, rtY);
     intersectCircle(node.forward(), worldPos, radius, thickness, origin, direction, rtZ);
 
-    intersectCylinder(worldPos,node.right(),thickness,length,origin,direction,mtX);
-    intersectCylinder(worldPos,node.up(),thickness,length,origin,direction,mtY);
-    intersectCylinder(worldPos,node.forward(),thickness,length,origin,direction,mtZ);
+    intersectCylinder(worldPos, node.right(),   thickness, length, origin, direction, mtX);
+    intersectCylinder(worldPos, node.up(),      thickness, length, origin, direction, mtY);
+    intersectCylinder(worldPos, node.forward(), thickness, length, origin, direction, mtZ);
 
     int axis = 0;
     if (wasClick) {
         axis = prevAxis;
-        if(prevAction == ManipAction::ROTATE){
-            switch (axis) {
-            case 1: rxCol = {1, 1, 1, 1}; break;
-            case 2: ryCol = {1, 1, 1, 1}; break;
-            case 3: rzCol = {1, 1, 1, 1}; break;
-            }
-        }
-        if(prevAction == ManipAction::MOVE){
-            switch(axis) {
-            case 1: mxCol = {1, 1, 1, 1}; break;
-            case 2: myCol = {1, 1, 1, 1}; break;
-            case 3: mzCol = {1, 1, 1, 1}; break;
-            }
-        }
+        hoveredAxis = prevAxis;
+        hoveredAction = prevAction;
     }
     else {
         float bestT = 0.0f;
@@ -94,31 +72,13 @@ void showManipulator(Node& node, Camera& camera, const glm::vec2& ndcMousePos, S
         consider(mtY, 2, ManipAction::MOVE);
         consider(mtZ, 3, ManipAction::MOVE);
 
+        hoveredAxis = bestAxis;
+        hoveredAction = bestAction;
         if (bestAxis != 0) {
             axis = bestAxis;
             prevAction = bestAction;
-            if (bestAction == ManipAction::ROTATE) {
-                switch (bestAxis) {
-                case 1: rxCol = {1, 1, 1, 1}; break;
-                case 2: ryCol = {1, 1, 1, 1}; break;
-                case 3: rzCol = {1, 1, 1, 1}; break;
-                }
-            } else {
-                switch (bestAxis) {
-                case 1: mxCol = {1, 1, 1, 1}; break;
-                case 2: myCol = {1, 1, 1, 1}; break;
-                case 3: mzCol = {1, 1, 1, 1}; break;
-                }
-            }
         }
     }
-    Gizmos::drawCircle(node.getWorldPosition(), radius, node.right(), rxCol);
-    Gizmos::drawCircle(node.getWorldPosition(), radius, node.up(), ryCol);
-    Gizmos::drawCircle(node.getWorldPosition(), radius, node.forward(), rzCol);
-
-    Gizmos::drawLine(worldPos,worldPos + node.right() * length, mxCol);
-    Gizmos::drawLine(worldPos,worldPos + node.up() * length, myCol);
-    Gizmos::drawLine(worldPos,worldPos + node.forward() * length, mzCol);
 
     const InputState& input = InputManager::getCurrentState();
     if (input.mouse_action == 1 && input.mouse_button == 0) {
@@ -203,6 +163,45 @@ void showManipulator(Node& node, Camera& camera, const glm::vec2& ndcMousePos, S
         wasClick = false;
         prevAxis = 0;
     }
-    return;
 }
+
+void drawGizmos(Node& node, Camera& camera) {
+    float cameraDist = glm::distance(camera.position, node.getWorldPosition());
+    glm::vec3 worldPos = node.getWorldPosition();
+
+    float radius = 0.1f * cameraDist;
+    float length = 0.05f * cameraDist;
+
+    glm::vec4 rxCol(1, 0, 0, 1);
+    glm::vec4 ryCol(0, 1, 0, 1);
+    glm::vec4 rzCol(0, 0, 1, 1);
+    glm::vec4 mxCol(1, 0, 0, 1);
+    glm::vec4 myCol(0, 1, 0, 1);
+    glm::vec4 mzCol(0, 0, 1, 1);
+
+    if (hoveredAxis != 0) {
+        if (hoveredAction == ManipAction::ROTATE) {
+            switch (hoveredAxis) {
+            case 1: rxCol = {1, 1, 1, 1}; break;
+            case 2: ryCol = {1, 1, 1, 1}; break;
+            case 3: rzCol = {1, 1, 1, 1}; break;
+            }
+        } else if (hoveredAction == ManipAction::MOVE) {
+            switch (hoveredAxis) {
+            case 1: mxCol = {1, 1, 1, 1}; break;
+            case 2: myCol = {1, 1, 1, 1}; break;
+            case 3: mzCol = {1, 1, 1, 1}; break;
+            }
+        }
+    }
+
+    Gizmos::drawCircle(worldPos, radius, node.right(),   rxCol);
+    Gizmos::drawCircle(worldPos, radius, node.up(),      ryCol);
+    Gizmos::drawCircle(worldPos, radius, node.forward(), rzCol);
+
+    Gizmos::drawLine(worldPos, worldPos + node.right()   * length, mxCol);
+    Gizmos::drawLine(worldPos, worldPos + node.up()      * length, myCol);
+    Gizmos::drawLine(worldPos, worldPos + node.forward() * length, mzCol);
+}
+
 } // namespace Manip

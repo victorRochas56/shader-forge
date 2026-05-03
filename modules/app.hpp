@@ -111,7 +111,7 @@ class App {
             Node* currentNode = &scene.sceneGraph.getRootNode();
             if(scene.sceneGraph.selectedNode != 0) {
                 currentNode = &scene.sceneGraph.getNode(scene.sceneGraph.selectedNode);
-                Manip::showManipulator(*currentNode,scene.activeCamera,InputManager::getCurrentState().ndcMousePos,scene.sceneGraph);
+                Manip::handleInput(*currentNode,scene.activeCamera,InputManager::getCurrentState().ndcMousePos,scene.sceneGraph);
             }
 
             for(auto& bb : scene.billboards){
@@ -127,6 +127,10 @@ class App {
             EventSystem::pollListeners();
             EventSystem::pollEvents();
             scene.sceneGraph.syncDirtyNodes();
+
+            if(scene.sceneGraph.selectedNode != 0) {
+                Manip::drawGizmos(*currentNode, scene.activeCamera);
+            }
 
             //main draw loop
             renderer.drawFrame();

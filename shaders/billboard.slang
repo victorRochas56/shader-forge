@@ -6,6 +6,10 @@ struct BillboardPushConstants {
     uint32_t billboardCount;
     uint32_t samplerIndex;
     uint2 resolution;
+    uint32_t depthTextureIndex;
+    uint32_t depthSamplerIndex;
+    uint32_t depthTest;
+    uint32_t _pad;
 };
 
 struct GPUBillboard {
@@ -56,8 +60,14 @@ VSOutput vertMain(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID) 
     return output;
 }
 
-[earlydepthstencil]
 [shader("fragment")]
 float4 fragMain(VSOutput input) : SV_Target {
+    if (BBpc.depthTest != 0) {
+        uint depthW, depthH;
+        textures[BBpc.depthTextureIndex].GetDimensions(depthW, depthH);
+        float2 screenUV = input.position.xy / float2(depthW, depthH);
+        float sceneDepth = textures[BBpc.depthTextureIndex].Sample(samplers[BBpc.depthSamplerIndex], screenUV).r;
+        if (input.position.z > sceneDepth) discard;
+    }
     return textures[BBpc.billboardBufferAddress[input.instanceID].textureIndex].Sample(samplers[BBpc.samplerIndex],input.texCoord);
 }
