@@ -767,7 +767,7 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
     std::array<Plane, 6> frustumPlanes = extractFrustumPlanes(fakeCam.viewProjection);
     culledCount = 0;
     litDrawDataList.clear();
-    buildGeometryDrawCommands(frustumPlanes, true, [&](const auto& mesh, auto& node, const auto& material) {
+    buildGeometryDrawCommands(frustumPlanes, true, [&](const auto& mesh, auto& node, const Material& material) {
         litDrawDataList.push_back({.vertexAllocationIndex = mesh.vertexAllocationIndex,
                                    .vertexOffset          = static_cast<uint32_t>(mesh.vertexOffset),
                                    .vertexStride          = mesh.vertexStride,
@@ -777,6 +777,7 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
                                    .metallicTextureIndex  = material.metallicTextureIndex,
                                    .normalTextureIndex    = material.normalTextureIndex,
                                    .environmentMapIndex   = material.environmentMapIndex,
+                                   .maxEnvMips            = static_cast<float>(bindless.descriptorSet->getTextureMipLevels(material.environmentMapIndex) - 1),
                                    .materialFlags         = static_cast<uint32_t>(material.flags),
                                    .metallic              = material.metallic,
                                    .roughness             = material.roughness,

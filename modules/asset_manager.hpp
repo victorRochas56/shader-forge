@@ -128,7 +128,7 @@ class AssetManager {
         }
 
         auto [image, memory, view] = resourceManager->loadCubeMapFromFile(posX, negX, posY, negY, posZ, negZ, width, height);
-        uint32_t allocIndex = descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(view), cubemapKey, true);
+        uint32_t allocIndex = descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(view), cubemapKey, true, width, height);
         loadedCubemaps[cubemapKey] = allocIndex;
         return allocIndex;
     }

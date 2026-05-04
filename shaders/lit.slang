@@ -27,25 +27,33 @@ FragmentOutput fragMain(VertexOutput input)
     bool hasMetallic = (draw.materialFlags & (1u << 3)) != 0;
     bool hasNormal   = (draw.materialFlags & (1u << 4)) != 0;
     bool alphaClip   = (draw.materialFlags & (1u << 5)) != 0;
+    
+    float3 N;
+    float3 normalMap;
+    if(hasNormal) {
+        normalMap = textures[draw.normalTextureIndex].Sample(samplers[pc.litPassData.samplerIndex], input.texCoord).rgb;
+    }
 
-    float4 albedo = hasAlbedo ?
-        textures[draw.albedoTextureIndex].Sample(samplers[pc.litPassData.samplerIndex], input.texCoord) :
-        float4(1.0, 1.0, 1.0, 1.0);
-
+    float4 albedo = float4(1.0, 1.0, 1.0, 1.0);
+    if(hasAlbedo) {
+        albedo = textures[draw.albedoTextureIndex].Sample(samplers[pc.litPassData.samplerIndex], input.texCoord);
+    }
     if (alphaClip && albedo.a < draw.alphaCutoff)
         discard;
 
-    float4 roughness = hasRoughness ?
-        textures[draw.roughnessTextureIndex].Sample(samplers[pc.litPassData.samplerIndex], input.texCoord) :
-        float4(draw.roughness, draw.roughness, draw.roughness, 1.0);
 
-    float4 metallic = hasMetallic ?
-        textures[draw.metallicTextureIndex].Sample(samplers[pc.litPassData.samplerIndex], input.texCoord) :
-        float4(draw.metallic, draw.metallic, draw.metallic, 1.0);
+    float4 roughness = float4(draw.roughness, draw.roughness, draw.roughness, 1.0);
+    if(hasRoughness) {
+        roughness = textures[draw.roughnessTextureIndex].Sample(samplers[pc.litPassData.samplerIndex], input.texCoord);
+    }
 
-    float3 N;
+    float4 metallic = float4(draw.metallic, draw.metallic, draw.metallic, 1.0);
+    if(hasMetallic){
+        metallic = textures[draw.metallicTextureIndex].Sample(samplers[pc.litPassData.samplerIndex], input.texCoord);
+    }
+        
+
     if (hasNormal) {
-        float3 normalMap = textures[draw.normalTextureIndex].Sample(samplers[pc.litPassData.samplerIndex], input.texCoord).rgb;
         normalMap = normalMap * 2.0 - 1.0;
         float normalIntensity = 1.0;
         normalMap.xy *= normalIntensity;
@@ -62,6 +70,12 @@ FragmentOutput fragMain(VertexOutput input)
     } else {
         N = normalize(input.normal);
     }
+
+    //do as early as possible to not wait for scoreboard stall
+    TextureCube envMap = cubemaps[draw.environmentMapIndex];
+    SamplerState envSampler = samplers[pc.litPassData.samplerIndex];
+    //float3 specularIBL = calculateSpecularIBL(N, V, roughness.r, F0, envMap, envSampler);
+    float3 diffuseIBL = calculateDiffuseIBL(N, albedo.rgb, envMap, pc.litDrawData.maxEnvMips, envSampler);
 
     float3 V = normalize(pc.litPassData.cameraPos.xyz - input.worldPos);
     float3 F0 = float3(0.04);
@@ -151,11 +165,6 @@ FragmentOutput fragMain(VertexOutput input)
 
         Lo += (1.0 - shadow) * (kD * albedo.rgb / 3.14159265 + specular) * radiance * NdotL;
     }
-
-    TextureCube envMap = cubemaps[draw.environmentMapIndex];
-    SamplerState envSampler = samplers[pc.litPassData.samplerIndex];
-    //float3 specularIBL = calculateSpecularIBL(N, V, roughness.r, F0, envMap, envSampler);
-    float3 diffuseIBL = calculateDiffuseIBL(N, albedo.rgb, envMap, envSampler);
 
     float3 kS = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0, roughness.r);
     float3 kD = float3(1.0) - kS;

@@ -355,6 +355,7 @@ struct LitDrawData {
     uint32_t metallicTextureIndex;
     uint32_t normalTextureIndex;
     uint32_t environmentMapIndex;
+    float    maxEnvMips;
     uint32_t materialFlags;
     float    metallic;
     float    roughness;
