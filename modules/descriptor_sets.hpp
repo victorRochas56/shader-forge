@@ -6,6 +6,7 @@
 #define VULKAN_HPP_NO_CONSTRUCTORS 1
 #endif
 
+#include <map>
 #include <optional>
 #include <queue>
 #include <vector>
@@ -53,7 +54,7 @@ struct SamplerResource {
 
 struct VariableBufferAllocation {
     uint32_t offset;
-    uint32_t size;
+    uint32_t capacity;
     uint32_t stride;
     uint32_t count;
 };
@@ -64,7 +65,8 @@ struct VariableBufferResource {
     vk::raii::DeviceMemory memory;
     void* mappedData = nullptr;
     vk::DeviceSize bufferSize;
-    std::vector<VariableBufferAllocation> allocations;
+    //TODO buffer allocs switched to map, need to rename *allocationIndex to *allocationOffset for semantic clarity
+    std::map<uint32_t, VariableBufferAllocation> allocations;
     uint32_t bindingIndex = 0;
     uint32_t maxSize = MAX_VARIABLE_BUFFER;
 
@@ -548,21 +550,24 @@ class DescriptorSet {
         T* gpuData = reinterpret_cast<T*>(static_cast<char*>(buffer.mappedData) + offset);
         std::memcpy(gpuData, data.data(), totalSize);
 
-        uint32_t allocationIndex = static_cast<uint32_t>(buffer.allocations.size());
-        buffer.allocations.push_back(VariableBufferAllocation{.offset = offset, .size = totalSize, .stride = elementSize, .count = count});
-        return allocationIndex;
+        buffer.allocations.emplace(offset, VariableBufferAllocation{.offset = offset, .capacity = totalSize, .stride = elementSize, .count = count});
+        return offset;
     }
 
-    template <typename T> void updateVariableBuffer(uint32_t bufferIndex, uint32_t allocationIndex, const std::vector<T>& newData) {
-        if (bufferIndex >= variableBuffers.size() || !variableBuffers[bufferIndex] || allocationIndex >= variableBuffers[bufferIndex]->allocations.size()) {
-            throw std::runtime_error("Invalid variable buffer allocation");
+    template <typename T> void updateVariableBuffer(uint32_t bufferIndex, uint32_t allocationOffset, const std::vector<T>& newData) {
+        if (bufferIndex >= variableBuffers.size() || !variableBuffers[bufferIndex]) {
+            throw std::runtime_error("Invalid variable buffer index");
         }
         auto& buffer = variableBuffers[bufferIndex].value();
-        auto& allocation = buffer.allocations[allocationIndex];
+        auto it = buffer.allocations.find(allocationOffset);
+        if (it == buffer.allocations.end()) {
+            throw std::runtime_error("Invalid variable buffer allocation");
+        }
+        auto& allocation = it->second;
         uint32_t elementSize = sizeof(T);
         uint32_t newTotalSize = static_cast<uint32_t>(newData.size()) * elementSize;
 
-        if (newTotalSize > allocation.size) {
+        if (newTotalSize > allocation.capacity) {
             throw std::runtime_error("New data too large for existing allocation. Consider reallocating.");
         }
 
@@ -571,18 +576,18 @@ class DescriptorSet {
         std::memcpy(gpuData, newData.data(), newTotalSize);
     }
 
-    void freeVariableBuffer(uint32_t bufferIndex, uint32_t allocationIndex) {
-        if (bufferIndex >= variableBuffers.size() || !variableBuffers[bufferIndex] || allocationIndex >= variableBuffers[bufferIndex]->allocations.size()) {
+    void freeVariableBuffer(uint32_t bufferIndex, uint32_t allocationOffset) {
+        if (bufferIndex >= variableBuffers.size() || !variableBuffers[bufferIndex]) {
             return;
         }
-        variableBuffers[bufferIndex]->allocations.at(allocationIndex).size = 0;
+        variableBuffers[bufferIndex]->allocations.erase(allocationOffset);
     }
 
-    VariableBufferAllocation getVariableBufferAllocation(uint32_t bufferIndex, uint32_t allocationIndex) const {
+    VariableBufferAllocation getVariableBufferAllocation(uint32_t bufferIndex, uint32_t allocationOffset) const {
         if (bufferIndex >= variableBuffers.size() || !variableBuffers[bufferIndex]) {
             throw std::runtime_error("Invalid variable buffer index");
         }
-        return variableBuffers[bufferIndex]->allocations.at(allocationIndex);
+        return variableBuffers[bufferIndex]->allocations.at(allocationOffset);
     }
     vk::Buffer getVariableBuffer(uint32_t bufferIndex) const {
         if (bufferIndex >= variableBuffers.size() || !variableBuffers[bufferIndex]) {
@@ -642,25 +647,13 @@ class DescriptorSet {
         }
 
         auto& buffer = variableBuffers[bufferIndex].value();
-        if (buffer.allocations.empty()) {
-            return 0;
-        }
-
-        std::vector<std::pair<uint32_t, uint32_t>> usedRanges;
-        for (const auto& alloc : buffer.allocations) {
-            if (alloc.size > 0) {
-                usedRanges.push_back({alloc.offset, alloc.size});
-            }
-        }
-
-        std::sort(usedRanges.begin(), usedRanges.end());
 
         uint32_t currentOffset = 0;
-        for (const auto& range : usedRanges) {
-            if (range.first - currentOffset >= requestedSize) {
+        for (const auto& [offset, alloc] : buffer.allocations) {
+            if (offset - currentOffset >= requestedSize) {
                 return currentOffset;
             }
-            currentOffset = range.first + range.second;
+            currentOffset = offset + alloc.capacity;
         }
 
         return currentOffset;

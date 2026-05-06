@@ -16,6 +16,8 @@
 
 #include <chrono>
 
+#include <nlohmann/json.hpp>
+
 #include "gui.hpp"
 #include "node_gui.hpp"
 #include "input.hpp"
@@ -32,14 +34,60 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+
+
 class App {
-  public:
+static inline std::vector<Line> parseLines(std::filesystem::path path) {
+    std::ifstream in(path);
+    if(!in)
+        throw std::runtime_error("failed to open lines json");
+
+    nlohmann::json doc;
+
+    in >> doc;
+    
+    std::vector<Line> lines;
+
+    if(!doc.contains("data") || !doc["data"].is_array())
+        return lines;
+
+    for(const auto& entry : doc["data"]) {
+        if(!entry.contains("value") || !entry["value"].is_array())
+            continue;
+        for(const auto& v : entry["value"]) {
+            if(!v.contains("intersectionLines") || !v["intersectionLines"].is_array())
+                continue;
+            for(const auto& l : v["intersectionLines"]) {
+                Line line;
+                line.startPoint.x = l["p1"]["x"];
+                line.startPoint.y = l["p1"]["z"];
+                line.startPoint.z = l["p1"]["y"];
+                line.endPoint.x = l["p2"]["x"];
+                line.endPoint.y = l["p2"]["z"];
+                line.endPoint.z = l["p2"]["y"];
+                line.startPoint *= 10.0f;
+                line.endPoint *= 10.0f;
+                line.color = glm::vec4(1,1,1,1);
+                lines.push_back(line);
+            }
+        }
+    }
+    return lines;
+}
+
+    public:
     uint32_t start_width = 640, start_height = 360;
     glm::vec3 addOffset = glm::vec3(0.01,0,0);
     uint32_t listen = 0;
     uint32_t effect = 0;
 
     void run() {
+
+        auto jsonPath = std::filesystem::absolute("20260430-101812.json");
+        printf("looking for json at: %s (exists: %d)\n", jsonPath.string().c_str(), (int)std::filesystem::exists(jsonPath));
+        lines = parseLines(jsonPath);
+        printf("parsed %zu lines\n", lines.size());
+
         initWindow();
         InputManager::init(renderer, scene);
         InputManager::setMaterialEditorState(&materialEditorState);
@@ -52,13 +100,16 @@ class App {
         EventSystem::init(scene.sceneGraph);
         
         //load a default environment map on startup
-        uint32_t cubeMapIndex =
-            scene.assetManager.loadCubemapFromFile("textures/sky2/posx.jpg", "textures/sky2/posy.jpg", "textures/sky2/posz.jpg", "textures/sky2/negx.jpg", "textures/sky2/negy.jpg", "textures/sky2/negz.jpg");
-        scene.getMaterials()[scene.getFallBackMaterial()].environmentMapIndex = cubeMapIndex;
-        scene.setSkyBox(cubeMapIndex);
+        //uint32_t cubeMapIndex =
+        //    scene.assetManager.loadCubemapFromFile("textures/sky2/posx.jpg", "textures/sky2/posy.jpg", "textures/sky2/posz.jpg", "textures/sky2/negx.jpg", "textures/sky2/negy.jpg", "textures/sky2/negz.jpg");
+        //scene.getMaterials()[scene.getFallBackMaterial()].environmentMapIndex = cubeMapIndex;
+        //scene.setSkyBox(cubeMapIndex);
 
         renderer.buffers.nodeTextureIndex = scene.assetManager.loadTextureFromFile("textures/node.png");
 
+        renderer.features.ssao.enabled = false;
+        renderer.features.ssr.enabled = false;
+        renderer.features.volumetrics.enabled = false;
         printf("SIZE OF NODE : %zu",sizeof(Node));
         //start of render loop
         mainLoop();
@@ -73,6 +124,8 @@ class App {
     bool framebufferResized = false;
     SceneLoader sceneLoader;
     MaterialEditorState materialEditorState;
+
+    std::vector<Line> lines;
 
     void initWindow() {
         glfwInit();
@@ -105,7 +158,12 @@ class App {
             Gizmos::clearLineBuffer();
             Gizmos::clearSDFBuffer();
 
+
             drawGui();
+
+            for(auto& line : lines){
+                Gizmos::drawLine(line);
+            }
 
             //draw axes visualization for every node
             Node* currentNode = &scene.sceneGraph.getRootNode();

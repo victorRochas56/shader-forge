@@ -458,8 +458,8 @@ void showBufferAllocs(DescriptorSet& descriptorSet, AssetManager& assetManager, 
     int i =0;
     for(auto& buffer : descriptorSet.getVariableBuffers()){
         vk::DeviceSize usedBytes = 0;
-        for (const auto& alloc : buffer->allocations)
-            usedBytes += alloc.size;
+        for (const auto& [offset, alloc] : buffer->allocations)
+            usedBytes += alloc.capacity;
         float usedMB = usedBytes / (1024.0f * 1024.0f);
         float totalMB = buffer->bufferSize / (1024.0f * 1024.0f);
         ImGui::Text("Buffer %d : %d allocs | %.2f / %.2f MB", i, (int)buffer->allocations.size(), usedMB, totalMB);
