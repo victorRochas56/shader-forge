@@ -35,6 +35,7 @@ struct TextureResource {
     std::string source;
     uint32_t width = 0;
     uint32_t height = 0;
+    uint32_t mipLevels = 1;
     void reset() {
         imageView.reset();
         image.reset();
@@ -42,6 +43,7 @@ struct TextureResource {
         source.clear();
         width = 0;
         height = 0;
+        mipLevels = 1;
     }
     bool isEmpty() const { return !imageView.has_value(); }
 };
@@ -274,6 +276,9 @@ class DescriptorSet {
         if (textureResources.size() >= MAX_TEXTURES && freeTextureSlots.empty()) {
             throw std::runtime_error("Maximum bindless textures exceeded");
         }
+        uint32_t mipLevels = (texWidth > 0 && texHeight > 0)
+                                 ? static_cast<uint32_t>(std::floor(std::log2(std::max(texWidth, texHeight)))) + 1
+                                 : 1;
         uint32_t index;
         if (!freeTextureSlots.empty()) {
             index = freeTextureSlots.front();
@@ -284,6 +289,7 @@ class DescriptorSet {
             textureResources[index].source = source;
             textureResources[index].width = texWidth;
             textureResources[index].height = texHeight;
+            textureResources[index].mipLevels = mipLevels;
         } else {
             index = textureResources.size();
             TextureResource resource;
@@ -293,6 +299,7 @@ class DescriptorSet {
             resource.source = source;
             resource.width = texWidth;
             resource.height = texHeight;
+            resource.mipLevels = mipLevels;
             textureResources.emplace_back(std::move(resource));
         }
         vk::DescriptorImageInfo imageInfo{.imageView = *textureResources[index].imageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal};
@@ -315,6 +322,9 @@ class DescriptorSet {
         textureResources[index].source = source;
         textureResources[index].width = texWidth;
         textureResources[index].height = texHeight;
+        textureResources[index].mipLevels = (texWidth > 0 && texHeight > 0)
+                                                ? static_cast<uint32_t>(std::floor(std::log2(std::max(texWidth, texHeight)))) + 1
+                                                : 1;
 
         vk::DescriptorImageInfo imageInfo{.imageView = *textureResources[index].imageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal};
         vk::WriteDescriptorSet write{.dstSet = *descriptorSet,
@@ -325,6 +335,8 @@ class DescriptorSet {
                                      .pImageInfo = &imageInfo};
         device.getDevice().updateDescriptorSets(write, {});
     }
+
+    uint32_t getTextureMipLevels(uint32_t index) const { return textureResources[index].mipLevels; }
 
     //ensure no in-flight command buffers are using this texture when calling this
     void freeTexture(uint32_t index) {

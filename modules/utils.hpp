@@ -95,6 +95,55 @@ inline bool intersectCircle(const glm::vec3 &normal, const glm::vec3 &planeCente
     return false;
 }
 
+inline bool intersectCylinder(/*cylinder desc*/ const glm::vec3& base, const glm::vec3& axis, const float radius, const float height,/*ray desc*/ glm::vec3& rayOrigin, glm::vec3& rayDirection, float& outParamDist) {
+    // axis assumed to be a unit vector; cylinder spans [base, base + axis*height]
+    glm::vec3 oc = rayOrigin - base;
+
+    float dPar  = glm::dot(rayDirection, axis);
+    float ocPar = glm::dot(oc, axis);
+    glm::vec3 dPerp  = rayDirection - axis * dPar;
+    glm::vec3 ocPerp = oc - axis * ocPar;
+
+    float a = glm::dot(dPerp, dPerp);
+    float b = 2.0f * glm::dot(dPerp, ocPerp);
+    float c = glm::dot(ocPerp, ocPerp) - radius * radius;
+
+    float tBest = std::numeric_limits<float>::max();
+    bool  hit   = false;
+
+    // Side surface (skip when ray is parallel to the axis -> a ~= 0)
+    if (a > 1e-8f) {
+        float disc = b * b - 4.0f * a * c;
+        if (disc >= 0.0f) {
+            float sq  = std::sqrt(disc);
+            float inv = 0.5f / a;
+            float t0  = (-b - sq) * inv;
+            float t1  = (-b + sq) * inv;
+            for (float t : {t0, t1}) {
+                if (t < 0.0f || t >= tBest) continue;
+                float y = ocPar + t * dPar;
+                if (y >= 0.0f && y <= height) { tBest = t; hit = true; }
+            }
+        }
+    }
+
+    // End caps
+    auto testCap = [&](const glm::vec3& center) {
+        float denom = glm::dot(axis, rayDirection);
+        if (std::abs(denom) < 1e-6f) return;
+        float t = glm::dot(center - rayOrigin, axis) / denom;
+        if (t < 0.0f || t >= tBest) return;
+        glm::vec3 p = rayOrigin + rayDirection * t;
+        glm::vec3 v = p - center;
+        if (glm::dot(v, v) <= radius * radius) { tBest = t; hit = true; }
+    };
+    testCap(base);
+    testCap(base + axis * height);
+
+    if (hit) outParamDist = tBest;
+    return hit;
+}
+
 static vk::Format findDepthFormat(Device& device) {
     return findSupportedFormat({vk::Format::eD32Sfloat, vk::Format::eD32SfloatS8Uint, vk::Format::eD24UnormS8Uint}, vk::ImageTiling::eOptimal,
                                 vk::FormatFeatureFlagBits::eDepthStencilAttachment, device);

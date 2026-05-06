@@ -40,6 +40,10 @@ struct PipelineBase {
     vk::CullModeFlagBits cullMode;
     vk::Bool32 depthTestEnable;
     vk::Bool32 depthWriteEnable;
+    // Required by callers. Used for POSTPROCESS / POSTPROCESS_MULTIPLY / POSTPROCESS_ALPHA_BLEND
+    // categories whose target format isn't fixed by category. Ignored for SHADOW (depth-only),
+    // DEPTH_PREPASS (depth-only), LIT_GEOMETRY (MRT, formats fixed), BEFORE_GEOMETRY (R32Sfloat fixed).
+    vk::Format colorAttachmentFormat = vk::Format::eUndefined;
 
     std::type_index pushConstantType = std::type_index(typeid(void));
 
@@ -67,11 +71,15 @@ class PipelineManager {
   public:
     PipelineManager(Device& device, Swapchain& swapchain, vk::SampleCountFlagBits msaaSamples) : device(device), swapchain(swapchain), msaaSamples(msaaSamples) {}
 
+    // colorAttachmentFormat is required. For POSTPROCESS* it sets the pipeline's color target format.
+    // For categories with a category-fixed format (SHADOW, DEPTH_PREPASS, LIT_GEOMETRY, BEFORE_GEOMETRY)
+    // it is ignored — pass vk::Format::eUndefined.
     template <typename T>
     uint32_t createPipeline(PipelineCategory pipelineCategory, vk::PrimitiveTopology topology, vk::CullModeFlagBits cullMode, vk::Bool32 depthTestEnable,
-                            vk::Bool32 depthWriteEnable, std::string shaderPath, vk::raii::DescriptorSetLayout& setLayout, vk::raii::DescriptorSet& descriptorSet) {
+                            vk::Bool32 depthWriteEnable, std::string shaderPath, vk::raii::DescriptorSetLayout& setLayout, vk::raii::DescriptorSet& descriptorSet,
+                            vk::Format colorAttachmentFormat) {
 
-        return createPipelineInternal<T>(pipelineCategory, topology, cullMode, depthTestEnable, depthWriteEnable, shaderPath, setLayout, descriptorSet, false, 0);
+        return createPipelineInternal<T>(pipelineCategory, topology, cullMode, depthTestEnable, depthWriteEnable, shaderPath, setLayout, descriptorSet, false, 0, colorAttachmentFormat);
     }
 
     // for hot reloading - TODO implementation of file change detection missing still
@@ -88,8 +96,8 @@ class PipelineManager {
     template <typename T>
     void recreatePipelineAtIndexInternal(PipelineCategory pipelineCategory, uint32_t index, const std::string& shaderPath, vk::PrimitiveTopology topology,
                                          vk::CullModeFlagBits cullMode, vk::Bool32 depthTestEnable, vk::Bool32 depthWriteEnable, vk::raii::DescriptorSetLayout& setLayout,
-                                         vk::raii::DescriptorSet& descriptorSet) {
-        createPipelineInternal<T>(pipelineCategory, topology, cullMode, depthTestEnable, depthWriteEnable, shaderPath, setLayout, descriptorSet, true, index);
+                                         vk::raii::DescriptorSet& descriptorSet, vk::Format colorAttachmentFormat) {
+        createPipelineInternal<T>(pipelineCategory, topology, cullMode, depthTestEnable, depthWriteEnable, shaderPath, setLayout, descriptorSet, true, index, colorAttachmentFormat);
     }
 
     std::vector<std::unique_ptr<PipelineBase>>& getBeforeGeoPipelines() { return beforeGeometryPipelines; }
@@ -119,7 +127,7 @@ class PipelineManager {
     template <typename T>
     uint32_t createPipelineInternal(PipelineCategory pipelineCategory, vk::PrimitiveTopology topology, vk::CullModeFlagBits cullMode, vk::Bool32 depthTestEnable,
                                     vk::Bool32 depthWriteEnable, std::string shaderPath, vk::raii::DescriptorSetLayout& setLayout, vk::raii::DescriptorSet& descriptorSet,
-                                    bool isRecreation, uint32_t recreateIndex) {
+                                    bool isRecreation, uint32_t recreateIndex, vk::Format colorAttachmentFormat) {
 
         vk::raii::ShaderModule shaderModule = createShaderModule(readFile(shaderPath));
         vk::PipelineShaderStageCreateInfo vertShaderStageInfo{.stage = vk::ShaderStageFlagBits::eVertex, .module = shaderModule, .pName = "vertMain"};
@@ -146,6 +154,7 @@ class PipelineManager {
         pipeline->shaderPath = shaderPath;
         pipeline->descriptorSetLayout = &setLayout;
         pipeline->descriptorSet = &descriptorSet;
+        pipeline->colorAttachmentFormat = colorAttachmentFormat;
 
         vk::PipelineInputAssemblyStateCreateInfo inputAssembly;
         vk::PipelineRasterizationStateCreateInfo rasterizer;
@@ -157,9 +166,8 @@ class PipelineManager {
 
         // Format variables must persist beyond the switch scope since pointers to them are used
         vk::Format pcfFormat = vk::Format::eR32Sfloat; // PCF uses R32F for raw depth values
-        vk::Format mrtFormats[4] = {swapchain.getSwapChainImageFormat(), vk::Format::eR8G8B8A8Unorm, vk::Format::eR8G8B8A8Unorm, vk::Format::eR8G8B8A8Unorm};
-        vk::PipelineColorBlendAttachmentState mrtBlendAttachments[4] = {
-            {.blendEnable = vk::False, .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA},
+        vk::Format mrtFormats[3] = {swapchain.getSwapChainImageFormat(), vk::Format::eR8G8B8A8Unorm, vk::Format::eR8G8B8A8Unorm};
+        vk::PipelineColorBlendAttachmentState mrtBlendAttachments[3] = {
             {.blendEnable = vk::False, .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA},
             {.blendEnable = vk::False, .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA},
             {.blendEnable = vk::False, .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA}
@@ -249,7 +257,7 @@ class PipelineManager {
             break;
         }
         case PipelineCategory::LIT_GEOMETRY: {
-            pipelineRenderingCreateInfo = {.colorAttachmentCount = 4, .pColorAttachmentFormats = mrtFormats, .depthAttachmentFormat = depthFormat};
+            pipelineRenderingCreateInfo = {.colorAttachmentCount = 3, .pColorAttachmentFormats = mrtFormats, .depthAttachmentFormat = depthFormat};
             inputAssembly = {.topology = topology};
             rasterizer = {.depthClampEnable = vk::False,
                           .rasterizerDiscardEnable = vk::False,
@@ -265,7 +273,7 @@ class PipelineManager {
                             .depthCompareOp = vk::CompareOp::eLessOrEqual,
                             .depthBoundsTestEnable = vk::False,
                             .stencilTestEnable = vk::False};
-            colorBlending = {.logicOpEnable = vk::False, .logicOp = vk::LogicOp::eCopy, .attachmentCount = 4, .pAttachments = mrtBlendAttachments};
+            colorBlending = {.logicOpEnable = vk::False, .logicOp = vk::LogicOp::eCopy, .attachmentCount = 3, .pAttachments = mrtBlendAttachments};
             pushConstantRange = {.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, .offset = 0, .size = sizeof(T)};
             vk::PipelineLayoutCreateInfo pipelineLayoutInfo{
                 .setLayoutCount = 1, .pSetLayouts = &*setLayout, .pushConstantRangeCount = 1, .pPushConstantRanges = &pushConstantRange};
@@ -310,6 +318,8 @@ class PipelineManager {
         case PipelineCategory::POSTPROCESS: {
             bool multiply = (pipelineCategory == PipelineCategory::POSTPROCESS_MULTIPLY);
             bool alphaBlend = (pipelineCategory == PipelineCategory::POSTPROCESS_ALPHA_BLEND);
+            assert(colorAttachmentFormat != vk::Format::eUndefined && "POSTPROCESS pipelines require an explicit colorAttachmentFormat");
+            pipelineRenderingCreateInfo = {.colorAttachmentCount = 1, .pColorAttachmentFormats = &pipeline->colorAttachmentFormat, .depthAttachmentFormat = depthFormat};
             inputAssembly = {.topology = topology};
             rasterizer = {.depthClampEnable = vk::False,
                           .rasterizerDiscardEnable = vk::False,
@@ -414,5 +424,5 @@ class PipelineManager {
 };
 
 template <typename T> void Pipeline<T>::recreateInternal(PipelineManager& manager) {
-    manager.recreatePipelineAtIndexInternal<T>(pipelineCategory, 0, shaderPath, topology, cullMode, depthTestEnable, depthWriteEnable, *descriptorSetLayout, *descriptorSet);
+    manager.recreatePipelineAtIndexInternal<T>(pipelineCategory, 0, shaderPath, topology, cullMode, depthTestEnable, depthWriteEnable, *descriptorSetLayout, *descriptorSet, colorAttachmentFormat);
 }

@@ -57,10 +57,6 @@ class Scene {
     std::vector<ShaderDrawRange> shaderDrawRanges;
     bool                         renderListDirty = false;
 
-    void init(BindlessSystem& bindless, uint32_t vertexBufferIndex, uint32_t indexBufferIndex) {
-        assetManager.init(bindless.resourceManager.get(), bindless.descriptorSet.get(), vertexBufferIndex, indexBufferIndex);
-    }
-
     // --- materials -----------------------------------------------------
     std::vector<Material>& getMaterials() { return materials; }
     uint32_t addMaterial(Material material) {

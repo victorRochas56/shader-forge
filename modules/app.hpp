@@ -169,14 +169,13 @@ static inline std::vector<Line> parseLines(std::filesystem::path path) {
             Node* currentNode = &scene.sceneGraph.getRootNode();
             if(scene.sceneGraph.selectedNode != 0) {
                 currentNode = &scene.sceneGraph.getNode(scene.sceneGraph.selectedNode);
-                Manip::showManipulator(*currentNode,scene.activeCamera,InputManager::getCurrentState().ndcMousePos);
+                Manip::handleInput(*currentNode,scene.activeCamera,InputManager::getCurrentState().ndcMousePos,scene.sceneGraph);
             }
 
             for(auto& bb : scene.billboards){
                 bb.second.hidden = true;
             }
             if(renderer.features.showGizmos){
-                Gizmos::drawAxes(currentNode->getTransform(),0.15f);
                 scene.getBillboardsMutable()[currentNode->nodeIndex].hidden = false;
                 scene.sceneGraph.forEachChild(*currentNode, [this](Node& child){
                     scene.getBillboardsMutable()[child.nodeIndex].hidden = false;
@@ -186,6 +185,10 @@ static inline std::vector<Line> parseLines(std::filesystem::path path) {
             EventSystem::pollListeners();
             EventSystem::pollEvents();
             scene.sceneGraph.syncDirtyNodes();
+
+            if(scene.sceneGraph.selectedNode != 0) {
+                Manip::drawGizmos(*currentNode, scene.activeCamera);
+            }
 
             //main draw loop
             renderer.drawFrame();

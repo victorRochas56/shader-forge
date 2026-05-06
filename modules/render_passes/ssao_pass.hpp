@@ -5,8 +5,7 @@
 #include "structs.hpp"
 #include <random>
 
-
-class SSAOPass : RenderPass {
+class SSAOPass : public RenderPass {
 
     uint32_t textureIndex      = 0xFFFFFFFF;
     uint32_t blurTextureIndex  = 0xFFFFFFFF;
@@ -15,14 +14,20 @@ class SSAOPass : RenderPass {
 
     uint32_t pipelineIndex      = 0xFFFFFFFF;
     uint32_t applyPipelineIndex = 0xFFFFFFFF;
+    // Private blur pipeline because shared.blurPipelineIndex targets swapchain format,
+    // and SSAO blurs an R8_UNORM target.
+    uint32_t blurPipelineIndex  = 0xFFFFFFFF;
 
 public:
-    using RenderPass::RenderPass;
+    SSAOPass(GpuContext& gpu, BindlessSystem& bindless, Scene& scene, RenderFeatures& features, RenderPassResources& shared)
+        : RenderPass(gpu, bindless, scene, features, shared) {}
 
 
     void init(uint32_t width, uint32_t height) {
-        resize(textureIndex,width, height, vk::Format::eR8Unorm, "internal/ssao");
-        resize(blurTextureIndex,width, height, vk::Format::eR8Unorm, "internal/ssao_blur");
+        uint32_t ssaoW = std::max(1u, static_cast<uint32_t>(width * features.ssao.resolutionScale));
+        uint32_t ssaoH = std::max(1u, static_cast<uint32_t>(height * features.ssao.resolutionScale));
+        resize(textureIndex,ssaoW, ssaoH, vk::Format::eR8Unorm, "internal/ssao");
+        resize(blurTextureIndex,ssaoW, ssaoH, vk::Format::eR8Unorm, "internal/ssao_blur");
 
         // 4x4 noise texture (RGBA8, random tangent-space rotation vectors)
         // Only create once — noise doesn't depend on screen size
@@ -50,31 +55,45 @@ public:
                                                                     VK_FALSE, 1.0f, VK_FALSE, vk::CompareOp::eNever, vk::BorderColor::eFloatOpaqueBlack);
         }
 
-        // SSAO pipeline (only create once)
+        // SSAO pipeline writes into the SSAO R8_UNORM texture.
         if (pipelineIndex == 0xFFFFFFFF) {
             pipelineIndex = bindless.pipelineManager->createPipeline<SSAOPushConstants>(
                 PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone,
-                vk::False, vk::False, "shaders/ssao.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet());
+                vk::False, vk::False, "shaders/ssao.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
+                vk::Format::eR8Unorm);
         }
 
-        // SSAO apply pipeline with multiplicative blending (only create once)
+        // R8_UNORM blur pipeline private to SSAO.
+        if (blurPipelineIndex == 0xFFFFFFFF) {
+            blurPipelineIndex = bindless.pipelineManager->createPipeline<BlurPushConstants>(
+                PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone,
+                vk::False, vk::False, "shaders/blur.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
+                vk::Format::eR8Unorm);
+        }
+
+        // SSAO apply uses multiplicative blending onto the swapchain.
         if (applyPipelineIndex == 0xFFFFFFFF) {
             applyPipelineIndex = bindless.pipelineManager->createPipeline<SSAOApplyPushConstants>(
                 PipelineCategory::POSTPROCESS_MULTIPLY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone,
-                vk::False, vk::False, "shaders/ssao_apply.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet());
+                vk::False, vk::False, "shaders/ssao_apply.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
+                gpu.getSwapchain().getSwapChainImageFormat());
         }
     
     }
 
     void record(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
+        if(!features.ssao.enabled)
+            return;
+
         auto swapExtent = gpu.getSwapchain().getSwapChainExtent();
         auto& ssaoTexture = bindless.descriptorSet->getTextureResource(textureIndex);
         vk::Extent2D ssaoExtent{ssaoTexture.width, ssaoTexture.height};
 
-        // Transition depth to readable, SSAO target to color attachment
+        // SSAO samples the resolved depth (single-sample), not the MSAA depth, so transition that one.
+        auto& depthResolveTex = bindless.descriptorSet->getTextureResource(gpu.getSwapchain().getDepthResolveIndex());
         bindless.resourceManager->transitionImageLayouts(cmd, {
-            {gpu.getSwapchain().getDepthImage(),  vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal},
-            {*ssaoTexture.image,          vk::ImageLayout::eShaderReadOnlyOptimal,          vk::ImageLayout::eColorAttachmentOptimal},
+            {*depthResolveTex.image,  vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal},
+            {*ssaoTexture.image,      vk::ImageLayout::eShaderReadOnlyOptimal,         vk::ImageLayout::eColorAttachmentOptimal},
         });
 
         // Render SSAO at (potentially lower) SSAO resolution
@@ -91,17 +110,17 @@ public:
                             .kernelSize = 32},
             vk::AttachmentLoadOp::eClear, {1.0f, 1.0f, 1.0f, 1.0f});
 
-        // Blur at SSAO resolution
+        // Blur at SSAO resolution using the R8_UNORM-targeted blur pipeline.
         bindless.resourceManager->transitionImageLayout(&cmd, *ssaoTexture.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
-        blurAttachment(bindless, cmd, shared.blurPipelineIndex, textureIndex, blurTextureIndex, ssaoExtent.width, ssaoExtent.height, 2.0f, shared.depthSamplerIndex);
+        blurAttachment(bindless, cmd, blurPipelineIndex, textureIndex, blurTextureIndex, ssaoExtent.width, ssaoExtent.height, 2.0f, shared.depthSamplerIndex);
 
         // Apply to swapchain at full resolution (sampler handles upscale)
         drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[applyPipelineIndex], *gpu.getSwapchain().getSwapChainImageViews()[imageIndex], swapExtent,
             SSAOApplyPushConstants{.ssaoTextureIndex = textureIndex, .samplerIndex = shared.depthSamplerIndex},
             vk::AttachmentLoadOp::eLoad);
 
-        // Transition depth back
-        bindless.resourceManager->transitionImageLayout(&cmd, gpu.getSwapchain().getDepthImage(), vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
+        // Transition resolved depth back
+        bindless.resourceManager->transitionImageLayout(&cmd, *depthResolveTex.image, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
 
     }
 };

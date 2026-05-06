@@ -1,4 +1,5 @@
 static const float PI = 3.14159265;
+static const float invPI = 0.31830988618;
 
 float3 fresnelSchlick(float cosTheta, float3 F0)
 {
@@ -63,13 +64,10 @@ float3 calculateSpecularIBL(float3 N, float3 V, float roughness, float3 F0, Text
     return prefilteredColor * F;
 }
 
-float3 calculateDiffuseIBL(float3 N, float3 albedo, TextureCube envMap, SamplerState envSampler)
+float3 calculateDiffuseIBL(float3 N, float3 albedo, TextureCube envMap, float maxMip, SamplerState envSampler)
 {
-    uint width, height, mipLevels;
-    envMap.GetDimensions(0, width, height, mipLevels);
-    float maxMipLevel = float(mipLevels - 1);
-    float3 irradiance = envMap.SampleLevel(envSampler, N, maxMipLevel).rgb;
-    return irradiance * albedo / PI;
+    float3 irradiance = envMap.SampleLevel(envSampler, N, maxMip).rgb;
+    return irradiance * albedo * invPI;
 }
 
 // Importance sampling: draw a half-vector from the GGX distribution
