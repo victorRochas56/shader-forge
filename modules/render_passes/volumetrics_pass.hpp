@@ -17,7 +17,7 @@ class VolumetricsPass : public RenderPass {
 public:
 
     VolumetricsPass(GpuContext& gpu, BindlessSystem& bindless, Scene& scene, RenderFeatures& features, RenderPassResources& shared) : RenderPass(gpu, bindless, scene, features, shared) {
-        shared.buffers.volumeBufferIndex = bindless.descriptorSet->createFixedBuffer<Volume>(MAX_FIXED_BUFFER);
+        shared.buffers.volumeBufferIndex = bindless.descriptorSet->createFixedBuffer<Volume>(MAX_FIXED_BUFFER, false, "Volume");
     }
 
     void init(uint32_t width, uint32_t height) {

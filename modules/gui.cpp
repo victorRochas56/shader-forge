@@ -10,6 +10,9 @@
 #define GLFW_INCLUDE_NONE
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
 
 static void check_vk_result(VkResult err) {
     if (err == 0)
@@ -448,82 +451,136 @@ void showScenesMenu(Scene& scene, BindlessSystem& bindless, RenderBuffers& buffe
     ImGui::End();
 }
 
+// Format a byte count as B / KB / MB / GB. Picks the largest unit the value comfortably fits.
+static std::string formatBytes(vk::DeviceSize bytes) {
+    constexpr double KB = 1024.0;
+    constexpr double MB = 1024.0 * 1024.0;
+    constexpr double GB = 1024.0 * 1024.0 * 1024.0;
+    char buf[32];
+    if (bytes >= (vk::DeviceSize)GB)      std::snprintf(buf, sizeof(buf), "%.2f GB", bytes / GB);
+    else if (bytes >= (vk::DeviceSize)MB) std::snprintf(buf, sizeof(buf), "%.2f MB", bytes / MB);
+    else if (bytes >= (vk::DeviceSize)KB) std::snprintf(buf, sizeof(buf), "%.2f KB", bytes / KB);
+    else                                   std::snprintf(buf, sizeof(buf), "%llu B", (unsigned long long)bytes);
+    return std::string(buf);
+}
+
+// Geometric series for a full mip pyramid down to 1x1: sum of 4^-i for i=0..mipLevels-1.
+// mipLevels=1 → 1.0 (no mip overhead), mipLevels→∞ → 4/3.
+static float mipChainFactor(uint32_t mipLevels) {
+    if (mipLevels <= 1) return 1.0f;
+    return (1.0f - std::pow(0.25f, (float)mipLevels)) / 0.75f;
+}
+
 void showBufferAllocs(DescriptorSet& descriptorSet, AssetManager& assetManager, const std::vector<DrawIndexedIndirectCommand>& indirectDraws){
 
     ImGui::Begin("Buffers");
 
-    vk::DeviceSize grandTotal = 0;
+    vk::DeviceSize bufferUsed      = 0;  // bytes actually occupied by live allocations
+    vk::DeviceSize bufferCommitted = 0;  // bytes reserved on the GPU (full buffer capacity)
 
-    ImGui::Text("Variable Buffers");
-    int i =0;
-    for(auto& buffer : descriptorSet.getVariableBuffers()){
-        vk::DeviceSize usedBytes = 0;
-        for (const auto& [offset, alloc] : buffer->allocations)
-            usedBytes += alloc.capacity;
-        float usedMB = usedBytes / (1024.0f * 1024.0f);
-        float totalMB = buffer->bufferSize / (1024.0f * 1024.0f);
-        ImGui::Text("Buffer %d : %d allocs | %.2f / %.2f MB", i, (int)buffer->allocations.size(), usedMB, totalMB);
-        grandTotal += buffer->bufferSize;
-        i++;
+    if (ImGui::CollapsingHeader("Variable Buffers", ImGuiTreeNodeFlags_DefaultOpen)) {
+        int i = 0;
+        for (auto& buffer : descriptorSet.getVariableBuffers()) {
+            vk::DeviceSize usedBytes = 0;
+            for (const auto& [offset, alloc] : buffer->allocations)
+                usedBytes += alloc.capacity;
+            const char* label = buffer->name.empty() ? nullptr : buffer->name.c_str();
+            if (label) ImGui::Text("%s [%d] : %d allocs", label, i, (int)buffer->allocations.size());
+            else       ImGui::Text("Buffer %d : %d allocs",       i, (int)buffer->allocations.size());
+
+            float fraction = buffer->bufferSize > 0 ? (float)((double)usedBytes / (double)buffer->bufferSize) : 0.0f;
+            std::string overlay = formatBytes(usedBytes) + " / " + formatBytes(buffer->bufferSize);
+            ImGui::ProgressBar(fraction, ImVec2(-1, 0), overlay.c_str());
+
+            bufferUsed      += usedBytes;
+            bufferCommitted += buffer->bufferSize;
+            i++;
+        }
     }
 
-    ImGui::Text("Fixed Buffers");
-    i =0;
-    for(auto& buffer : descriptorSet.getFixedBuffers()){
-        uint32_t inUse = 0;
-        for (const auto& alloc : buffer->allocations)
-            if (alloc.inUse) inUse++;
-        vk::DeviceSize usedBytes = inUse * buffer->elementSize;
-        float usedMB = usedBytes / (1024.0f * 1024.0f);
-        float totalMB = buffer->bufferSize / (1024.0f * 1024.0f);
-        ImGui::Text("Buffer %d : %u / %d slots | %.2f / %.2f MB", i, inUse, (int)buffer->allocations.size(), usedMB, totalMB);
-        ImGui::Text("  Free Slots : %d", (int)buffer->freeSlots.size());
-        grandTotal += buffer->bufferSize;
-        i++;
+    if (ImGui::CollapsingHeader("Fixed Buffers", ImGuiTreeNodeFlags_DefaultOpen)) {
+        int i = 0;
+        for (auto& buffer : descriptorSet.getFixedBuffers()) {
+            // Count slots tracked via allocateFixedBuffer + slots streamed via direct memcpy.
+            // Streamed sites bump liveCount through writeFixedBuffer.
+            uint32_t slotInUse = 0;
+            for (const auto& alloc : buffer->allocations)
+                if (alloc.inUse) slotInUse++;
+            uint32_t inUse = std::max(slotInUse, buffer->liveCount);
+            bool isStreamed = (buffer->liveCount > 0 && slotInUse == 0);
+
+            // For perFrame buffers, allocate-tracked and streamed counts are both per-frame logical
+            // counts, but maxSize/bufferSize span all frame slices. Normalize for display so the
+            // ratio reflects "this frame's usage vs this frame's budget".
+            uint32_t       displaySlots      = buffer->perFrame ? (buffer->maxSize / MAX_FRAMES_IN_FLIGHT) : buffer->maxSize;
+            vk::DeviceSize displayBufferSize = buffer->perFrame ? (buffer->bufferSize / MAX_FRAMES_IN_FLIGHT) : buffer->bufferSize;
+            vk::DeviceSize usedBytes         = (vk::DeviceSize)inUse * buffer->elementSize;
+
+            const char* label = buffer->name.empty() ? nullptr : buffer->name.c_str();
+            const char* tag = isStreamed       ? (buffer->perFrame ? "  (streamed, per-frame)" : "  (streamed)")
+                            : buffer->perFrame ? "  (per-frame)"
+                                               : "";
+            if (label) ImGui::Text("%s [%d] : %u / %u slots (%d free)%s", label, i, inUse, displaySlots, (int)buffer->freeSlots.size(), tag);
+            else       ImGui::Text("Buffer %d : %u / %u slots (%d free)%s",      i, inUse, displaySlots, (int)buffer->freeSlots.size(), tag);
+
+            float fraction = displaySlots > 0 ? (float)inUse / (float)displaySlots : 0.0f;
+            std::string overlay = formatBytes(usedBytes) + " / " + formatBytes(displayBufferSize);
+            ImGui::ProgressBar(fraction, ImVec2(-1, 0), overlay.c_str());
+
+            // Grand totals use real GPU footprint, not the per-frame display values.
+            bufferUsed      += usedBytes;
+            bufferCommitted += buffer->bufferSize;
+            i++;
+        }
     }
 
-    ImGui::Separator();
-    ImGui::Text("Textures");
+    // Estimated texture footprint. Assumes RGBA8 (4 bpp) — values for HDR / depth / BC will be off.
     vk::DeviceSize totalTexBytes = 0;
     int texCount = 0;
     for (const auto& tex : descriptorSet.getTextureResources()) {
         if (tex.isEmpty()) continue;
-        // base RGBA8 size * ~1.33 for mip chain
         vk::DeviceSize baseSize = (vk::DeviceSize)tex.width * tex.height * 4;
-        vk::DeviceSize withMips = baseSize * 4 / 3;
-        totalTexBytes += withMips;
+        totalTexBytes += (vk::DeviceSize)((double)baseSize * mipChainFactor(tex.mipLevels));
         texCount++;
     }
-    ImGui::Text("%d textures | ~%.2f MB (with mips)", texCount, totalTexBytes / (1024.0f * 1024.0f));
-    grandTotal += totalTexBytes;
 
-    ImGui::Text("Samplers: %d", (int)descriptorSet.getSamplerResources().size());
+    if (ImGui::CollapsingHeader("Textures & Samplers", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Text("Textures: %d | ~%s (RGBA8 estimate, includes mips)", texCount, formatBytes(totalTexBytes).c_str());
+        ImGui::Text("Samplers: %d", (int)descriptorSet.getSamplerResources().size());
+    }
 
-    ImGui::Separator();
-    ImGui::Text("Meshes");
+    // Mesh stats are derived from variable-buffer allocs and overlap with the Variable Buffers totals
+    // above — informational only, not added to grand totals to avoid double-counting.
     vk::DeviceSize totalVertexBytes = 0;
-    vk::DeviceSize totalIndexBytes = 0;
+    vk::DeviceSize totalIndexBytes  = 0;
     int meshCount = 0;
     for (const auto& mesh : assetManager.meshes) {
         if (mesh.freed) continue;
         meshCount++;
         totalVertexBytes += (vk::DeviceSize)mesh.vertexCount * mesh.vertexStride;
-        totalIndexBytes += (vk::DeviceSize)mesh.indexCount * sizeof(uint32_t);
+        totalIndexBytes  += (vk::DeviceSize)mesh.indexCount  * sizeof(uint32_t);
     }
-    float vertMB = totalVertexBytes / (1024.0f * 1024.0f);
-    float idxMB = totalIndexBytes / (1024.0f * 1024.0f);
-    ImGui::Text("%d meshes | Verts: %.2f MB | Idx: %.2f MB | Total: %.2f MB", meshCount, vertMB, idxMB, vertMB + idxMB);
 
-    ImGui::Separator();
-    uint32_t totalTris = 0;
+    if (ImGui::CollapsingHeader("Meshes", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Text("%d meshes | Verts: %s | Idx: %s | Total: %s",
+            meshCount,
+            formatBytes(totalVertexBytes).c_str(),
+            formatBytes(totalIndexBytes).c_str(),
+            formatBytes(totalVertexBytes + totalIndexBytes).c_str());
+    }
+
+    uint64_t totalTris = 0;
     for (const auto& cmd : indirectDraws)
         totalTris += cmd.indexCount / 3;
-    ImGui::Text("Triangles: %u (%u draws)", totalTris, (uint32_t)indirectDraws.size());
+    ImGui::Separator();
+    ImGui::Text("Triangles: %llu (%u draws)", (unsigned long long)totalTris, (uint32_t)indirectDraws.size());
 
     ImGui::Separator();
-    float grandTotalMB = grandTotal / (1024.0f * 1024.0f);
-    grandTotal += totalVertexBytes + totalIndexBytes;
-    ImGui::Text("Total GPU Memory: ~%.2f MB", grandTotalMB);
+    vk::DeviceSize liveUsed  = bufferUsed + totalTexBytes;
+    vk::DeviceSize committed = bufferCommitted + totalTexBytes;
+    ImGui::Text("GPU Memory  Used: ~%s | Committed: ~%s",
+        formatBytes(liveUsed).c_str(),
+        formatBytes(committed).c_str());
 
     ImGui::End();
 }

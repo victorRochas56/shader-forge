@@ -60,20 +60,20 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     scene.activeCamera.calculateViewProjectionMatrix();
 
     /////=====================================DESCRIPTOR SET BUFFERS=================================================/////
-    vertexBufferIndex = bindless.descriptorSet->createVariableBuffer(256 * 1024 * 1024);                                       // 256 mb vertex buffer
-    indexBufferIndex = bindless.descriptorSet->createVariableBuffer(128 * 1024 * 1024, vk::BufferUsageFlagBits::eIndexBuffer); // index buffer (128 MB)
-    positionBufferIndex = bindless.descriptorSet->createVariableBuffer(128 * 1024 * 1024); // pos buffer (128 MB)
+    vertexBufferIndex   = bindless.descriptorSet->createVariableBuffer(256 * 1024 * 1024, vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress, false, "Vertex");
+    indexBufferIndex    = bindless.descriptorSet->createVariableBuffer(128 * 1024 * 1024, vk::BufferUsageFlagBits::eIndexBuffer, false, "Index");
+    positionBufferIndex = bindless.descriptorSet->createVariableBuffer(128 * 1024 * 1024, vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress, false, "Position");
     scene.assetManager.init(bindless.resourceManager.get(), bindless.descriptorSet.get(), vertexBufferIndex, indexBufferIndex, positionBufferIndex);
 
-    billboardBufferIndex = bindless.descriptorSet->createFixedBuffer<GPUBillboard>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
-    sdfPassDataBufferIndex = bindless.descriptorSet->createFixedBuffer<SDF>(MAX_FIXED_BUFFER);
+    billboardBufferIndex   = bindless.descriptorSet->createFixedBuffer<GPUBillboard>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true, "Billboard");
+    sdfPassDataBufferIndex = bindless.descriptorSet->createFixedBuffer<SDF>(MAX_FIXED_BUFFER, false, "SDF");
 
 
     // these buffers store the data once per frame in flight since they are usually accessed every frame by the CPU
-    buffers.modelMatrixBufferIndex = bindless.descriptorSet->createFixedBuffer<glm::mat4>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
-    shadowDrawDataBufferIndex = bindless.descriptorSet->createFixedBuffer<ShadowDrawData>(MAX_FRAMES_IN_FLIGHT * MAX_SHADOW_CASTERS * MAX_FIXED_BUFFER, true);
-    passResources.buffers.lightBufferIndex = bindless.descriptorSet->createFixedBuffer<GPULight>(MAX_LIGHTS * MAX_FRAMES_IN_FLIGHT, true);
-    litPassDataBufferIndex = bindless.descriptorSet->createFixedBuffer<LitPassData>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
+    buffers.modelMatrixBufferIndex         = bindless.descriptorSet->createFixedBuffer<glm::mat4>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true, "ModelMatrix");
+    shadowDrawDataBufferIndex              = bindless.descriptorSet->createFixedBuffer<ShadowDrawData>(MAX_FRAMES_IN_FLIGHT * MAX_SHADOW_CASTERS * MAX_FIXED_BUFFER, true, "ShadowDrawData");
+    passResources.buffers.lightBufferIndex = bindless.descriptorSet->createFixedBuffer<GPULight>(MAX_LIGHTS * MAX_FRAMES_IN_FLIGHT, true, "Light");
+    litPassDataBufferIndex                 = bindless.descriptorSet->createFixedBuffer<LitPassData>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true, "LitPassData");
 
     // sets the frame offsets for each buffer
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
@@ -85,7 +85,7 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     }
 
     
-    litDrawDataBufferIndex = bindless.descriptorSet->createFixedBuffer<LitDrawData>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
+    litDrawDataBufferIndex = bindless.descriptorSet->createFixedBuffer<LitDrawData>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true, "LitDrawData");
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         bindless.descriptorSet->setBufferFrameOffset(litDrawDataBufferIndex, i, MAX_FIXED_BUFFER * i);
     }
@@ -656,8 +656,8 @@ void Renderer::buildGeometryDrawCommands(const std::array<Plane, 6>& frustumPlan
 
         if (mesh.freed) {
             if (freedMeshes.insert(meshIdx).second) {
-                bindless.descriptorSet->freeVariableBuffer(vertexBufferIndex, mesh.vertexAllocationIndex);
-                bindless.descriptorSet->freeVariableBuffer(indexBufferIndex, mesh.indexAllocationIndex);
+                bindless.descriptorSet->freeVariableBuffer(vertexBufferIndex, mesh.vertexAllocationOffset);
+                bindless.descriptorSet->freeVariableBuffer(indexBufferIndex, mesh.indexAllocationOffset);
                 scene.assetManager.freeMeshes.push(meshIdx);
             }
             continue;
@@ -769,7 +769,7 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
     culledCount = 0;
     litDrawDataList.clear();
     buildGeometryDrawCommands(frustumPlanes, true, [&](const auto& mesh, auto& node, const Material& material) {
-        litDrawDataList.push_back({.vertexAllocationIndex = mesh.vertexAllocationIndex,
+        litDrawDataList.push_back({.vertexAllocationOffset = mesh.vertexAllocationOffset,
                                    .vertexOffset          = static_cast<uint32_t>(mesh.vertexOffset),
                                    .vertexStride          = mesh.vertexStride,
                                    .modelMatrixIndex      = node.getModelMatrixIndex(),
@@ -806,11 +806,7 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
         // Upload indirect commands and per-draw data (shared between depth prepass and lit pass)
         memcpy(static_cast<char*>(litIndirectDrawBufferMapped) + frameByteOffset, indirectCommands.data(), indirectCommands.size() * sizeof(DrawIndexedIndirectCommand));
 
-        auto* litDataPtr = bindless.descriptorSet->getFixedBufferMappedData<LitDrawData>(litDrawDataBufferIndex);
-        if (litDataPtr) {
-            uint32_t frameOffset = gpu.currentFrame * MAX_FIXED_BUFFER;
-            memcpy(&litDataPtr[frameOffset], litDrawDataList.data(), litDrawDataList.size() * sizeof(LitDrawData));
-        }
+        bindless.descriptorSet->writeFixedBuffer<LitDrawData>(litDrawDataBufferIndex, litDrawDataList.data(), static_cast<uint32_t>(litDrawDataList.size()), gpu.currentFrame * MAX_FIXED_BUFFER, gpu.currentFrame);
 
         LitPushConstants pushConstants = {.vertexBufferAddress  = bindless.descriptorSet->getVariableBuffers()[vertexBufferIndex]->address,
                                           .modelMatricesAddress = bindless.descriptorSet->getFixedBuffers()[buffers.modelMatrixBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(glm::mat4),
@@ -1008,14 +1004,12 @@ void Renderer::recordBillboardBlendPass(vk::raii::CommandBuffer& cmd, uint32_t i
     cmd.beginRendering(renderInfo);
     setFullscreenViewport(cmd, extent);
 
-    auto* billboardPtr = bindless.descriptorSet->getFixedBufferMappedData<GPUBillboard>(billboardBufferIndex);
     uint32_t frameOffset = gpu.currentFrame * MAX_FIXED_BUFFER;
-    for (size_t i = 0; i < depthTested.size(); ++i) {
-        billboardPtr[frameOffset + i] = depthTested[i].second;
-    }
-    for (size_t i = 0; i < noDepthTest.size(); ++i) {
-        billboardPtr[frameOffset + depthTested.size() + i] = noDepthTest[i].second;
-    }
+    std::vector<GPUBillboard> billboardWriteBuf;
+    billboardWriteBuf.reserve(depthTested.size() + noDepthTest.size());
+    for (const auto& p : depthTested) billboardWriteBuf.push_back(p.second);
+    for (const auto& p : noDepthTest) billboardWriteBuf.push_back(p.second);
+    bindless.descriptorSet->writeFixedBuffer<GPUBillboard>(billboardBufferIndex, billboardWriteBuf.data(), static_cast<uint32_t>(billboardWriteBuf.size()), frameOffset, gpu.currentFrame);
 
     auto& pipeline = bindless.pipelineManager->getPostProcessPipelines()[billboardPipelineIndex];
     bindPipeline(cmd, *pipeline);
@@ -1179,18 +1173,13 @@ void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light, uint
     if (!indirectCommands.empty()) {
         memcpy(static_cast<char*>(indirectDrawBufferMapped) + frameByteOffset, indirectCommands.data(), indirectCommands.size() * sizeof(DrawIndexedIndirectCommand));
 
-        auto* shadowDataBuffer = bindless.descriptorSet->getFixedBufferMappedData<ShadowDrawData>(shadowDrawDataBufferIndex);
-        if (shadowDataBuffer) {
-            if (drawDataList.size() > MAX_FIXED_BUFFER) {
-                std::cerr << "Warning: shadow draw data (" << drawDataList.size()
-                          << ") exceeds MAX_FIXED_BUFFER (" << MAX_FIXED_BUFFER << "); truncating" << std::endl;
-            }
-            uint32_t drawDataOffset = slotIdx * MAX_FIXED_BUFFER;
-            size_t copyCount = std::min<size_t>(drawDataList.size(), MAX_FIXED_BUFFER);
-            memcpy(&shadowDataBuffer[drawDataOffset], drawDataList.data(), copyCount * sizeof(ShadowDrawData));
-        } else {
-            std::cerr << "Error: shadow data buffer mapped memory is null!" << std::endl;
+        if (drawDataList.size() > MAX_FIXED_BUFFER) {
+            std::cerr << "Warning: shadow draw data (" << drawDataList.size()
+                      << ") exceeds MAX_FIXED_BUFFER (" << MAX_FIXED_BUFFER << "); truncating" << std::endl;
         }
+        uint32_t drawDataOffset = slotIdx * MAX_FIXED_BUFFER;
+        uint32_t copyCount = static_cast<uint32_t>(std::min<size_t>(drawDataList.size(), MAX_FIXED_BUFFER));
+        bindless.descriptorSet->writeFixedBuffer<ShadowDrawData>(shadowDrawDataBufferIndex, drawDataList.data(), copyCount, drawDataOffset, gpu.currentFrame);
     }
 
     // Bind the atlas once; each face/cascade is rendered into its tile via viewport+scissor.

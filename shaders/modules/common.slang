@@ -1,6 +1,6 @@
 // Per-draw data stored in a GPU buffer, indexed by SV_DrawIndex
 struct LitDrawData {
-    uint vertexAllocationIndex;
+    uint vertexAllocationOffset;
     uint vertexOffset;
     uint vertexStride;
     uint modelMatrixIndex;

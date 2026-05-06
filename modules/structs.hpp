@@ -29,8 +29,8 @@ enum MaterialFlags : uint32_t
 data only structs for push constants and various scene elements
 */
 struct PushConstants {
-    uint32_t vertexAllocationIndex; // Index into vertex allocations
-    uint32_t vertexOffset;          // Byte offset in vertex buffer
+    uint32_t vertexAllocationOffset; // Allocation handle (byte offset key) into the vertex variable buffer
+    uint32_t vertexOffset;           // Byte offset in vertex buffer
     uint32_t vertexStride;          // Size of each vertex (e.g., sizeof(Vertex))
     uint32_t modelMatrixIndex;      // Index into model matrices
 
@@ -344,7 +344,7 @@ struct VolumetricApplyPushConstants {
 };
 
 struct LitDrawData {
-    uint32_t vertexAllocationIndex;
+    uint32_t vertexAllocationOffset;
     uint32_t vertexOffset;
     uint32_t vertexStride;
     uint32_t modelMatrixIndex;
@@ -480,13 +480,12 @@ struct Mesh {
     std::string sourceFile;
     std::string name = "";
 
-    // GPU vertex/index data (previously in SubMesh)
-    uint32_t vertexAllocationIndex = 0;
+    uint32_t vertexAllocationOffset = 0;
     vk::DeviceSize vertexOffset = 0;
     uint32_t vertexCount = 0;
     uint32_t vertexStride = 0;
 
-    uint32_t indexAllocationIndex = 0;
+    uint32_t indexAllocationOffset = 0;
     uint32_t indexOffset = 0;
     uint32_t indexCount = 0;
 
@@ -495,7 +494,7 @@ struct Mesh {
     glm::vec3 boundingBoxMax = glm::vec3(0.0f);
     glm::vec3 center = glm::vec3(0.0f);
 
-    uint32_t positionAllocationIndex = 0;
+    uint32_t positionAllocationOffset = 0;
     uint32_t positionOffset = 0;
     uint32_t positionCount = 0;
 

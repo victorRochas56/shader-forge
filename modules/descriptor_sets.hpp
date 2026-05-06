@@ -9,6 +9,7 @@
 #include <map>
 #include <optional>
 #include <queue>
+#include <string>
 #include <vector>
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_raii.hpp>
@@ -67,10 +68,10 @@ struct VariableBufferResource {
     vk::raii::DeviceMemory memory;
     void* mappedData = nullptr;
     vk::DeviceSize bufferSize;
-    //TODO buffer allocs switched to map, need to rename *allocationIndex to *allocationOffset for semantic clarity
     std::map<uint32_t, VariableBufferAllocation> allocations;
     uint32_t bindingIndex = 0;
     uint32_t maxSize = MAX_VARIABLE_BUFFER;
+    std::string name;
 
     VariableBufferResource(vk::DeviceAddress add, vk::raii::Buffer&& buf, vk::raii::DeviceMemory&& mem, void* mapped, vk::DeviceSize size, uint32_t max)
         : address(add), buffer(std::move(buf)), memory(std::move(mem)), mappedData(mapped), bufferSize(size), maxSize(max) {}
@@ -94,6 +95,13 @@ struct FixedBufferResourceBase {
     bool perFrame;
     uint32_t elementSize = 0;  // Size of a single element
     uint32_t frameOffsets[MAX_FRAMES_IN_FLIGHT] = {};  // Offset for each frame in the buffer
+    std::string name;
+    // Live element count for diagnostics (showBufferAllocs). Maintained automatically by
+    // writeFixedBuffer — accumulates across writes within a frame and resets when the frame
+    // index advances. The per-slot allocations[i].inUse flags only track the allocate/free path,
+    // so this field is what makes streamed (memcpy) buffers visible to the GUI.
+    uint32_t liveCount = 0;
+    uint32_t lastWriteFrame = 0xFFFFFFFFu;
 
     virtual ~FixedBufferResourceBase() = default;
     virtual uint32_t allocateImpl(const void* data) = 0;
@@ -425,7 +433,7 @@ class DescriptorSet {
         device.getDevice().updateDescriptorSets(write, {});
     }
 
-    template <typename T> uint32_t createFixedBuffer(uint32_t maxElements = MAX_FIXED_BUFFER, bool usesDynamicOffset = false) {
+    template <typename T> uint32_t createFixedBuffer(uint32_t maxElements = MAX_FIXED_BUFFER, bool usesDynamicOffset = false, std::string name = "") {
         vk::DeviceSize bufferSize = maxElements * sizeof(T);
 
         vk::BufferCreateInfo bufferInfo{.size = bufferSize, .usage = vk::BufferUsageFlagBits::eStorageBuffer, .sharingMode = vk::SharingMode::eExclusive};
@@ -448,6 +456,7 @@ class DescriptorSet {
         fixedBuffer->bufferSize = bufferSize;
         fixedBuffer->maxSize = maxElements;
         fixedBuffer->perFrame = usesDynamicOffset;
+        fixedBuffer->name = std::move(name);
 
         uint32_t bufferIndex = static_cast<uint32_t>(fixedBuffers.size());
         fixedBuffers.push_back(std::move(fixedBuffer));
@@ -514,6 +523,32 @@ class DescriptorSet {
         typedPtr->updateTypedWithOffset(index, data, frameIndex);
     }
 
+    // One-shot streaming write: memcpy `count` elements at `elementOffset` into the mapped buffer
+    // and update diagnostics-side `liveCount` automatically. liveCount accumulates within a frame
+    // (multiple writes from the same frame add up) and resets when frameIndex advances.
+    // Use this instead of getFixedBufferMappedData + memcpy for any streamed write that should
+    // show up in showBufferAllocs.
+    template <typename T>
+    void writeFixedBuffer(uint32_t bufferIndex, const T* src, uint32_t count, uint32_t elementOffset, uint32_t frameIndex = 0) {
+        if (bufferIndex >= fixedBuffers.size()) return;
+        auto* base = fixedBuffers[bufferIndex].get();
+        if (!base->mappedData || count == 0) return;
+        T* dst = static_cast<T*>(base->mappedData);
+        std::memcpy(&dst[elementOffset], src, static_cast<size_t>(count) * sizeof(T));
+        if (frameIndex != base->lastWriteFrame) {
+            base->liveCount = 0;
+            base->lastWriteFrame = frameIndex;
+        }
+        base->liveCount += count;
+    }
+
+    // Escape hatch for code paths that fill the buffer through getFixedBufferMappedData and
+    // can't easily switch to writeFixedBuffer (e.g. interleaved/strided writes).
+    void setFixedBufferLiveCount(uint32_t bufferIndex, uint32_t count) {
+        if (bufferIndex >= fixedBuffers.size()) return;
+        fixedBuffers[bufferIndex]->liveCount = count;
+    }
+
     void setBufferFrameOffset(uint32_t bufferIndex, uint32_t frameIndex, uint32_t offsetInElements) {
         if (bufferIndex >= fixedBuffers.size()) {
             throw std::runtime_error("Invalid buffer index");
@@ -526,7 +561,7 @@ class DescriptorSet {
         basePtr->frameOffsets[frameIndex] = offsetInElements * basePtr->elementSize;
     }
 
-    uint32_t createVariableBuffer(uint32_t maxSizeBytes = 1024 * 1024, vk::BufferUsageFlags usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress, bool perFrame = false) {
+    uint32_t createVariableBuffer(uint32_t maxSizeBytes = 1024 * 1024, vk::BufferUsageFlags usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress, bool perFrame = false, std::string name = "") {
         vk::BufferCreateInfo bufferInfo{.size = maxSizeBytes, .usage = usage, .sharingMode = vk::SharingMode::eExclusive};
 
         vk::raii::Buffer buffer(device.getDevice(), bufferInfo);
@@ -541,6 +576,7 @@ class DescriptorSet {
         void* mappedData = memory.mapMemory(0, maxSizeBytes);
 
         variableBuffers.push_back(VariableBufferResource{getBufferAddress(device.getDevice(),buffer),std::move(buffer), std::move(memory), mappedData, maxSizeBytes, maxSizeBytes});
+        variableBuffers.back()->name = std::move(name);
         return variableBuffers.size() - 1;
     }
 

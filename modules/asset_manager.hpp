@@ -68,11 +68,11 @@ class AssetManager {
             bbMin -= center;
             bbMax -= center;
 
-            uint32_t vertexAllocIndex = descriptorSet->allocateVariableBuffer<Vertex>(vertices, vertexBufferIndex);
-            VariableBufferAllocation vertexAlloc = descriptorSet->getVariableBufferAllocation(vertexBufferIndex, vertexAllocIndex);
+            uint32_t vertexAllocOffset = descriptorSet->allocateVariableBuffer<Vertex>(vertices, vertexBufferIndex);
+            VariableBufferAllocation vertexAlloc = descriptorSet->getVariableBufferAllocation(vertexBufferIndex, vertexAllocOffset);
 
-            uint32_t indexAllocIndex = descriptorSet->allocateVariableBuffer<uint32_t>(indices, indexBufferIndex);
-            VariableBufferAllocation indexAlloc = descriptorSet->getVariableBufferAllocation(indexBufferIndex, indexAllocIndex);
+            uint32_t indexAllocOffset = descriptorSet->allocateVariableBuffer<uint32_t>(indices, indexBufferIndex);
+            VariableBufferAllocation indexAlloc = descriptorSet->getVariableBufferAllocation(indexBufferIndex, indexAllocOffset);
 
 
             std::vector<glm::vec3> cpuPositions;
@@ -81,24 +81,24 @@ class AssetManager {
                 cpuPositions.push_back(v.position);
             }
 
-            uint32_t positionAllocIndex = descriptorSet->allocateVariableBuffer<glm::vec3>(cpuPositions, positionBufferIndex);
-            VariableBufferAllocation positionAlloc = descriptorSet->getVariableBufferAllocation(positionBufferIndex, positionAllocIndex);
+            uint32_t positionAllocOffset = descriptorSet->allocateVariableBuffer<glm::vec3>(cpuPositions, positionBufferIndex);
+            VariableBufferAllocation positionAlloc = descriptorSet->getVariableBufferAllocation(positionBufferIndex, positionAllocOffset);
 
 
             Mesh mesh;
             mesh.sourceFile = filePath;
             mesh.name = entry.shapeName;
-            mesh.vertexAllocationIndex = vertexAllocIndex;
+            mesh.vertexAllocationOffset = vertexAllocOffset;
             mesh.vertexOffset = vertexAlloc.offset;
             mesh.vertexCount = vertexAlloc.count;
             mesh.vertexStride = vertexAlloc.stride;
-            mesh.indexAllocationIndex = indexAllocIndex;
+            mesh.indexAllocationOffset = indexAllocOffset;
             mesh.indexOffset = indexAlloc.offset;
             mesh.indexCount = indexAlloc.count;
             mesh.boundingBoxMin = bbMin;
             mesh.boundingBoxMax = bbMax;
             mesh.center = center;
-            mesh.positionAllocationIndex = positionAllocIndex;
+            mesh.positionAllocationOffset = positionAllocOffset;
             mesh.positionOffset = positionAlloc.offset;
             mesh.positionCount = positionAlloc.count;
             mesh.cpuPositions = std::move(cpuPositions);

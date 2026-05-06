@@ -22,7 +22,7 @@ class SSRPass : public RenderPass {
 
 public:
     SSRPass(GpuContext& gpu, BindlessSystem& bindless, Scene& scene, RenderFeatures& features, RenderPassResources& shared) : RenderPass(gpu, bindless, scene, features, shared) {
-        passDataBufferIndex = bindless.descriptorSet->createFixedBuffer<SSRPassData>(MAX_FRAMES_IN_FLIGHT, true);
+        passDataBufferIndex = bindless.descriptorSet->createFixedBuffer<SSRPassData>(MAX_FRAMES_IN_FLIGHT, true, "SSRPassData");
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
             bindless.descriptorSet->setBufferFrameOffset(passDataBufferIndex,i,i);
         }

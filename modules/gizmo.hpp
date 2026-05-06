@@ -36,7 +36,7 @@ class Gizmos {
     static void init(uint32_t maxLinesCount, DescriptorSet* pDescriptorSet, uint32_t sdfBufferIndex) {
         auto& g = instance();
         g.descriptorSet = pDescriptorSet;
-        g.lineBufferIndex = pDescriptorSet->createFixedBuffer<LineVertex>(maxLinesCount);
+        g.lineBufferIndex = pDescriptorSet->createFixedBuffer<LineVertex>(maxLinesCount, false, "GizmoLine");
         g.sdfBufferIndex = sdfBufferIndex;
     }
 
