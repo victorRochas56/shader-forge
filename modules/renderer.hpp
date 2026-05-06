@@ -74,6 +74,7 @@ class Renderer {
 
     uint32_t                            vertexBufferIndex;
     uint32_t                            indexBufferIndex;
+    uint32_t                            positionBufferIndex;
     uint32_t                            billboardBufferIndex;
     uint32_t                            shadowDrawDataBufferIndex;
     uint32_t                            litDrawDataBufferIndex;

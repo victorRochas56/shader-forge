@@ -150,19 +150,17 @@ struct RenderFeatures {
 };
 
 struct ShadowPushConstants {
-    uint64_t vertexBufferAddress;      // 8
-    uint64_t modelMatricesAddress;     // 8  (pre-offset)
+    uint64_t positionBufferAddress;      // 8
     uint64_t shadowDrawDataAddress;    // 8  (pre-offset)
-    uint64_t padding;                  // 8  (align lightSpaceMatrix to 16)
-    glm::mat4 lightSpaceMatrix;        // 64
-};  // Total: 96 bytes
+};  // Total: 16 bytes
 
 struct ShadowDrawData {
-    uint32_t vertexAllocationIndex;
-    uint32_t vertexOffset;
-    uint32_t vertexStride;
-    uint32_t modelMatrixIndex;
-};
+    uint32_t positionBufferOffset;
+    uint32_t positionBufferStride;
+    uint32_t _pad0;
+    uint32_t _pad1;
+    glm::mat4 MMxLSM;
+}; // 80 bytes
 
 struct BlurPushConstants {
     uint32_t inputTextureIndex;
@@ -496,6 +494,10 @@ struct Mesh {
     glm::vec3 boundingBoxMin = glm::vec3(0.0f);
     glm::vec3 boundingBoxMax = glm::vec3(0.0f);
     glm::vec3 center = glm::vec3(0.0f);
+
+    uint32_t positionAllocationIndex = 0;
+    uint32_t positionOffset = 0;
+    uint32_t positionCount = 0;
 
     // CPU-side geometry for raycasting
     std::vector<glm::vec3> cpuPositions;

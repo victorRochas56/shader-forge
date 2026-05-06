@@ -26,11 +26,12 @@ class AssetManager {
     std::map<std::string, uint32_t>     loadedCubemaps;
     std::map<std::string, MeshLoadResult> loadedMeshes;
 
-    void init(ResourceManager* resourceManager, DescriptorSet* descriptorSet, uint32_t vertexBufferIndex, uint32_t indexBufferIndex) {
+    void init(ResourceManager* resourceManager, DescriptorSet* descriptorSet, uint32_t vertexBufferIndex, uint32_t indexBufferIndex, uint32_t positionBufferIndex) {
         this->resourceManager = resourceManager;
         this->descriptorSet = descriptorSet;
         this->vertexBufferIndex = vertexBufferIndex;
         this->indexBufferIndex = indexBufferIndex;
+        this->positionBufferIndex = positionBufferIndex;
     }
 
     // Loads an OBJ and returns mesh indices plus material grouping info.
@@ -73,11 +74,16 @@ class AssetManager {
             uint32_t indexAllocIndex = descriptorSet->allocateVariableBuffer<uint32_t>(indices, indexBufferIndex);
             VariableBufferAllocation indexAlloc = descriptorSet->getVariableBufferAllocation(indexBufferIndex, indexAllocIndex);
 
+
             std::vector<glm::vec3> cpuPositions;
             cpuPositions.reserve(vertices.size());
             for (const auto& v : vertices) {
                 cpuPositions.push_back(v.position);
             }
+
+            uint32_t positionAllocIndex = descriptorSet->allocateVariableBuffer<glm::vec3>(cpuPositions, positionBufferIndex);
+            VariableBufferAllocation positionAlloc = descriptorSet->getVariableBufferAllocation(positionBufferIndex, positionAllocIndex);
+
 
             Mesh mesh;
             mesh.sourceFile = filePath;
@@ -92,6 +98,9 @@ class AssetManager {
             mesh.boundingBoxMin = bbMin;
             mesh.boundingBoxMax = bbMax;
             mesh.center = center;
+            mesh.positionAllocationIndex = positionAllocIndex;
+            mesh.positionOffset = positionAlloc.offset;
+            mesh.positionCount = positionAlloc.count;
             mesh.cpuPositions = std::move(cpuPositions);
             mesh.cpuIndices = indices;
 
@@ -158,4 +167,5 @@ class AssetManager {
     DescriptorSet* descriptorSet = nullptr;
     uint32_t vertexBufferIndex = 0;
     uint32_t indexBufferIndex = 0;
+    uint32_t positionBufferIndex = 0;
 };

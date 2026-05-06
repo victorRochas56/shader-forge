@@ -62,7 +62,8 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     /////=====================================DESCRIPTOR SET BUFFERS=================================================/////
     vertexBufferIndex = bindless.descriptorSet->createVariableBuffer(256 * 1024 * 1024);                                       // 256 mb vertex buffer
     indexBufferIndex = bindless.descriptorSet->createVariableBuffer(128 * 1024 * 1024, vk::BufferUsageFlagBits::eIndexBuffer); // index buffer (128 MB)
-    scene.assetManager.init(bindless.resourceManager.get(), bindless.descriptorSet.get(), vertexBufferIndex, indexBufferIndex);
+    positionBufferIndex = bindless.descriptorSet->createVariableBuffer(128 * 1024 * 1024); // pos buffer (128 MB)
+    scene.assetManager.init(bindless.resourceManager.get(), bindless.descriptorSet.get(), vertexBufferIndex, indexBufferIndex, positionBufferIndex);
 
     billboardBufferIndex = bindless.descriptorSet->createFixedBuffer<GPUBillboard>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true);
     sdfPassDataBufferIndex = bindless.descriptorSet->createFixedBuffer<SDF>(MAX_FIXED_BUFFER);
@@ -1127,11 +1128,21 @@ void Renderer::recordImageVisPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
 
 void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light, uint32_t shadowSlot) {
     auto& currentPipeline = bindless.pipelineManager->getBeforeGeoPipelines()[shadowPipelineIndex];
-    vk::Buffer indexBufferHandle = bindless.descriptorSet->getVariableBuffer(indexBufferIndex);
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, currentPipeline->pipeline);
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, currentPipeline->layout, 0, {*currentPipeline->descriptorSet}, {});
+    cmd.bindIndexBuffer(bindless.descriptorSet->getVariableBuffer(indexBufferIndex), 0, vk::IndexType::eUint32);
 
-    // Build indirect draw commands once — identical across all faces/cascades since culling is off
+    // Determine face count up front — draw data is baked per-face below.
+    uint32_t faceCount = 0;
+    if (light.type == LightType::Directional) {
+        faceCount = light.numCascades;
+    } else if (light.type == LightType::Point) {
+        faceCount = 6;
+    }
+
+    // Build indirect draw commands once — identical across all faces/cascades since culling is off.
+    // Capture per-draw source data so we can re-bake `lightSpaceMatrix * model` per face without
+    // re-walking the scene graph.
     std::array<Plane, 6> dummyPlanes{};
     drawDataList.clear();
     // Point lights only need to draw casters inside their range — LightInfluence
@@ -1141,12 +1152,23 @@ void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light, uint
     if (light.type == LightType::Point) {
         nodeFilter = [&light](const Node& n) { return light.influencedNodes.count(n.nodeIndex) != 0; };
     }
-    buildGeometryDrawCommands(dummyPlanes, false, [&](const auto& mesh, auto& node, const auto& material) {
-        drawDataList.push_back({.vertexAllocationIndex = mesh.vertexAllocationIndex,
-                                .vertexOffset = static_cast<uint32_t>(mesh.vertexOffset),
-                                .vertexStride = mesh.vertexStride,
-                                .modelMatrixIndex = node.getModelMatrixIndex()});
+    struct ShadowDrawSrc { uint32_t positionOffset; glm::mat4 worldTransform; };
+    std::vector<ShadowDrawSrc> drawSrc;
+    buildGeometryDrawCommands(dummyPlanes, false, [&](const Mesh& mesh, Node& node, const auto& material) {
+        drawSrc.push_back({mesh.positionOffset, node.worldTransform});
     }, nodeFilter);
+
+    uint32_t drawsPerFace = static_cast<uint32_t>(drawSrc.size());
+
+    // Bake per-face MMxLSM into drawDataList laid out as [face0 draws..., face1 draws..., ...].
+    drawDataList.reserve(static_cast<size_t>(drawsPerFace) * faceCount);
+    for (uint32_t f = 0; f < faceCount; ++f) {
+        const glm::mat4& lsm = (light.type == LightType::Directional) ? light.cascades[f].lightSpaceMatrix : light.cubeMapIndices[f].lightSpaceMatrix;
+        for (const auto& src : drawSrc) {
+            drawDataList.push_back({.positionBufferOffset = src.positionOffset, 
+                                    .positionBufferStride = sizeof(glm::vec3), .MMxLSM = lsm * src.worldTransform});
+        }
+    }
 
     // Per-light slot within the frame so multiple shadow-casting lights don't stomp on each
     // other's indirect commands / draw data before the GPU reads them.
@@ -1159,19 +1181,16 @@ void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light, uint
 
         auto* shadowDataBuffer = bindless.descriptorSet->getFixedBufferMappedData<ShadowDrawData>(shadowDrawDataBufferIndex);
         if (shadowDataBuffer) {
+            if (drawDataList.size() > MAX_FIXED_BUFFER) {
+                std::cerr << "Warning: shadow draw data (" << drawDataList.size()
+                          << ") exceeds MAX_FIXED_BUFFER (" << MAX_FIXED_BUFFER << "); truncating" << std::endl;
+            }
             uint32_t drawDataOffset = slotIdx * MAX_FIXED_BUFFER;
-            memcpy(&shadowDataBuffer[drawDataOffset], drawDataList.data(), drawDataList.size() * sizeof(ShadowDrawData));
+            size_t copyCount = std::min<size_t>(drawDataList.size(), MAX_FIXED_BUFFER);
+            memcpy(&shadowDataBuffer[drawDataOffset], drawDataList.data(), copyCount * sizeof(ShadowDrawData));
         } else {
             std::cerr << "Error: shadow data buffer mapped memory is null!" << std::endl;
         }
-    }
-
-    // Determine face count
-    uint32_t faceCount = 0;
-    if (light.type == LightType::Directional) {
-        faceCount = light.numCascades;
-    } else if (light.type == LightType::Point) {
-        faceCount = 6;
     }
 
     // Bind the atlas once; each face/cascade is rendered into its tile via viewport+scissor.
@@ -1189,13 +1208,10 @@ void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light, uint
 
     for (uint32_t i = 0; i < faceCount; i++) {
         glm::vec4 uvRange;
-        glm::mat4 lightSpaceMatrix;
         if (light.type == LightType::Directional) {
-            uvRange          = light.cascades[i].shadowAtlasUVRange;
-            lightSpaceMatrix = light.cascades[i].lightSpaceMatrix;
+            uvRange = light.cascades[i].shadowAtlasUVRange;
         } else {
-            uvRange          = light.cubeMapIndices[i].shadowAtlasUVRange;
-            lightSpaceMatrix = light.cubeMapIndices[i].lightSpaceMatrix;
+            uvRange = light.cubeMapIndices[i].shadowAtlasUVRange;
         }
 
         int32_t  tx = static_cast<int32_t>(uvRange.x * SHADOW_ATLAS_SIZE);
@@ -1218,14 +1234,13 @@ void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light, uint
         cmd.setScissor(0, tileRect);
 
         if (!indirectCommands.empty()) {
+            // Each face indexes into its own [face i] block within the slot's draw-data region.
             ShadowPushConstants pushConstants = {
-                .vertexBufferAddress   = bindless.descriptorSet->getVariableBuffers()[vertexBufferIndex]->address,
-                .modelMatricesAddress  = bindless.descriptorSet->getFixedBuffers()[buffers.modelMatrixBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(glm::mat4),
-                .shadowDrawDataAddress = bindless.descriptorSet->getFixedBuffers()[shadowDrawDataBufferIndex]->address + static_cast<vk::DeviceSize>(slotIdx) * MAX_FIXED_BUFFER * sizeof(ShadowDrawData),
-                .lightSpaceMatrix      = lightSpaceMatrix};
+                .positionBufferAddress = bindless.descriptorSet->getVariableBuffers()[positionBufferIndex]->address,
+                .shadowDrawDataAddress = bindless.descriptorSet->getFixedBuffers()[shadowDrawDataBufferIndex]->address
+                                         + (static_cast<vk::DeviceSize>(slotIdx) * MAX_FIXED_BUFFER + static_cast<vk::DeviceSize>(i) * drawsPerFace) * sizeof(ShadowDrawData)};
             cmd.pushConstants<ShadowPushConstants>(*currentPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pushConstants);
 
-            cmd.bindIndexBuffer(indexBufferHandle, 0, vk::IndexType::eUint32);
             cmd.drawIndexedIndirect(*indirectDrawBuffer, frameByteOffset, static_cast<uint32_t>(indirectCommands.size()), sizeof(DrawIndexedIndirectCommand));
         }
     }
