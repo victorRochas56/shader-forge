@@ -46,7 +46,7 @@ class AssetManager {
 #if DEBUG == 1
         std::cout << "Loading mesh from " << filePath << std::endl;
 #endif
-        auto meshData = resourceManager->loadMeshFromFile(filePath);
+        MeshData meshData = resourceManager->loadMeshFromFile(filePath);
 
         for (auto& entry : meshData.entries) {
             auto& vertices = entry.vertices;
@@ -54,16 +54,33 @@ class AssetManager {
 
             glm::vec3 bbMin(std::numeric_limits<float>::max());
             glm::vec3 bbMax(std::numeric_limits<float>::lowest());
+
+            glm::dvec3 averagePointAccum{0,0,0};
             for (const auto& vertex : vertices) {
                 bbMin = glm::min(bbMin, vertex.position);
                 bbMax = glm::max(bbMax, vertex.position);
+                averagePointAccum += glm::dvec3(vertex.position);
             }
+            glm::vec3 averagePoint = glm::vec3(averagePointAccum / static_cast<double>(vertices.size()));
 
             glm::vec3 center = (bbMax + bbMin) * 0.5f;
+            averagePoint -= center;
+            printf("AVERAGE POINT OF MESH : %f, %f, %f \n",averagePoint.x,averagePoint.y,averagePoint.z);
             // Center the vertices at origin
             for (auto& vertex : vertices) {
                 vertex.position -= center;
             }
+
+            float inscribedRadius = std::numeric_limits<float>::max();
+            float circumscribedRadius = 0.0f;
+            glm::vec3 avg = glm::vec3(averagePoint);
+            for (const auto& vertex : vertices) {
+                float d = glm::length(vertex.position - avg);
+                inscribedRadius = std::min(inscribedRadius, d);
+                circumscribedRadius = std::max(circumscribedRadius, d);
+            }
+            printf("INSCRIBED SPHERE RADIUS    : %f\n", inscribedRadius);
+            printf("CIRCUMSCRIBED SPHERE RADIUS: %f\n", circumscribedRadius);
             // Update bounding box to be centered
             bbMin -= center;
             bbMax -= center;

@@ -64,6 +64,8 @@ class App {
         renderer.buffers.nodeTextureIndex = scene.assetManager.loadTextureFromFile("textures/node.png");
 
         printf("SIZE OF NODE : %zu",sizeof(Node));
+
+        sceneLoader.loadScene("scene.scn",scene,bindless,renderer.getModelMatrixBufferIndex(),renderer.getLightBufferIndex(),renderer.getVolumeBufferIndex());
         //start of render loop
         mainLoop();
     }
