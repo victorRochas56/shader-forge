@@ -471,12 +471,12 @@ static float mipChainFactor(uint32_t mipLevels) {
     return (1.0f - std::pow(0.25f, (float)mipLevels)) / 0.75f;
 }
 
-void showBufferAllocs(DescriptorSet& descriptorSet, AssetManager& assetManager, const std::vector<DrawIndexedIndirectCommand>& indirectDraws){
+void showBufferAllocs(DescriptorSet& descriptorSet, AssetManager& assetManager, const std::vector<DrawIndexedIndirectCommand>& indirectDraws) {
 
     ImGui::Begin("Buffers");
 
-    vk::DeviceSize bufferUsed      = 0;  // bytes actually occupied by live allocations
-    vk::DeviceSize bufferCommitted = 0;  // bytes reserved on the GPU (full buffer capacity)
+    vk::DeviceSize bufferUsed = 0;      // bytes actually occupied by live allocations
+    vk::DeviceSize bufferCommitted = 0; // bytes reserved on the GPU (full buffer capacity)
 
     if (ImGui::CollapsingHeader("Variable Buffers", ImGuiTreeNodeFlags_DefaultOpen)) {
         int i = 0;
@@ -485,14 +485,16 @@ void showBufferAllocs(DescriptorSet& descriptorSet, AssetManager& assetManager, 
             for (const auto& [offset, alloc] : buffer->allocations)
                 usedBytes += alloc.capacity;
             const char* label = buffer->name.empty() ? nullptr : buffer->name.c_str();
-            if (label) ImGui::Text("%s [%d] : %d allocs", label, i, (int)buffer->allocations.size());
-            else       ImGui::Text("Buffer %d : %d allocs",       i, (int)buffer->allocations.size());
+            if (label)
+                ImGui::Text("%s [%d] : %d allocs", label, i, (int)buffer->allocations.size());
+            else
+                ImGui::Text("Buffer %d : %d allocs", i, (int)buffer->allocations.size());
 
             float fraction = buffer->bufferSize > 0 ? (float)((double)usedBytes / (double)buffer->bufferSize) : 0.0f;
             std::string overlay = formatBytes(usedBytes) + " / " + formatBytes(buffer->bufferSize);
             ImGui::ProgressBar(fraction, ImVec2(-1, 0), overlay.c_str());
 
-            bufferUsed      += usedBytes;
+            bufferUsed += usedBytes;
             bufferCommitted += buffer->bufferSize;
             i++;
         }
@@ -505,30 +507,31 @@ void showBufferAllocs(DescriptorSet& descriptorSet, AssetManager& assetManager, 
             // Streamed sites bump liveCount through writeFixedBuffer.
             uint32_t slotInUse = 0;
             for (const auto& alloc : buffer->allocations)
-                if (alloc.inUse) slotInUse++;
+                if (alloc.inUse)
+                    slotInUse++;
             uint32_t inUse = std::max(slotInUse, buffer->liveCount);
             bool isStreamed = (buffer->liveCount > 0 && slotInUse == 0);
 
             // For perFrame buffers, allocate-tracked and streamed counts are both per-frame logical
             // counts, but maxSize/bufferSize span all frame slices. Normalize for display so the
             // ratio reflects "this frame's usage vs this frame's budget".
-            uint32_t       displaySlots      = buffer->perFrame ? (buffer->maxSize / MAX_FRAMES_IN_FLIGHT) : buffer->maxSize;
+            uint32_t displaySlots = buffer->perFrame ? (buffer->maxSize / MAX_FRAMES_IN_FLIGHT) : buffer->maxSize;
             vk::DeviceSize displayBufferSize = buffer->perFrame ? (buffer->bufferSize / MAX_FRAMES_IN_FLIGHT) : buffer->bufferSize;
-            vk::DeviceSize usedBytes         = (vk::DeviceSize)inUse * buffer->elementSize;
+            vk::DeviceSize usedBytes = (vk::DeviceSize)inUse * buffer->elementSize;
 
             const char* label = buffer->name.empty() ? nullptr : buffer->name.c_str();
-            const char* tag = isStreamed       ? (buffer->perFrame ? "  (streamed, per-frame)" : "  (streamed)")
-                            : buffer->perFrame ? "  (per-frame)"
-                                               : "";
-            if (label) ImGui::Text("%s [%d] : %u / %u slots (%d free)%s", label, i, inUse, displaySlots, (int)buffer->freeSlots.size(), tag);
-            else       ImGui::Text("Buffer %d : %u / %u slots (%d free)%s",      i, inUse, displaySlots, (int)buffer->freeSlots.size(), tag);
+            const char* tag = isStreamed ? (buffer->perFrame ? "  (streamed, per-frame)" : "  (streamed)") : buffer->perFrame ? "  (per-frame)" : "";
+            if (label)
+                ImGui::Text("%s [%d] : %u / %u slots (%d free)%s", label, i, inUse, displaySlots, (int)buffer->freeSlots.size(), tag);
+            else
+                ImGui::Text("Buffer %d : %u / %u slots (%d free)%s", i, inUse, displaySlots, (int)buffer->freeSlots.size(), tag);
 
             float fraction = displaySlots > 0 ? (float)inUse / (float)displaySlots : 0.0f;
             std::string overlay = formatBytes(usedBytes) + " / " + formatBytes(displayBufferSize);
             ImGui::ProgressBar(fraction, ImVec2(-1, 0), overlay.c_str());
 
             // Grand totals use real GPU footprint, not the per-frame display values.
-            bufferUsed      += usedBytes;
+            bufferUsed += usedBytes;
             bufferCommitted += buffer->bufferSize;
             i++;
         }

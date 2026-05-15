@@ -12,8 +12,10 @@
 
 struct MeshLoadResult {
     std::vector<uint32_t> meshIndices;
+    // instance transforms
+    std::vector<glm::mat4> transforms;
     // source material ID -> list of mesh indices that use it
-    std::map<int, std::vector<uint32_t>> meshesByMaterial;
+    std::vector<uint32_t> materialIds;
     // source material ID -> material name from the file
     std::map<int, std::string> materialNames;
 };
@@ -85,46 +87,64 @@ class AssetManager {
             bbMin -= center;
             bbMax -= center;
 
-            uint32_t vertexAllocOffset = descriptorSet->allocateVariableBuffer<Vertex>(vertices, vertexBufferIndex);
-            VariableBufferAllocation vertexAlloc = descriptorSet->getVariableBufferAllocation(vertexBufferIndex, vertexAllocOffset);
-
-            uint32_t indexAllocOffset = descriptorSet->allocateVariableBuffer<uint32_t>(indices, indexBufferIndex);
-            VariableBufferAllocation indexAlloc = descriptorSet->getVariableBufferAllocation(indexBufferIndex, indexAllocOffset);
-
-
-            std::vector<glm::vec3> cpuPositions;
-            cpuPositions.reserve(vertices.size());
-            for (const auto& v : vertices) {
-                cpuPositions.push_back(v.position);
+            uint32_t existingInstance = false;
+            for(uint32_t i = 0; i < meshes.size(); i++) {
+                if(std::abs(inscribedRadius - meshes[i].minRadius) < 0.001f && std::abs(circumscribedRadius - meshes[i].maxRadius) < 0.001f ) {
+                    existingInstance = i;
+                    break; 
+                }
             }
 
-            uint32_t positionAllocOffset = descriptorSet->allocateVariableBuffer<glm::vec3>(cpuPositions, positionBufferIndex);
-            VariableBufferAllocation positionAlloc = descriptorSet->getVariableBufferAllocation(positionBufferIndex, positionAllocOffset);
+            uint32_t meshIdx;
+            if(existingInstance == 0) {
 
-
-            Mesh mesh;
-            mesh.sourceFile = filePath;
-            mesh.name = entry.shapeName;
-            mesh.vertexAllocationOffset = vertexAllocOffset;
-            mesh.vertexOffset = vertexAlloc.offset;
-            mesh.vertexCount = vertexAlloc.count;
-            mesh.vertexStride = vertexAlloc.stride;
-            mesh.indexAllocationOffset = indexAllocOffset;
-            mesh.indexOffset = indexAlloc.offset;
-            mesh.indexCount = indexAlloc.count;
-            mesh.boundingBoxMin = bbMin;
-            mesh.boundingBoxMax = bbMax;
-            mesh.center = center;
-            mesh.positionAllocationOffset = positionAllocOffset;
-            mesh.positionOffset = positionAlloc.offset;
-            mesh.positionCount = positionAlloc.count;
-            mesh.cpuPositions = std::move(cpuPositions);
-            mesh.cpuIndices = indices;
-
-            meshes.push_back(std::move(mesh));
-            uint32_t meshIdx = static_cast<uint32_t>(meshes.size() - 1);
+                uint32_t vertexAllocOffset = descriptorSet->allocateVariableBuffer<Vertex>(vertices, vertexBufferIndex);
+                VariableBufferAllocation vertexAlloc = descriptorSet->getVariableBufferAllocation(vertexBufferIndex, vertexAllocOffset);
+    
+                uint32_t indexAllocOffset = descriptorSet->allocateVariableBuffer<uint32_t>(indices, indexBufferIndex);
+                VariableBufferAllocation indexAlloc = descriptorSet->getVariableBufferAllocation(indexBufferIndex, indexAllocOffset);
+    
+                std::vector<glm::vec3> cpuPositions;
+                cpuPositions.reserve(vertices.size());
+                for (const auto& v : vertices) {
+                    cpuPositions.push_back(v.position);
+                }
+    
+                uint32_t positionAllocOffset = descriptorSet->allocateVariableBuffer<glm::vec3>(cpuPositions, positionBufferIndex);
+                VariableBufferAllocation positionAlloc = descriptorSet->getVariableBufferAllocation(positionBufferIndex, positionAllocOffset);
+    
+    
+                Mesh mesh;
+                mesh.minRadius = inscribedRadius;
+                mesh.maxRadius = circumscribedRadius;
+    
+                mesh.sourceFile = filePath;
+                mesh.name = entry.shapeName;
+                mesh.vertexAllocationOffset = vertexAllocOffset;
+                mesh.vertexOffset = vertexAlloc.offset;
+                mesh.vertexCount = vertexAlloc.count;
+                mesh.vertexStride = vertexAlloc.stride;
+                mesh.indexAllocationOffset = indexAllocOffset;
+                mesh.indexOffset = indexAlloc.offset;
+                mesh.indexCount = indexAlloc.count;
+                mesh.boundingBoxMin = bbMin;
+                mesh.boundingBoxMax = bbMax;
+                mesh.center = center;
+                mesh.positionAllocationOffset = positionAllocOffset;
+                mesh.positionOffset = positionAlloc.offset;
+                mesh.positionCount = positionAlloc.count;
+                mesh.cpuPositions = std::move(cpuPositions);
+                mesh.cpuIndices = indices;
+    
+                meshes.push_back(std::move(mesh));
+                meshIdx = static_cast<uint32_t>(meshes.size() - 1);
+            }
+            else {
+                meshIdx = existingInstance;
+            }
             result.meshIndices.push_back(meshIdx);
-            result.meshesByMaterial[entry.materialId].push_back(meshIdx);
+            result.transforms.push_back(makeTransform(center));
+            result.materialIds.push_back(entry.materialId);
             if (result.materialNames.find(entry.materialId) == result.materialNames.end()) {
                 result.materialNames[entry.materialId] = entry.materialName;
             }

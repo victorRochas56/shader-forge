@@ -2,9 +2,9 @@ import modules.common;
 import modules.pbr;
 
 [shader("vertex")]
-VertexOutput vertMain(uint vertexID : SV_VertexID, uint drawID : SV_DrawIndex)
+VertexOutput vertMain(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID, uint drawID : SV_DrawIndex)
 {
-    return litVertMain(vertexID, drawID);
+    return litVertMain(vertexID, instanceID, drawID);
 }
 
 struct FragmentOutput
@@ -19,39 +19,39 @@ FragmentOutput fragMain(VertexOutput input)
 {
     FragmentOutput output;
 
-    LitDrawData draw = pc.litDrawData[input.drawID];
+    LitInstanceData inst = pc.litInstanceData[input.instanceID];
 
-    bool flipNormal  = (draw.materialFlags & (1u << 0)) != 0;
-    bool hasAlbedo   = (draw.materialFlags & (1u << 1)) != 0;
-    bool hasRoughness= (draw.materialFlags & (1u << 2)) != 0;
-    bool hasMetallic = (draw.materialFlags & (1u << 3)) != 0;
-    bool hasNormal   = (draw.materialFlags & (1u << 4)) != 0;
-    bool alphaClip   = (draw.materialFlags & (1u << 5)) != 0;
-    
+    bool flipNormal  = (inst.materialFlags & (1u << 0)) != 0;
+    bool hasAlbedo   = (inst.materialFlags & (1u << 1)) != 0;
+    bool hasRoughness= (inst.materialFlags & (1u << 2)) != 0;
+    bool hasMetallic = (inst.materialFlags & (1u << 3)) != 0;
+    bool hasNormal   = (inst.materialFlags & (1u << 4)) != 0;
+    bool alphaClip   = (inst.materialFlags & (1u << 5)) != 0;
+
     float3 N;
     float3 normalMap;
     if(hasNormal) {
-        normalMap = textures[draw.normalTextureIndex].Sample(samplers[pc.litPassData.samplerIndex], input.texCoord).rgb;
+        normalMap = textures[inst.normalTextureIndex].Sample(samplers[pc.litPassData.samplerIndex], input.texCoord).rgb;
     }
 
     float4 albedo = float4(1.0, 1.0, 1.0, 1.0);
     if(hasAlbedo) {
-        albedo = textures[draw.albedoTextureIndex].Sample(samplers[pc.litPassData.samplerIndex], input.texCoord);
+        albedo = textures[inst.albedoTextureIndex].Sample(samplers[pc.litPassData.samplerIndex], input.texCoord);
     }
-    if (alphaClip && albedo.a < draw.alphaCutoff)
+    if (alphaClip && albedo.a < inst.alphaCutoff)
         discard;
 
 
-    float4 roughness = float4(draw.roughness, draw.roughness, draw.roughness, 1.0);
+    float4 roughness = float4(inst.roughness, inst.roughness, inst.roughness, 1.0);
     if(hasRoughness) {
-        roughness = textures[draw.roughnessTextureIndex].Sample(samplers[pc.litPassData.samplerIndex], input.texCoord);
+        roughness = textures[inst.roughnessTextureIndex].Sample(samplers[pc.litPassData.samplerIndex], input.texCoord);
     }
 
-    float4 metallic = float4(draw.metallic, draw.metallic, draw.metallic, 1.0);
+    float4 metallic = float4(inst.metallic, inst.metallic, inst.metallic, 1.0);
     if(hasMetallic){
-        metallic = textures[draw.metallicTextureIndex].Sample(samplers[pc.litPassData.samplerIndex], input.texCoord);
+        metallic = textures[inst.metallicTextureIndex].Sample(samplers[pc.litPassData.samplerIndex], input.texCoord);
     }
-        
+
 
     if (hasNormal) {
         normalMap = normalMap * 2.0 - 1.0;
@@ -72,10 +72,10 @@ FragmentOutput fragMain(VertexOutput input)
     }
 
     //do as early as possible to not wait for scoreboard stall
-    TextureCube envMap = cubemaps[draw.environmentMapIndex];
+    TextureCube envMap = cubemaps[inst.environmentMapIndex];
     SamplerState envSampler = samplers[pc.litPassData.samplerIndex];
     //float3 specularIBL = calculateSpecularIBL(N, V, roughness.r, F0, envMap, envSampler);
-    float3 diffuseIBL = calculateDiffuseIBL(N, albedo.rgb, envMap, pc.litDrawData.maxEnvMips, envSampler);
+    float3 diffuseIBL = calculateDiffuseIBL(N, albedo.rgb, envMap, inst.maxEnvMips, envSampler);
 
     float3 V = normalize(pc.litPassData.cameraPos.xyz - input.worldPos);
     float3 F0 = float3(0.04);

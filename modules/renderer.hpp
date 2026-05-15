@@ -76,8 +76,10 @@ class Renderer {
     uint32_t                            indexBufferIndex;
     uint32_t                            positionBufferIndex;
     uint32_t                            billboardBufferIndex;
-    uint32_t                            shadowDrawDataBufferIndex;
-    uint32_t                            litDrawDataBufferIndex;
+    uint32_t                            shadowInstanceDataBufferIndex;
+    uint32_t                            shadowMeshDrawDataBufferIndex;
+    uint32_t                            litInstanceDataBufferIndex;
+    uint32_t                            litMeshDrawDataBufferIndex;
     uint32_t                            litPassDataBufferIndex;
 
     // Persistent buffers for indirect drawing
@@ -90,8 +92,10 @@ class Renderer {
 
     // Reusable staging vectors (cleared per draw recording)
     std::vector<DrawIndexedIndirectCommand> indirectCommands;
-    std::vector<ShadowDrawData>             drawDataList;
-    std::vector<LitDrawData>                litDrawDataList;
+    std::vector<ShadowMeshDrawData>         shadowMeshDrawDataList;
+    std::vector<ShadowInstanceData>         shadowInstanceDataList;
+    std::vector<LitMeshDrawData>            litMeshDrawDataList;
+    std::vector<LitInstanceData>            litInstanceDataList;
 
     // Roughness-metallic MRT from lit pass
     Image                               roughnessMetal;
@@ -145,7 +149,6 @@ class Renderer {
     uint32_t getModelMatrixBufferIndex();
     uint32_t getLightBufferIndex();
     uint32_t getVolumeBufferIndex();
-    uint32_t getShadowDrawDataBufferIndex();
 
     void clearLights();
     void clearVolumes();
@@ -177,8 +180,8 @@ class Renderer {
 #pragma region RENDERING
     void recordCommandBuffer(uint32_t imageIndex);
 
-    template <typename PerMeshFn>
-    void buildGeometryDrawCommands(const std::array<Plane, 6>& frustumPlanes, bool doCulling, PerMeshFn&& perMeshFn,
+    template <typename PerMeshFn, typename PerInstanceFn>
+    void buildGeometryDrawCommands(const std::array<Plane, 6>& frustumPlanes, bool doCulling, PerMeshFn&& perMeshFn, PerInstanceFn&& perInstanceFn,
                                    const std::function<bool(const Node&)>& nodeFilter = {});
 
     void recordHiZPass(vk::raii::CommandBuffer& cmd);

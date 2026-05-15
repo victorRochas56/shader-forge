@@ -126,8 +126,8 @@ struct SSRSettings {
     bool enabled = true;
     float resolutionScale = 0.5f;
     float roughnessThreshold = 0.9f;
-    int maxSteps = 16;
-    float thickness = 0.015f;
+    int maxSteps = 32;
+    float thickness = 0.1f;
     float temporalBlend = 0.333f;
     bool resolutionDirty = false;
 };
@@ -150,17 +150,21 @@ struct RenderFeatures {
 };
 
 struct ShadowPushConstants {
-    uint64_t positionBufferAddress;      // 8
-    uint64_t shadowDrawDataAddress;    // 8  (pre-offset)
-};  // Total: 16 bytes
+    uint64_t positionBufferAddress;         // 8
+    uint64_t shadowInstanceDataAddress;     // 8  (pre-offset to current face's block)
+    uint64_t shadowMeshDrawDataAddress;     // 8  (pre-offset to current light slot)
+};  // Total: 24 bytes
 
-struct ShadowDrawData {
+struct ShadowMeshDrawData {
     uint32_t positionBufferOffset;
     uint32_t positionBufferStride;
-    uint32_t _pad0;
+    uint32_t firstInstance; // matches DrawIndexedIndirectCommand.firstInstance; shader uses mesh.firstInstance + SV_InstanceID to index ShadowInstanceData
     uint32_t _pad1;
-    glm::mat4 MMxLSM;
-}; // 80 bytes
+}; // 16 bytes
+
+struct ShadowInstanceData {
+    glm::mat4 MMxLSM; // lightSpaceMatrix * worldTransform, baked per face per instance
+}; // 64 bytes
 
 struct BlurPushConstants {
     uint32_t inputTextureIndex;
@@ -343,10 +347,14 @@ struct VolumetricApplyPushConstants {
     uint32_t samplerIndex;
 };
 
-struct LitDrawData {
+struct LitMeshDrawData {
     uint32_t vertexAllocationOffset;
     uint32_t vertexOffset;
     uint32_t vertexStride;
+    uint32_t firstInstance; // matches DrawIndexedIndirectCommand.firstInstance; shader uses this + SV_InstanceID to index per-instance SSBO
+};
+
+struct LitInstanceData {
     uint32_t modelMatrixIndex;
     uint32_t albedoTextureIndex;
     uint32_t roughnessTextureIndex;
@@ -358,7 +366,7 @@ struct LitDrawData {
     float    metallic;
     float    roughness;
     float    alphaCutoff;
-    uint32_t padding;
+    uint32_t _padding;
 };
 
 // Frame-level push constants for the lit indirect pass (per-draw data moved to LitDrawData buffer)
@@ -366,7 +374,8 @@ struct LitPushConstants {
     uint64_t vertexBufferAddress;
     uint64_t modelMatricesAddress;
     uint64_t lightsAddress;
-    uint64_t litDrawDataAddress;
+    uint64_t litInstanceDataAddress;
+    uint64_t litMeshDrawDataAddress;
     uint64_t litPassDataAddress;
 };
 
@@ -497,6 +506,10 @@ struct Mesh {
     uint32_t positionAllocationOffset = 0;
     uint32_t positionOffset = 0;
     uint32_t positionCount = 0;
+
+    // for uniqueness heuristic
+    float minRadius = 0.0f;
+    float maxRadius = 0.0f;
 
     // CPU-side geometry for raycasting
     std::vector<glm::vec3> cpuPositions;
@@ -631,6 +644,7 @@ struct GPUCascade {
     float splitDistance;
     float texelSize;
     float worldTexelSize;
+    float _padding; // forces sizeof to match the Slang side's 96-byte stride under scalarBlockLayout
 };
 
 struct GPUPointFace {

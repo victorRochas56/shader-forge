@@ -140,7 +140,7 @@ class Device {
                            vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>
             featureChain = {
                 {.features =
-                     {.sampleRateShading = true, .multiDrawIndirect = true, .fillModeNonSolid = true, .wideLines = true, .samplerAnisotropy = true}}, // vk::PhysicalDeviceFeatures2
+                     {.sampleRateShading = true, .multiDrawIndirect = true, .drawIndirectFirstInstance = true, .fillModeNonSolid = true, .wideLines = true, .samplerAnisotropy = true, .shaderInt64 = true}}, // vk::PhysicalDeviceFeatures2
                 {.shaderDrawParameters = true},
                 {.shaderInt8 = true,
                  .descriptorIndexing = true,
@@ -150,6 +150,7 @@ class Device {
                  .descriptorBindingPartiallyBound = true,
                  .descriptorBindingVariableDescriptorCount = true,
                  .runtimeDescriptorArray = true,
+                 //.scalarBlockLayout = true,
                  .bufferDeviceAddress = true},
                 {.synchronization2 = true, .dynamicRendering = true}, // vk::PhysicalDeviceVulkan13Features
                 {.extendedDynamicState = true}};                      // vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT

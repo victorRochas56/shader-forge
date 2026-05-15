@@ -1,8 +1,5 @@
-// Per-draw data stored in a GPU buffer, indexed by SV_DrawIndex
-struct LitDrawData {
-    uint vertexAllocationOffset;
-    uint vertexOffset;
-    uint vertexStride;
+// Per-instance data stored in a GPU buffer, indexed by SV_InstanceID + firstInstance
+struct LitInstanceData {
     uint modelMatrixIndex;
     uint albedoTextureIndex;
     uint roughnessTextureIndex;
@@ -17,14 +14,22 @@ struct LitDrawData {
     uint padding;
 };
 
+struct LitMeshDrawData {
+    uint vertexAllocationOffset;
+    uint vertexOffset;
+    uint vertexStride;
+    uint firstInstance; // base offset into LitInstanceData[] for this draw's instances
+};
+
 // Frame-level push constants (same for all draws in a drawIndexedIndirect call)
 // Pointer fields map to 64-bit PhysicalStorageBuffer addresses (binary-compatible with uint64_t on CPU)
 struct LitPushConstants {
-    float*        vertexBuffer;
-    float4x4*     modelMatrices;
-    Light*        lights;
-    LitDrawData*  litDrawData;
-    LitPass*      litPassData;
+    float*              vertexBuffer;
+    float4x4*           modelMatrices;
+    Light*              lights;
+    LitInstanceData*    litInstanceData;
+    LitMeshDrawData*    litMeshDrawData;
+    LitPass*            litPassData;
 };
 
 struct LitPass {
@@ -46,6 +51,7 @@ struct Cascade {
     float splitDistance;
     float texelSize;
     float worldTexelSize;
+    float _padding; // pads stride to 96 to match C++ sizeof(GPUCascade) under scalarBlockLayout
 };
 
 struct PointFace {
@@ -93,6 +99,7 @@ struct VertexOutput
     float3 tangent : TANGENT;
     float3 bitangent : BITANGENT;
     nointerpolation uint drawID : DRAW_ID;
+    nointerpolation uint instanceID : INSTANCE_ID;
 };
 
 // Shared descriptor bindings
@@ -273,11 +280,13 @@ float3 getPosFromMM(int index){
     return float3(mat[0].w, mat[1].w, mat[2].w);
 }
 
-VertexOutput litVertMain(uint vertexID, uint drawID)
+VertexOutput litVertMain(uint vertexID, uint instanceID, uint drawID)
 {
-    LitDrawData draw = pc.litDrawData[drawID];
+    LitMeshDrawData mesh = pc.litMeshDrawData[drawID];
+    uint absInstance = mesh.firstInstance + instanceID;
+    LitInstanceData draw = pc.litInstanceData[absInstance];
 
-    Vertex vertex = loadVertex(pc.vertexBuffer, vertexID, draw.vertexStride, draw.vertexOffset);
+    Vertex vertex = loadVertex(pc.vertexBuffer, vertexID, mesh.vertexStride, mesh.vertexOffset);
 
     float4x4 modelMatrix = pc.modelMatrices[draw.modelMatrixIndex];
     VertexOutput output;
@@ -289,6 +298,7 @@ VertexOutput litVertMain(uint vertexID, uint drawID)
     output.tangent = normalize(mul((float3x3)modelMatrix, vertex.tangent));
     output.bitangent = normalize(cross(output.normal, output.tangent));
     output.drawID = drawID;
+    output.instanceID = absInstance;
     return output;
 }
 

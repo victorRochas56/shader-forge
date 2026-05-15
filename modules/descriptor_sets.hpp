@@ -436,7 +436,9 @@ class DescriptorSet {
     template <typename T> uint32_t createFixedBuffer(uint32_t maxElements = MAX_FIXED_BUFFER, bool usesDynamicOffset = false, std::string name = "") {
         vk::DeviceSize bufferSize = maxElements * sizeof(T);
 
-        vk::BufferCreateInfo bufferInfo{.size = bufferSize, .usage = vk::BufferUsageFlagBits::eStorageBuffer, .sharingMode = vk::SharingMode::eExclusive};
+        vk::BufferCreateInfo bufferInfo{.size = bufferSize,
+                                        .usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress,
+                                        .sharingMode = vk::SharingMode::eExclusive};
 
         vk::raii::Buffer buffer(device.getDevice(), bufferInfo);
 

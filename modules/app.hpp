@@ -65,7 +65,6 @@ class App {
 
         printf("SIZE OF NODE : %zu",sizeof(Node));
 
-        sceneLoader.loadScene("scene.scn",scene,bindless,renderer.getModelMatrixBufferIndex(),renderer.getLightBufferIndex(),renderer.getVolumeBufferIndex());
         //start of render loop
         mainLoop();
     }

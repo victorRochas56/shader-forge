@@ -71,29 +71,28 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
 
     // these buffers store the data once per frame in flight since they are usually accessed every frame by the CPU
     buffers.modelMatrixBufferIndex         = bindless.descriptorSet->createFixedBuffer<glm::mat4>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true, "ModelMatrix");
-    shadowDrawDataBufferIndex              = bindless.descriptorSet->createFixedBuffer<ShadowDrawData>(MAX_FRAMES_IN_FLIGHT * MAX_SHADOW_CASTERS * MAX_FIXED_BUFFER, true, "ShadowDrawData");
+    shadowInstanceDataBufferIndex          = bindless.descriptorSet->createFixedBuffer<ShadowInstanceData>(MAX_FRAMES_IN_FLIGHT * MAX_SHADOW_CASTERS * MAX_FIXED_BUFFER, true, "ShadowInstanceData");
+    shadowMeshDrawDataBufferIndex          = bindless.descriptorSet->createFixedBuffer<ShadowMeshDrawData>(MAX_FRAMES_IN_FLIGHT * MAX_SHADOW_CASTERS * MAX_FIXED_BUFFER, true, "ShadowMeshDrawData");
     passResources.buffers.lightBufferIndex = bindless.descriptorSet->createFixedBuffer<GPULight>(MAX_LIGHTS * MAX_FRAMES_IN_FLIGHT, true, "Light");
     litPassDataBufferIndex                 = bindless.descriptorSet->createFixedBuffer<LitPassData>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true, "LitPassData");
-
+    litMeshDrawDataBufferIndex = bindless.descriptorSet->createFixedBuffer<LitMeshDrawData>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true, "LitMeshDrawData");
+    litInstanceDataBufferIndex = bindless.descriptorSet->createFixedBuffer<LitInstanceData>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true, "LitInstanceDrawData");
     // sets the frame offsets for each buffer
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         bindless.descriptorSet->setBufferFrameOffset(buffers.modelMatrixBufferIndex, i, MAX_FIXED_BUFFER * i);
         bindless.descriptorSet->setBufferFrameOffset(passResources.buffers.lightBufferIndex, i, MAX_LIGHTS * i);
-        bindless.descriptorSet->setBufferFrameOffset(shadowDrawDataBufferIndex, i, MAX_SHADOW_CASTERS * MAX_FIXED_BUFFER * i);
+        bindless.descriptorSet->setBufferFrameOffset(shadowInstanceDataBufferIndex, i, MAX_SHADOW_CASTERS * MAX_FIXED_BUFFER * i);
+        bindless.descriptorSet->setBufferFrameOffset(shadowMeshDrawDataBufferIndex, i, MAX_SHADOW_CASTERS * MAX_FIXED_BUFFER * i);
         bindless.descriptorSet->setBufferFrameOffset(litPassDataBufferIndex,i, MAX_FIXED_BUFFER * i);
         bindless.descriptorSet->setBufferFrameOffset(billboardBufferIndex, i, MAX_FIXED_BUFFER * i);
-    }
-
-    
-    litDrawDataBufferIndex = bindless.descriptorSet->createFixedBuffer<LitDrawData>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true, "LitDrawData");
-    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-        bindless.descriptorSet->setBufferFrameOffset(litDrawDataBufferIndex, i, MAX_FIXED_BUFFER * i);
+        bindless.descriptorSet->setBufferFrameOffset(litMeshDrawDataBufferIndex, i, MAX_FIXED_BUFFER * i);
+        bindless.descriptorSet->setBufferFrameOffset(litInstanceDataBufferIndex, i, MAX_FIXED_BUFFER * i);
     }
     
     // indirect draw buffers (separate for shadow and lit passes)
     // Shadow indirect buffer needs one slot per shadow-casting light per frame so multiple lights
     // recorded into the same command buffer don't overwrite each other's draw commands.
-    std::tie(indirectDrawBuffer, indirectDrawBufferMemory, indirectDrawBufferMapped)       = bindless.resourceManager->createIndirectDrawBuffer(MAX_SHADOW_CASTERS);
+    std::tie(indirectDrawBuffer, indirectDrawBufferMemory, indirectDrawBufferMapped)          = bindless.resourceManager->createIndirectDrawBuffer(MAX_SHADOW_CASTERS);
     std::tie(litIndirectDrawBuffer, litIndirectDrawBufferMemory, litIndirectDrawBufferMapped) = bindless.resourceManager->createIndirectDrawBuffer();
     
     //init gizmos
@@ -363,7 +362,6 @@ void Renderer::drawFrame() {
 uint32_t Renderer::getModelMatrixBufferIndex() { return buffers.modelMatrixBufferIndex; }
 uint32_t Renderer::getLightBufferIndex() { return passResources.buffers.lightBufferIndex; }
 uint32_t Renderer::getVolumeBufferIndex() { return passResources.buffers.volumeBufferIndex; }
-uint32_t Renderer::getShadowDrawDataBufferIndex() { return shadowDrawDataBufferIndex; }
 
 void Renderer::clearLights() { scene.clearLights(bindless, passResources.buffers.lightBufferIndex); }
 void Renderer::clearVolumes() { scene.clearVolumes(bindless, passResources.buffers.volumeBufferIndex); }
@@ -428,6 +426,11 @@ void Renderer::createShadowAtlas(uint32_t resolution) {
                                 vk::MemoryPropertyFlagBits::eDeviceLocal, image, memory, 1);
 
     vk::raii::ImageView view = bindless.resourceManager->createImageView(image,format,vk::ImageAspectFlagBits::eDepth,1);
+
+    // The first-frame shadow barrier expects oldLayout=eDepthReadOnlyOptimal — seed that here so the
+    // first transition is valid even if no shadow casters render this frame (atlas is still sampled
+    // by the lit pass).
+    bindless.resourceManager->transitionImageLayout(nullptr, *image, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthReadOnlyOptimal);
 
     scene.shadowAtlas.textureIndex = bindless.descriptorSet->allocateTexture(std::move(image),std::move(memory),std::move(view),"internal/scene.shadowAtlas",false,resolution,resolution);
 }
@@ -632,66 +635,94 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
     cmd.end();
 }
 
-template <typename PerMeshFn>
-void Renderer::buildGeometryDrawCommands(const std::array<Plane, 6>& frustumPlanes, bool doCulling, PerMeshFn&& perMeshFn,
+template <typename PerMeshFn, typename PerInstanceFn>
+void Renderer::buildGeometryDrawCommands(const std::array<Plane, 6>& frustumPlanes, bool doCulling, PerMeshFn&& perMeshFn, PerInstanceFn&& perInstanceFn,
                                          const std::function<bool(const Node&)>& nodeFilter) {
     if (scene.renderListDirty) {
         std::sort(scene.renderEntries.begin(), scene.renderEntries.end(), [](const Scene::RenderEntry& a, const Scene::RenderEntry& b) {
-            return a.shaderPipelineIndex < b.shaderPipelineIndex;
+            return std::tie(a.shaderPipelineIndex,a.meshIndex) < std::tie(b.shaderPipelineIndex, b.meshIndex);
         });
         scene.renderListDirty = false;
     }
 
     indirectCommands.clear();
     scene.shaderDrawRanges.clear();
+    if (scene.renderEntries.empty()) return;
 
     std::unordered_set<uint32_t> freedMeshes;
-    uint32_t currentPipelineIdx = UINT32_MAX;
+
+    uint32_t groupPipelineIdx = UINT32_MAX;
+    uint32_t groupMeshIdx     = UINT32_MAX;
+    const Mesh*     groupMesh          = nullptr;
+    Node*           groupFirstNode     = nullptr;
+    const Material* groupFirstMaterial = nullptr;
+
+    uint32_t currentInstanceCount = 0;
+    uint32_t instanceWriteCursor  = 0;
+
+    auto flushGroup = [&]() {
+        if (currentInstanceCount == 0 || groupMesh == nullptr) {
+            currentInstanceCount = 0;
+            return;
+        }
+        indirectCommands.push_back({.indexCount    = groupMesh->indexCount,
+                                    .instanceCount = currentInstanceCount,
+                                    .firstIndex    = static_cast<uint32_t>(groupMesh->indexOffset / sizeof(uint32_t)),
+                                    .vertexOffset  = 0,
+                                    .firstInstance = instanceWriteCursor});
+        perMeshFn(*groupMesh, *groupFirstNode, *groupFirstMaterial);
+        if (!scene.shaderDrawRanges.empty())
+            scene.shaderDrawRanges.back().commandCount++;
+        instanceWriteCursor += currentInstanceCount;
+        currentInstanceCount = 0;
+    };
 
     for (const auto& entry : scene.renderEntries) {
-        Node* node = &scene.sceneGraph.getNode(entry.nodeIndex);
-        uint32_t meshIdx = node->getMeshIndex();
-
-        auto& mesh = scene.assetManager.meshes[meshIdx];
+        Node& node = scene.sceneGraph.getNode(entry.nodeIndex);
+        const Material& material = scene.materials[entry.materialIndex];
+        auto& mesh = scene.assetManager.meshes[entry.meshIndex];
 
         if (mesh.freed) {
-            if (freedMeshes.insert(meshIdx).second) {
+            if (freedMeshes.insert(entry.meshIndex).second) {
                 bindless.descriptorSet->freeVariableBuffer(vertexBufferIndex, mesh.vertexAllocationOffset);
-                bindless.descriptorSet->freeVariableBuffer(indexBufferIndex, mesh.indexAllocationOffset);
-                scene.assetManager.freeMeshes.push(meshIdx);
+                bindless.descriptorSet->freeVariableBuffer(indexBufferIndex,  mesh.indexAllocationOffset);
+                scene.assetManager.freeMeshes.push(entry.meshIndex);
             }
             continue;
         }
+        if (nodeFilter && !nodeFilter(node)) continue;
 
-        if (nodeFilter && !nodeFilter(*node)) continue;
-
-        if (node->isBoundingBoxValid() && doCulling) {
+        if (node.isBoundingBoxValid() && doCulling) {
             glm::vec3 worldMin, worldMax;
-            transformAABBToWorldSpace(mesh.boundingBoxMin, mesh.boundingBoxMax, node->getTransform(), worldMin, worldMax);
+            transformAABBToWorldSpace(mesh.boundingBoxMin, mesh.boundingBoxMax, node.getTransform(), worldMin, worldMax);
             if (!isAABBInFrustum(worldMin, worldMax, frustumPlanes)) {
                 culledCount++;
                 continue;
             }
-
             if (features.showBBoxes)
                 Gizmos::drawBox(worldMin, worldMax, glm::vec4(1.0f, 1.0f, 0.0f, 1.0f));
         }
 
-        if (entry.shaderPipelineIndex != currentPipelineIdx) {
-            currentPipelineIdx = entry.shaderPipelineIndex;
-            scene.shaderDrawRanges.push_back({currentPipelineIdx, static_cast<uint32_t>(indirectCommands.size()), 0});
+        // Group boundary: flush the previous group, then open a new one.
+        if (entry.meshIndex != groupMeshIdx || entry.shaderPipelineIndex != groupPipelineIdx) {
+            flushGroup();
+
+            if (entry.shaderPipelineIndex != groupPipelineIdx) {
+                groupPipelineIdx = entry.shaderPipelineIndex;
+                scene.shaderDrawRanges.push_back({groupPipelineIdx,
+                                                  static_cast<uint32_t>(indirectCommands.size()),
+                                                  0});
+            }
+            groupMeshIdx       = entry.meshIndex;
+            groupMesh          = &mesh;
+            groupFirstNode     = &node;
+            groupFirstMaterial = &material;
         }
 
-        indirectCommands.push_back({.indexCount    = mesh.indexCount,
-                                    .instanceCount = 1,
-                                    .firstIndex    = static_cast<uint32_t>(mesh.indexOffset / sizeof(uint32_t)),
-                                    .vertexOffset  = 0,
-                                    .firstInstance = 0});
-        scene.shaderDrawRanges.back().commandCount++;
-
-        const Material& material = scene.materials[entry.materialIndex];
-        perMeshFn(mesh, *node, material);
+        perInstanceFn(mesh, node, material);
+        currentInstanceCount++;
     }
+    flushGroup();
 }
 
 void Renderer::recordHiZPass(vk::raii::CommandBuffer& cmd) {
@@ -767,23 +798,31 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
     fakeCam.calculateViewProjectionMatrix();
     std::array<Plane, 6> frustumPlanes = extractFrustumPlanes(fakeCam.viewProjection);
     culledCount = 0;
-    litDrawDataList.clear();
-    buildGeometryDrawCommands(frustumPlanes, true, [&](const auto& mesh, auto& node, const Material& material) {
-        litDrawDataList.push_back({.vertexAllocationOffset = mesh.vertexAllocationOffset,
-                                   .vertexOffset          = static_cast<uint32_t>(mesh.vertexOffset),
-                                   .vertexStride          = mesh.vertexStride,
-                                   .modelMatrixIndex      = node.getModelMatrixIndex(),
-                                   .albedoTextureIndex    = material.albedoTextureIndex,
-                                   .roughnessTextureIndex = material.roughnessTextureIndex,
-                                   .metallicTextureIndex  = material.metallicTextureIndex,
-                                   .normalTextureIndex    = material.normalTextureIndex,
-                                   .environmentMapIndex   = material.environmentMapIndex,
-                                   .maxEnvMips            = static_cast<float>(bindless.descriptorSet->getTextureMipLevels(material.environmentMapIndex) - 1),
-                                   .materialFlags         = static_cast<uint32_t>(material.flags),
-                                   .metallic              = material.metallic,
-                                   .roughness             = material.roughness,
-                                   .alphaCutoff           = material.alphaCutoff});
-    });
+    litInstanceDataList.clear();
+    litMeshDrawDataList.clear();
+    buildGeometryDrawCommands(frustumPlanes, true, [&](const Mesh& mesh, Node& node, const Material& material) {
+        litMeshDrawDataList.push_back({ .vertexAllocationOffset = mesh.vertexAllocationOffset,
+                                        .vertexOffset = static_cast<uint32_t>(mesh.vertexOffset),
+                                        .vertexStride = mesh.vertexStride});},
+                                    
+                                    [&](const Mesh& mesh, Node& node, const Material& material) {
+        litInstanceDataList.push_back({ .modelMatrixIndex      = node.getModelMatrixIndex(),
+                                        .albedoTextureIndex    = material.albedoTextureIndex,
+                                        .roughnessTextureIndex = material.roughnessTextureIndex,
+                                        .metallicTextureIndex  = material.metallicTextureIndex,
+                                        .normalTextureIndex    = material.normalTextureIndex,
+                                        .environmentMapIndex   = material.environmentMapIndex,
+                                        .maxEnvMips            = static_cast<float>(bindless.descriptorSet->getTextureMipLevels(material.environmentMapIndex) - 1),
+                                        .materialFlags         = static_cast<uint32_t>(material.flags),
+                                        .metallic              = material.metallic,
+                                        .roughness             = material.roughness,
+                                        .alphaCutoff           = material.alphaCutoff});});
+
+    // Backfill firstInstance into each LitMeshDrawData so shaders can compute the absolute instance
+    // index as mesh.firstInstance + SV_InstanceID (independent of how Slang maps SV_InstanceID).
+    for (size_t i = 0; i < indirectCommands.size() && i < litMeshDrawDataList.size(); ++i) {
+        litMeshDrawDataList[i].firstInstance = indirectCommands[i].firstInstance;
+    }
 
     vk::DeviceSize frameByteOffset = gpu.currentFrame * MAX_INDIRECT_COMMANDS * sizeof(DrawIndexedIndirectCommand);
     vk::Buffer indexBufferHandle = bindless.descriptorSet->getVariableBuffer(indexBufferIndex);
@@ -806,13 +845,15 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
         // Upload indirect commands and per-draw data (shared between depth prepass and lit pass)
         memcpy(static_cast<char*>(litIndirectDrawBufferMapped) + frameByteOffset, indirectCommands.data(), indirectCommands.size() * sizeof(DrawIndexedIndirectCommand));
 
-        bindless.descriptorSet->writeFixedBuffer<LitDrawData>(litDrawDataBufferIndex, litDrawDataList.data(), static_cast<uint32_t>(litDrawDataList.size()), gpu.currentFrame * MAX_FIXED_BUFFER, gpu.currentFrame);
+        bindless.descriptorSet->writeFixedBuffer<LitInstanceData>(litInstanceDataBufferIndex, litInstanceDataList.data(), static_cast<uint32_t>(litInstanceDataList.size()), gpu.currentFrame * MAX_FIXED_BUFFER, gpu.currentFrame);
+        bindless.descriptorSet->writeFixedBuffer<LitMeshDrawData>(litMeshDrawDataBufferIndex, litMeshDrawDataList.data(), static_cast<uint32_t>(litMeshDrawDataList.size()), gpu.currentFrame * MAX_FIXED_BUFFER, gpu.currentFrame);
 
-        LitPushConstants pushConstants = {.vertexBufferAddress  = bindless.descriptorSet->getVariableBuffers()[vertexBufferIndex]->address,
-                                          .modelMatricesAddress = bindless.descriptorSet->getFixedBuffers()[buffers.modelMatrixBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(glm::mat4),
-                                          .lightsAddress        = bindless.descriptorSet->getFixedBuffers()[passResources.buffers.lightBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(GPULight),
-                                          .litDrawDataAddress   = bindless.descriptorSet->getFixedBuffers()[litDrawDataBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(LitDrawData),
-                                          .litPassDataAddress   = bindless.descriptorSet->getFixedBuffers()[litPassDataBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(LitPassData)
+        LitPushConstants pushConstants = {.vertexBufferAddress    = bindless.descriptorSet->getVariableBuffers()[vertexBufferIndex]->address,
+                                          .modelMatricesAddress   = bindless.descriptorSet->getFixedBuffers()[buffers.modelMatrixBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(glm::mat4),
+                                          .lightsAddress          = bindless.descriptorSet->getFixedBuffers()[passResources.buffers.lightBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(GPULight),
+                                          .litInstanceDataAddress = bindless.descriptorSet->getFixedBuffers()[litInstanceDataBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(LitInstanceData),
+                                          .litMeshDrawDataAddress = bindless.descriptorSet->getFixedBuffers()[litMeshDrawDataBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(LitMeshDrawData),
+                                          .litPassDataAddress     = bindless.descriptorSet->getFixedBuffers()[litPassDataBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(LitPassData)
                                         };
 
         // --- Depth prepass (depth-only, no color attachment) ---
@@ -923,11 +964,12 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
         cmd.bindIndexBuffer(indexBufferHandle, 0, vk::IndexType::eUint32);
         auto& geoPipelines = bindless.pipelineManager->getGeoPipelines();
 
-        LitPushConstants pushConstants = {.vertexBufferAddress  = bindless.descriptorSet->getVariableBuffers()[vertexBufferIndex]->address,
-                                          .modelMatricesAddress = bindless.descriptorSet->getFixedBuffers()[buffers.modelMatrixBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(glm::mat4),
-                                          .lightsAddress        = bindless.descriptorSet->getFixedBuffers()[passResources.buffers.lightBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(GPULight),
-                                          .litDrawDataAddress   = bindless.descriptorSet->getFixedBuffers()[litDrawDataBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(LitDrawData),
-                                          .litPassDataAddress   = bindless.descriptorSet->getFixedBuffers()[litPassDataBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(LitPassData)
+        LitPushConstants pushConstants = {.vertexBufferAddress    = bindless.descriptorSet->getVariableBuffers()[vertexBufferIndex]->address,
+                                          .modelMatricesAddress   = bindless.descriptorSet->getFixedBuffers()[buffers.modelMatrixBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(glm::mat4),
+                                          .lightsAddress          = bindless.descriptorSet->getFixedBuffers()[passResources.buffers.lightBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(GPULight),
+                                          .litInstanceDataAddress = bindless.descriptorSet->getFixedBuffers()[litInstanceDataBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(LitInstanceData),
+                                          .litMeshDrawDataAddress = bindless.descriptorSet->getFixedBuffers()[litMeshDrawDataBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(LitMeshDrawData),
+                                          .litPassDataAddress     = bindless.descriptorSet->getFixedBuffers()[litPassDataBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(LitPassData)
                                         };
 
         for (const auto& range : scene.shaderDrawRanges) {
@@ -1135,10 +1177,11 @@ void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light, uint
     }
 
     // Build indirect draw commands once — identical across all faces/cascades since culling is off.
-    // Capture per-draw source data so we can re-bake `lightSpaceMatrix * model` per face without
-    // re-walking the scene graph.
+    // Capture per-instance world transforms so we can re-bake `lightSpaceMatrix * worldTransform` per face
+    // without re-walking the scene graph.
     std::array<Plane, 6> dummyPlanes{};
-    drawDataList.clear();
+    shadowMeshDrawDataList.clear();
+    shadowInstanceDataList.clear();
     // Point lights only need to draw casters inside their range — LightInfluence
     // keeps that set current, so we filter by it here. Directional lights skip
     // the filter (they affect all geometry).
@@ -1146,21 +1189,31 @@ void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light, uint
     if (light.type == LightType::Point) {
         nodeFilter = [&light](const Node& n) { return light.influencedNodes.count(n.nodeIndex) != 0; };
     }
-    struct ShadowDrawSrc { uint32_t positionOffset; glm::mat4 worldTransform; };
-    std::vector<ShadowDrawSrc> drawSrc;
-    buildGeometryDrawCommands(dummyPlanes, false, [&](const Mesh& mesh, Node& node, const auto& material) {
-        drawSrc.push_back({mesh.positionOffset, node.worldTransform});
-    }, nodeFilter);
+    std::vector<glm::mat4> instanceWorldTransforms;
+    buildGeometryDrawCommands(dummyPlanes, false,
+        [&](const Mesh& mesh, Node& node, const auto& material) {
+            shadowMeshDrawDataList.push_back({.positionBufferOffset = mesh.positionOffset,
+                                              .positionBufferStride = static_cast<uint32_t>(sizeof(glm::vec3))});
+        },
+        [&](const Mesh& mesh, Node& node, const Material& material) {
+            instanceWorldTransforms.push_back(node.worldTransform);
+        },
+        nodeFilter);
 
-    uint32_t drawsPerFace = static_cast<uint32_t>(drawSrc.size());
+    uint32_t instancesPerFace = static_cast<uint32_t>(instanceWorldTransforms.size());
 
-    // Bake per-face MMxLSM into drawDataList laid out as [face0 draws..., face1 draws..., ...].
-    drawDataList.reserve(static_cast<size_t>(drawsPerFace) * faceCount);
+    // Backfill firstInstance into each ShadowMeshDrawData so the shadow shader can compute the
+    // absolute instance index as mesh.firstInstance + SV_InstanceID (driver/Slang-agnostic).
+    for (size_t i = 0; i < indirectCommands.size() && i < shadowMeshDrawDataList.size(); ++i) {
+        shadowMeshDrawDataList[i].firstInstance = indirectCommands[i].firstInstance;
+    }
+
+    // Bake per-face MMxLSM into shadowInstanceDataList laid out as [face0 instances..., face1 instances..., ...].
+    shadowInstanceDataList.reserve(static_cast<size_t>(instancesPerFace) * faceCount);
     for (uint32_t f = 0; f < faceCount; ++f) {
         const glm::mat4& lsm = (light.type == LightType::Directional) ? light.cascades[f].lightSpaceMatrix : light.cubeMapIndices[f].lightSpaceMatrix;
-        for (const auto& src : drawSrc) {
-            drawDataList.push_back({.positionBufferOffset = src.positionOffset, 
-                                    .positionBufferStride = sizeof(glm::vec3), .MMxLSM = lsm * src.worldTransform});
+        for (const auto& wt : instanceWorldTransforms) {
+            shadowInstanceDataList.push_back({.MMxLSM = lsm * wt});
         }
     }
 
@@ -1169,17 +1222,23 @@ void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light, uint
     uint32_t slotIdx = gpu.currentFrame * MAX_SHADOW_CASTERS + shadowSlot;
     vk::DeviceSize frameByteOffset = static_cast<vk::DeviceSize>(slotIdx) * MAX_INDIRECT_COMMANDS * sizeof(DrawIndexedIndirectCommand);
 
-    // Upload indirect commands and draw data once
+    // Upload indirect commands, mesh draw data (one per group), and per-face baked instance data
     if (!indirectCommands.empty()) {
         memcpy(static_cast<char*>(indirectDrawBufferMapped) + frameByteOffset, indirectCommands.data(), indirectCommands.size() * sizeof(DrawIndexedIndirectCommand));
 
-        if (drawDataList.size() > MAX_FIXED_BUFFER) {
-            std::cerr << "Warning: shadow draw data (" << drawDataList.size()
+        if (shadowInstanceDataList.size() > MAX_FIXED_BUFFER) {
+            std::cerr << "Warning: shadow instance data (" << shadowInstanceDataList.size()
                       << ") exceeds MAX_FIXED_BUFFER (" << MAX_FIXED_BUFFER << "); truncating" << std::endl;
         }
-        uint32_t drawDataOffset = slotIdx * MAX_FIXED_BUFFER;
-        uint32_t copyCount = static_cast<uint32_t>(std::min<size_t>(drawDataList.size(), MAX_FIXED_BUFFER));
-        bindless.descriptorSet->writeFixedBuffer<ShadowDrawData>(shadowDrawDataBufferIndex, drawDataList.data(), copyCount, drawDataOffset, gpu.currentFrame);
+        if (shadowMeshDrawDataList.size() > MAX_FIXED_BUFFER) {
+            std::cerr << "Warning: shadow mesh draw data (" << shadowMeshDrawDataList.size()
+                      << ") exceeds MAX_FIXED_BUFFER (" << MAX_FIXED_BUFFER << "); truncating" << std::endl;
+        }
+        uint32_t slotElementOffset = slotIdx * MAX_FIXED_BUFFER;
+        uint32_t instanceCopyCount = static_cast<uint32_t>(std::min<size_t>(shadowInstanceDataList.size(), MAX_FIXED_BUFFER));
+        uint32_t meshCopyCount     = static_cast<uint32_t>(std::min<size_t>(shadowMeshDrawDataList.size(), MAX_FIXED_BUFFER));
+        bindless.descriptorSet->writeFixedBuffer<ShadowInstanceData>(shadowInstanceDataBufferIndex, shadowInstanceDataList.data(), instanceCopyCount, slotElementOffset, gpu.currentFrame);
+        bindless.descriptorSet->writeFixedBuffer<ShadowMeshDrawData>(shadowMeshDrawDataBufferIndex, shadowMeshDrawDataList.data(), meshCopyCount, slotElementOffset, gpu.currentFrame);
     }
 
     // Bind the atlas once; each face/cascade is rendered into its tile via viewport+scissor.
@@ -1223,11 +1282,14 @@ void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light, uint
         cmd.setScissor(0, tileRect);
 
         if (!indirectCommands.empty()) {
-            // Each face indexes into its own [face i] block within the slot's draw-data region.
+            // Instance pointer slides into this face's [face i] block; mesh pointer is shared across faces.
             ShadowPushConstants pushConstants = {
-                .positionBufferAddress = bindless.descriptorSet->getVariableBuffers()[positionBufferIndex]->address,
-                .shadowDrawDataAddress = bindless.descriptorSet->getFixedBuffers()[shadowDrawDataBufferIndex]->address
-                                         + (static_cast<vk::DeviceSize>(slotIdx) * MAX_FIXED_BUFFER + static_cast<vk::DeviceSize>(i) * drawsPerFace) * sizeof(ShadowDrawData)};
+                .positionBufferAddress      = bindless.descriptorSet->getVariableBuffers()[positionBufferIndex]->address,
+                .shadowInstanceDataAddress  = bindless.descriptorSet->getFixedBuffers()[shadowInstanceDataBufferIndex]->address
+                                              + (static_cast<vk::DeviceSize>(slotIdx) * MAX_FIXED_BUFFER + static_cast<vk::DeviceSize>(i) * instancesPerFace) * sizeof(ShadowInstanceData),
+                .shadowMeshDrawDataAddress  = bindless.descriptorSet->getFixedBuffers()[shadowMeshDrawDataBufferIndex]->address
+                                              + static_cast<vk::DeviceSize>(slotIdx) * MAX_FIXED_BUFFER * sizeof(ShadowMeshDrawData),
+            };
             cmd.pushConstants<ShadowPushConstants>(*currentPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pushConstants);
 
             cmd.drawIndexedIndirect(*indirectDrawBuffer, frameByteOffset, static_cast<uint32_t>(indirectCommands.size()), sizeof(DrawIndexedIndirectCommand));

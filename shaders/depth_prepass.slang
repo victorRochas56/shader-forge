@@ -5,24 +5,26 @@ struct VertOutput {
     float4 currentClip : CURRENT_CLIP;
     float4 prevClip    : PREV_CLIP;
     float2 texCoord    : TEXCOORD0;
-    nointerpolation uint drawID : DRAW_ID;
+    nointerpolation uint instanceID : INSTANCE_ID;
 }
 
 [shader("vertex")]
-VertOutput vertMain(uint vertexID : SV_VertexID, uint drawID : SV_DrawIndex)
+VertOutput vertMain(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID, uint drawID : SV_DrawIndex)
 {
     VertOutput out;
-    LitDrawData draw = pc.litDrawData[drawID];
-    Vertex vert = loadVertex(pc.vertexBuffer, vertexID, draw.vertexStride, draw.vertexOffset);
+    LitMeshDrawData mesh = pc.litMeshDrawData[drawID];
+    uint absInstance = mesh.firstInstance + instanceID;
+    LitInstanceData inst = pc.litInstanceData[absInstance];
+    Vertex vert = loadVertex(pc.vertexBuffer, vertexID, mesh.vertexStride, mesh.vertexOffset);
 
-    float4x4 modelMatrix = pc.modelMatrices[draw.modelMatrixIndex];
+    float4x4 modelMatrix = pc.modelMatrices[inst.modelMatrixIndex];
     float4 worldPos = mul(modelMatrix, float4(vert.position, 1.0));
 
     out.position    = mul(pc.litPassData.viewProjection, worldPos);
     out.currentClip = out.position;
     out.prevClip    = mul(pc.litPassData.prevViewProjection, worldPos);
     out.texCoord    = vert.texCoord;
-    out.drawID      = drawID;
+    out.instanceID  = absInstance;
     return out;
 }
 
@@ -34,12 +36,12 @@ struct FragmentOutput
 [shader("fragment")]
 FragmentOutput fragMain(VertOutput input)
 {
-    LitDrawData draw = pc.litDrawData[input.drawID];
+    LitInstanceData inst = pc.litInstanceData[input.instanceID];
 
     // Alpha clipping
-    if (draw.materialFlags & (1u << 5)) {
-        float alpha = textures[draw.albedoTextureIndex].Sample(samplers[pc.litPassData.samplerIndex], input.texCoord).a;
-        if (alpha < draw.alphaCutoff)
+    if (inst.materialFlags & (1u << 5)) {
+        float alpha = textures[inst.albedoTextureIndex].Sample(samplers[pc.litPassData.samplerIndex], input.texCoord).a;
+        if (alpha < inst.alphaCutoff)
             discard;
     }
 

@@ -91,37 +91,29 @@ void showNodeMeshInfo(Node& node, Scene& scene) {
                 auto& n = scene.sceneGraph.getNodes()[thisNodeIndex];
                 NodeOps::assignMesh(n, meshIndices[0], scene);
                 uint32_t matIdx = scene.getFallBackMaterial();
-                if (state.keepMaterialAssignments && !loadResult.meshesByMaterial.empty()) {
-                    int srcMatId = loadResult.meshesByMaterial.begin()->first;
+                if (state.keepMaterialAssignments && !loadResult.materialIds.empty()) {
+                    int srcMatId = loadResult.materialIds[0];
                     if (matIdToRendererIdx.count(srcMatId))
                         matIdx = matIdToRendererIdx[srcMatId];
                 }
                 NodeOps::assignMaterial(n, matIdx, scene);
             } else if (meshIndices.size() > 1) {
-                // Multiple mesh entries — create child nodes for each
-                // Build reverse lookup: mesh index -> source material ID
-                std::map<uint32_t, int> meshToSrcMat;
-                if (state.keepMaterialAssignments) {
-                    for (auto& [srcMatId, idxList] : loadResult.meshesByMaterial) {
-                        for (uint32_t idx : idxList)
-                            meshToSrcMat[idx] = srcMatId;
-                    }
-                }
-
                 for (size_t i = 0; i < meshIndices.size(); i++) {
+                    glm::vec3 pos;
+                    glm::quat rot;
+                    glm::vec3 scale;
                     uint32_t childIdx = scene.sceneGraph.addNode(false, thisNodeIndex);
                     // re-fetch after addNode since nodes vector may have reallocated
                     Node& childNode = scene.sceneGraph.getNodes()[childIdx];
                     childNode.name = scene.assetManager.getMeshes()[meshIndices[i]].name;
-                    childNode.relativePosition = scene.assetManager.meshes[meshIndices[i]].center;
+                    decomposeTransform(loadResult.transforms[i], pos, rot, scale);
+                    childNode.relativePosition = pos;
                     childNode.transformDirty = true;
                     NodeOps::assignMesh(childNode, meshIndices[i], scene);
 
                     uint32_t matIdx = scene.getFallBackMaterial();
                     if (state.keepMaterialAssignments) {
-                        auto it = meshToSrcMat.find(meshIndices[i]);
-                        if (it != meshToSrcMat.end() && matIdToRendererIdx.count(it->second))
-                            matIdx = matIdToRendererIdx[it->second];
+                        matIdx = matIdToRendererIdx[loadResult.materialIds[i]];
                     }
                     NodeOps::assignMaterial(childNode, matIdx, scene);
                 }

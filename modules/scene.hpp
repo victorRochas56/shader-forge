@@ -45,6 +45,7 @@ class Scene {
     // operation; the renderer only reads + sorts during draw.
     struct RenderEntry {
         uint32_t nodeIndex;
+        uint32_t meshIndex;
         uint32_t materialIndex;       // index into materials vector
         uint32_t shaderPipelineIndex;
     };
@@ -62,7 +63,7 @@ class Scene {
     uint32_t addMaterial(Material material) {
         material.materialID = static_cast<uint32_t>(std::hash<Material>{}(material));
         for (uint32_t i = 0; i < materials.size(); i++) {
-            if (materials[i] == material) return i;
+            if (materials[i].name == material.name) return i;
         }
         materials.push_back(material);
         return materials.size() - 1;
@@ -189,10 +190,10 @@ class Scene {
             if (materials[i] == material) { matIdx = i; break; }
         }
         for (const auto& e : renderEntries) {
-            if (e.nodeIndex == nodeIndex && e.materialIndex == matIdx && e.shaderPipelineIndex == shader.pipelineIndex)
+            if (e.nodeIndex == nodeIndex && e.materialIndex == matIdx && e.shaderPipelineIndex == shader.pipelineIndex && e.meshIndex == sceneGraph.getNode(nodeIndex).meshIndex)
                 return;
         }
-        renderEntries.push_back({nodeIndex, matIdx, shader.pipelineIndex});
+        renderEntries.push_back({nodeIndex, sceneGraph.getNode(nodeIndex).meshIndex, matIdx, shader.pipelineIndex});
         renderListDirty = true;
     }
 
@@ -202,8 +203,8 @@ class Scene {
             if (materials[i] == material) { matIdx = i; break; }
         }
         for (size_t i = 0; i < renderEntries.size(); ++i) {
-            if (renderEntries[i].nodeIndex == nodeIndex &&
-                renderEntries[i].materialIndex == matIdx && renderEntries[i].shaderPipelineIndex == shader.pipelineIndex) {
+            if (renderEntries[i].nodeIndex == nodeIndex && renderEntries[i].materialIndex == matIdx && 
+                renderEntries[i].shaderPipelineIndex == shader.pipelineIndex && renderEntries[i].meshIndex == sceneGraph.getNode(nodeIndex).meshIndex) {
                 renderEntries[i] = renderEntries.back();
                 renderEntries.pop_back();
                 renderListDirty = true;
