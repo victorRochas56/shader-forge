@@ -28,9 +28,11 @@
 // TODO clustered lights? (forward +)
 //      pass the N nearest lights to the lit shader
 // TODO spot and area lights
-// TODO node deletion
 // TODO multithread command buffer recording
-// volumetrics
+
+/**
+ * TODO : make adding new shaders to lit pipeline declarative - avoid having to write engine code for simple new shaders ideally (ie. water shader, toon, etc.)
+ */
 
 glm::mat4 calculateLightSpaceMatrix(Light& light, Camera& camera);
 
