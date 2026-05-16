@@ -28,9 +28,14 @@
 // TODO clustered lights? (forward +)
 //      pass the N nearest lights to the lit shader
 // TODO spot and area lights
-// TODO node deletion
 // TODO multithread command buffer recording
-// volumetrics
+
+/**
+ * TODO : make adding new shaders to lit pipeline declarative - avoid having to write engine code for simple new shaders ideally (ie. water shader, toon, etc.)
+ * 
+ * declare resources needed & associate indices, expose shader on material options, passData / push constants
+ * along with this i can do hot shader reloading too
+ */
 
 glm::mat4 calculateLightSpaceMatrix(Light& light, Camera& camera);
 
@@ -193,6 +198,10 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
                                                                          vk::True, "shaders/lit.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
                                                                          vk::Format::eUndefined);
 
+    /**
+     * lit pipelines created declaratively are added here ?
+     */
+
     // Billboards composite onto the swapchain after SSR/SSAO, so use a single-sample alpha-blend
     // pipeline that targets the swapchain format. Depth test is performed in-shader by sampling
     // the resolved depth.
@@ -207,6 +216,10 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
         bindless.pipelineManager->createPipeline<ImageVisPushConstants>(PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
                                                                vk::False, "shaders/image_view.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
                                                                gpu.getSwapchain().getSwapChainImageFormat());
+
+    /**
+     * post process pipelines added declaratively are added here?
+     */
 
     // default litshader / material
     scene.fallbackLitShader = Shader{.sourceFile = "shaders/lit.spv", .pipelineIndex = litPipelineIndex};
