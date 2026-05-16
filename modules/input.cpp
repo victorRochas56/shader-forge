@@ -103,5 +103,9 @@ void InputManager::tickInputState() { //should be only called once in the main a
         inst.renderer->toggleDepthView();
     }*/
     inst.canMove = true;
+}
+
+void InputManager::endFrame() {
+    InputManager& inst = getInstance();
     inst.previous = inst.current;
 }

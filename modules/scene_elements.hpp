@@ -75,6 +75,8 @@ class Node { // need to be able to hide nodes from tree for internal logic
     glm::vec3 getBoundingBoxMax() const { return boundingBoxMax; }
     bool isBoundingBoxValid() const { return boundingBoxValid; }
 
+    void toggleWireframe() { showWireframe = !showWireframe; }
+
     uint32_t nodeIndex;
 
     // Tree structure (indices into SceneGraph::nodes, 0 = none/invalid)
@@ -104,6 +106,7 @@ class Node { // need to be able to hide nodes from tree for internal logic
     bool isSelected = false;
     bool alive = true;
     bool transformDirty = false;
+    bool showWireframe = false;
 };
 
 struct Camera {

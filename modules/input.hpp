@@ -39,6 +39,7 @@ class InputManager {
     }
 
     static void tickInputState();
+    static void endFrame();
 
     static void mouse_button_callback(GLFWwindow* window, int button, int action, int mods) {
         getInstance().current.mouse_button = button;
@@ -57,12 +58,12 @@ class InputManager {
     }
     static void setMaterialEditorState(MaterialEditorState* state) { getInstance().materialEditorState = state; }
 
-    static const InputState& getCurrentState(){
+    static InputState& getCurrentState(){
         auto& i = getInstance();
         return i.current;
     }
 
-    static const InputState& getPreviousState(){
+    static InputState& getPreviousState(){
         auto& i = getInstance();
         return i.previous;
     }

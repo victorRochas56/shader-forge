@@ -53,6 +53,9 @@ void showNodeMeshInfo(Node& node, Scene& scene) {
                 state.changingMesh = true;
                 state.textBuffer[0] = '\0';
             }
+        } 
+        if ( ImGui::Button("Show Wireframe") ) {
+            node.toggleWireframe();
         }
     } else {
         InputManager::getInstance().canMove = false;
@@ -134,6 +137,16 @@ void showNodeMeshInfo(Node& node, Scene& scene) {
     if (node.meshIndex < scene.assetManager.meshes.size()) {
         if (ImGui::Button("Assign Materials")) {
             state.changingMaterials = !state.changingMaterials;
+        }
+    }
+
+    if(node.showWireframe) {
+        Mesh& mesh = scene.assetManager.meshes[node.meshIndex];
+        for(int i = 0; i < mesh.cpuIndices.size(); i+=3) {
+            auto& t = node.worldTransform;
+            Gizmos::drawLine({t*glm::vec4(mesh.cpuPositions[mesh.cpuIndices[i]],1.0f),t*glm::vec4(mesh.cpuPositions[mesh.cpuIndices[i]],1.0f), {2.0,2.0,0.0,1.0}});
+            Gizmos::drawLine({t*glm::vec4(mesh.cpuPositions[mesh.cpuIndices[i+1]],1.0f),t*glm::vec4(mesh.cpuPositions[mesh.cpuIndices[i+2]],1.0f), {2.0,2.0,0.0,1.0}});
+            Gizmos::drawLine({t*glm::vec4(mesh.cpuPositions[mesh.cpuIndices[i]],1.0f),t*glm::vec4(mesh.cpuPositions[mesh.cpuIndices[i+2]],1.0f), {2.0,2.0,0.0,1.0}});
         }
     }
 }

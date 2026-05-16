@@ -79,6 +79,8 @@ class App {
     SceneLoader sceneLoader;
     MaterialEditorState materialEditorState;
 
+    bool showAllNodes = false;
+
     std::vector<Line> lines;
 
     void initWindow() {
@@ -126,8 +128,15 @@ class App {
                 Manip::handleInput(*currentNode,scene.activeCamera,InputManager::getCurrentState().ndcMousePos,scene.sceneGraph);
             }
 
+            if(InputManager::getCurrentState().keyStates[GLFW_KEY_Q] == GLFW_PRESS && InputManager::getPreviousState().keyStates[GLFW_KEY_Q] != GLFW_PRESS) {
+                showAllNodes = !showAllNodes;
+            }
+            if(InputManager::getCurrentState().keyStates[GLFW_KEY_G] == GLFW_PRESS && InputManager::getPreviousState().keyStates[GLFW_KEY_G] != GLFW_PRESS) {
+                renderer.features.showGizmos = !renderer.features.showGizmos;
+            }
+            //TODO why does the buffer allocs change only for toggling Q not G
             for(auto& bb : scene.billboards){
-                bb.second.hidden = true;
+                bb.second.hidden = !showAllNodes | !renderer.features.showGizmos;
             }
             if(renderer.features.showGizmos){
                 scene.getBillboardsMutable()[currentNode->nodeIndex].hidden = false;
@@ -148,6 +157,8 @@ class App {
             renderer.drawFrame();
 
             scene.activeCamera.updatePrevVPM(); // kinda ulgy to put here .. TODO: find a place for it
+
+            InputManager::endFrame();
 
             Tracer::endTrace("frame time");
         }
