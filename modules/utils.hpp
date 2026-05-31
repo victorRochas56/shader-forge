@@ -9,6 +9,9 @@
 #include <array>
 #include <vector>
 #include <fstream>
+#include <cmath>
+#include <limits>
+#include <algorithm>
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_raii.hpp>
 
@@ -227,7 +230,15 @@ static void decomposeTransform(const glm::mat4& matrix, glm::vec3& translation, 
     rotMatrix[0] = rotMatrix[0]/ scale.x;
     rotMatrix[1] = rotMatrix[1]/ scale.y;
     rotMatrix[2] = rotMatrix[2]/ scale.z;
-    
+
+    // A reflection (negative determinant) can't be represented as a positive-scale
+    // rotation. Fold the flip into scale.x so quat_cast receives a proper rotation matrix;
+    // otherwise it returns a garbage quaternion that shears the recomposed transform.
+    if (glm::determinant(rotMatrix) < 0.0f) {
+        scale.x = -scale.x;
+        rotMatrix[0] = -rotMatrix[0];
+    }
+
     // Convert rotation matrix to quaternion
     rotation = glm::quat_cast(rotMatrix);
 }
@@ -236,8 +247,490 @@ static glm::mat4 makeTransform( glm::vec3 translation, glm::quat rotation = glm:
     glm::mat4 T = glm::translate(glm::mat4(1.0f), translation);
     glm::mat4 R = glm::mat4_cast(rotation);
     glm::mat4 S = glm::scale(glm::mat4(1.0f), scale);
-    
+
     return T * R * S;
+}
+
+// Result of fitting a transform (rotation + optional reflection + translation) between
+// two point sets. The full linear part is rotation*diag(scale); for a pure rigid fit
+// scale is (1,1,1) and mirrored is false. A mirrored fit uses scale (-1,1,1).
+struct RigidFit {
+    glm::quat rotation;     // maps src orientation onto dst (proper rotation)
+    glm::vec3 translation;  // makeTransform(translation, rotation, scale) maps src -> dst
+    glm::vec3 scale;        // (1,1,1) for rigid, (-1,1,1) when a reflection was needed
+    float rmsd;             // root-mean-square residual after alignment (units of the input)
+    bool valid;             // false if the inputs were degenerate (too few points)
+    bool mirrored;          // true when the best fit required a reflection
+};
+
+// Cyclic Jacobi eigen-decomposition for a real symmetric 4x4 matrix.
+// On return d[] holds eigenvalues and the columns of v[] hold the matching eigenvectors.
+// (Numerical Recipes style rotation; robust for the tiny matrices Horn's method needs.)
+static void jacobiEigenSymmetric4(double a[4][4], double d[4], double v[4][4]) {
+    const int n = 4;
+    double b[4][4];
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < n; j++) {
+            b[i][j] = a[i][j];
+            v[i][j] = (i == j) ? 1.0 : 0.0;
+        }
+    }
+    for (int sweep = 0; sweep < 100; sweep++) {
+        double off = 0.0;
+        for (int p = 0; p < n; p++)
+            for (int q = p + 1; q < n; q++) off += std::abs(b[p][q]);
+        if (off < 1e-18) break;
+
+        for (int p = 0; p < n; p++) {
+            for (int q = p + 1; q < n; q++) {
+                double apq = b[p][q];
+                if (std::abs(apq) < 1e-300) continue;
+                double app = b[p][p], aqq = b[q][q];
+                double theta = (aqq - app) / (2.0 * apq);
+                double t = (theta >= 0 ? 1.0 : -1.0) / (std::abs(theta) + std::sqrt(theta * theta + 1.0));
+                double c = 1.0 / std::sqrt(t * t + 1.0);
+                double s = t * c;
+                // Apply the rotation as J^T * B * J (columns then rows), and accumulate into v.
+                for (int i = 0; i < n; i++) {
+                    double bip = b[i][p], biq = b[i][q];
+                    b[i][p] = c * bip - s * biq;
+                    b[i][q] = s * bip + c * biq;
+                }
+                for (int i = 0; i < n; i++) {
+                    double bpi = b[p][i], bqi = b[q][i];
+                    b[p][i] = c * bpi - s * bqi;
+                    b[q][i] = s * bpi + c * bqi;
+                }
+                for (int i = 0; i < n; i++) {
+                    double vip = v[i][p], viq = v[i][q];
+                    v[i][p] = c * vip - s * viq;
+                    v[i][q] = s * vip + c * viq;
+                }
+            }
+        }
+    }
+    for (int i = 0; i < n; i++) d[i] = b[i][i];
+}
+
+// Best-fit rigid transform (R, t) such that R*src[i] + t ~= dst[i], assuming src[i]
+// corresponds to dst[i]. Uses Horn's quaternion method, so the result is always a
+// proper rotation (no reflections). The returned rmsd is the alignment residual: a
+// small value means the correspondence held; a large value means it did not (e.g. a
+// welded format reordered the vertices) and the caller should fall back.
+static RigidFit kabsch(const std::vector<glm::vec3>& src, const std::vector<glm::vec3>& dst) {
+    RigidFit fit{glm::quat(1, 0, 0, 0), glm::vec3(0.0f), glm::vec3(1.0f), std::numeric_limits<float>::max(), false, false};
+
+    const size_t n = std::min(src.size(), dst.size());
+    if (n < 3) return fit;
+
+    // Centroids (double precision to keep the covariance well-conditioned).
+    glm::dvec3 cs(0.0), cd(0.0);
+    for (size_t i = 0; i < n; i++) { cs += glm::dvec3(src[i]); cd += glm::dvec3(dst[i]); }
+    cs /= double(n);
+    cd /= double(n);
+
+    // Cross-covariance S[j][k] = sum (src-cs)[j] * (dst-cd)[k].
+    double S[3][3] = {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+    for (size_t i = 0; i < n; i++) {
+        glm::dvec3 a = glm::dvec3(src[i]) - cs;
+        glm::dvec3 b = glm::dvec3(dst[i]) - cd;
+        for (int j = 0; j < 3; j++)
+            for (int k = 0; k < 3; k++) S[j][k] += a[j] * b[k];
+    }
+
+    // Horn's symmetric 4x4 matrix; its largest-eigenvalue eigenvector is the quaternion.
+    double Sxx = S[0][0], Sxy = S[0][1], Sxz = S[0][2];
+    double Syx = S[1][0], Syy = S[1][1], Syz = S[1][2];
+    double Szx = S[2][0], Szy = S[2][1], Szz = S[2][2];
+    double N[4][4] = {
+        { Sxx + Syy + Szz, Syz - Szy,        Szx - Sxz,        Sxy - Syx        },
+        { Syz - Szy,       Sxx - Syy - Szz,  Sxy + Syx,        Szx + Sxz        },
+        { Szx - Sxz,       Sxy + Syx,       -Sxx + Syy - Szz,  Syz + Szy        },
+        { Sxy - Syx,       Szx + Sxz,        Syz + Szy,       -Sxx - Syy + Szz  },
+    };
+
+    double d[4], v[4][4];
+    jacobiEigenSymmetric4(N, d, v);
+
+    int best = 0;
+    for (int i = 1; i < 4; i++) if (d[i] > d[best]) best = i;
+
+    // Eigenvector column 'best' is the quaternion (w, x, y, z).
+    glm::quat q(static_cast<float>(v[0][best]), static_cast<float>(v[1][best]),
+                static_cast<float>(v[2][best]), static_cast<float>(v[3][best]));
+    if (glm::dot(q, q) < 1e-12f) return fit; // degenerate
+    q = glm::normalize(q);
+
+    glm::dvec3 t = cd - glm::dvec3(glm::dmat3(glm::mat3_cast(q)) * cs);
+
+    fit.rotation = q;
+    fit.translation = glm::vec3(t);
+    fit.valid = true;
+
+    // Residual: how well the recovered transform maps src onto dst.
+    double sse = 0.0;
+    for (size_t i = 0; i < n; i++) {
+        glm::vec3 mapped = fit.rotation * src[i] + fit.translation;
+        sse += glm::dot(glm::dvec3(mapped) - glm::dvec3(dst[i]), glm::dvec3(mapped) - glm::dvec3(dst[i]));
+    }
+    fit.rmsd = float(std::sqrt(sse / double(n)));
+    return fit;
+}
+
+// Uniform spatial grid over a point cloud for approximate nearest-neighbour queries.
+// Used by ICP so each correspondence lookup is ~O(1) instead of O(N).
+struct PointGrid {
+    const std::vector<glm::vec3>* pts = nullptr;
+    glm::vec3 origin{0.0f};
+    float inv = 1.0f; // 1 / cellSize
+    int nx = 1, ny = 1, nz = 1;
+    std::vector<std::vector<int>> cells;
+
+    int cellIndex(int x, int y, int z) const { return (z * ny + y) * nx + x; }
+
+    glm::ivec3 cellOf(const glm::vec3& p) const {
+        glm::vec3 r = (p - origin) * inv;
+        return glm::ivec3(glm::clamp(int(r.x), 0, nx - 1),
+                          glm::clamp(int(r.y), 0, ny - 1),
+                          glm::clamp(int(r.z), 0, nz - 1));
+    }
+
+    void build(const std::vector<glm::vec3>& points, int targetPerCell = 4) {
+        pts = &points;
+        glm::vec3 mn(std::numeric_limits<float>::max());
+        glm::vec3 mx(std::numeric_limits<float>::lowest());
+        for (const auto& p : points) { mn = glm::min(mn, p); mx = glm::max(mx, p); }
+        glm::vec3 size = glm::max(mx - mn, glm::vec3(1e-4f));
+        int targetCells = std::max(1, int(points.size()) / std::max(1, targetPerCell));
+        double volume = double(size.x) * size.y * size.z;
+        float cell = float(std::cbrt(volume / std::max(1, targetCells)));
+        if (!(cell > 0.0f)) cell = 1.0f;
+        inv = 1.0f / cell;
+        origin = mn;
+        nx = std::max(1, int(size.x * inv) + 1);
+        ny = std::max(1, int(size.y * inv) + 1);
+        nz = std::max(1, int(size.z * inv) + 1);
+        cells.assign(size_t(nx) * ny * nz, {});
+        for (int i = 0; i < int(points.size()); i++) {
+            glm::ivec3 c = cellOf(points[i]);
+            cells[cellIndex(c.x, c.y, c.z)].push_back(i);
+        }
+    }
+
+    // Index of the nearest stored point to q. Searches in expanding shells; once a
+    // candidate is found it scans one extra shell so the result is essentially exact.
+    int nearest(const glm::vec3& q) const {
+        const auto& P = *pts;
+        glm::ivec3 c = cellOf(q);
+        int best = -1;
+        float bestD = std::numeric_limits<float>::max();
+        int maxR = std::max({nx, ny, nz});
+        int foundAt = -1;
+        for (int r = 0; r <= maxR; r++) {
+            int x0 = std::max(0, c.x - r), x1 = std::min(nx - 1, c.x + r);
+            int y0 = std::max(0, c.y - r), y1 = std::min(ny - 1, c.y + r);
+            int z0 = std::max(0, c.z - r), z1 = std::min(nz - 1, c.z + r);
+            for (int z = z0; z <= z1; z++)
+                for (int y = y0; y <= y1; y++)
+                    for (int x = x0; x <= x1; x++) {
+                        // Only visit the current shell; inner cells were already searched.
+                        if (r > 0 && x > c.x - r && x < c.x + r && y > c.y - r && y < c.y + r &&
+                            z > c.z - r && z < c.z + r)
+                            continue;
+                        for (int pi : cells[cellIndex(x, y, z)]) {
+                            glm::vec3 diff = P[pi] - q;
+                            float d = glm::dot(diff, diff);
+                            if (d < bestD) { bestD = d; best = pi; }
+                        }
+                    }
+            if (best >= 0) {
+                if (foundAt < 0) foundAt = r;       // first hit
+                else if (r >= foundAt + 1) break;   // one extra shell, then stop
+            }
+        }
+        return best;
+    }
+};
+
+// The 24 proper-rotation orientations made of signed axis permutations (det == +1).
+// These coarsely cover rotation space (any rotation is within ~60deg of one), so they
+// make good multi-start seeds for ICP.
+static std::vector<glm::mat3> buildOrientationSeeds() {
+    std::vector<glm::mat3> seeds;
+    const int perms[6][3] = {{0,1,2},{0,2,1},{1,0,2},{1,2,0},{2,0,1},{2,1,0}};
+    for (const auto& pm : perms) {
+        for (int s = 0; s < 8; s++) {
+            glm::vec3 sgn((s & 1) ? 1.0f : -1.0f, (s & 2) ? 1.0f : -1.0f, (s & 4) ? 1.0f : -1.0f);
+            glm::mat3 M(0.0f);          // column j (glm is column-major) is sgn[j] * e_{pm[j]}
+            M[0][pm[0]] = sgn[0];
+            M[1][pm[1]] = sgn[1];
+            M[2][pm[2]] = sgn[2];
+            if (glm::determinant(M) > 0.0f) seeds.push_back(M);
+        }
+    }
+    return seeds;
+}
+
+// Dominant principal axis of a point cloud (eigenvector of the largest covariance
+// eigenvalue) via power iteration. For an extruded shape like a column this is the long
+// axis -- exactly the axis whose spin ICP struggles to recover from coarse seeds.
+static glm::vec3 dominantAxis(const std::vector<glm::vec3>& pts) {
+    glm::dvec3 c(0.0);
+    for (const auto& p : pts) c += glm::dvec3(p);
+    c /= double(pts.size());
+    double C[3][3] = {{0,0,0},{0,0,0},{0,0,0}};
+    for (const auto& p : pts) {
+        glm::dvec3 d = glm::dvec3(p) - c;
+        for (int j = 0; j < 3; j++)
+            for (int k = 0; k < 3; k++) C[j][k] += d[j] * d[k];
+    }
+    glm::dvec3 v(0.5773502692, 0.5773502692, 0.5773502692); // generic start, not axis-aligned
+    for (int iter = 0; iter < 40; iter++) {
+        glm::dvec3 nv(C[0][0]*v.x + C[0][1]*v.y + C[0][2]*v.z,
+                      C[1][0]*v.x + C[1][1]*v.y + C[1][2]*v.z,
+                      C[2][0]*v.x + C[2][1]*v.y + C[2][2]*v.z);
+        double len = glm::length(nv);
+        if (len < 1e-12) break;
+        v = nv / len;
+    }
+    return glm::normalize(glm::vec3(v));
+}
+
+// Shortest-arc rotation taking unit vector `from` onto unit vector `to`.
+static glm::mat3 alignAxis(glm::vec3 from, glm::vec3 to) {
+    from = glm::normalize(from);
+    to = glm::normalize(to);
+    float d = glm::dot(from, to);
+    if (d > 0.9999f) return glm::mat3(1.0f);
+    if (d < -0.9999f) { // antiparallel: rotate 180 about any perpendicular axis
+        glm::vec3 ortho = (std::abs(from.x) < 0.9f) ? glm::vec3(1, 0, 0) : glm::vec3(0, 1, 0);
+        glm::vec3 axis = glm::normalize(glm::cross(from, ortho));
+        return glm::mat3_cast(glm::angleAxis(3.14159265358979f, axis));
+    }
+    glm::vec3 axis = glm::normalize(glm::cross(from, to));
+    float angle = std::acos(glm::clamp(d, -1.0f, 1.0f));
+    return glm::mat3_cast(glm::angleAxis(angle, axis));
+}
+
+// Append seeds that align the src dominant axis to the dst dominant axis (both polarities)
+// and then sweep K rotations about it. This targets the spin-about-axis DOF that the coarse
+// orientation seeds sample too sparsely for near-axisymmetric meshes.
+static void appendSpinSeeds(std::vector<glm::mat3>& seeds, glm::vec3 srcAxis, glm::vec3 dstAxis, int K) {
+    const float twoPi = 6.28318530717959f;
+    glm::vec3 spinAxis = glm::normalize(dstAxis);
+    for (int flip = 0; flip < 2; flip++) {
+        glm::vec3 target = flip ? -dstAxis : dstAxis;
+        glm::mat3 R0 = alignAxis(srcAxis, target);
+        for (int k = 0; k < K; k++) {
+            float th = (twoPi * k) / float(K);
+            glm::mat3 spin = glm::mat3_cast(glm::angleAxis(th, spinAxis));
+            seeds.push_back(spin * R0);
+        }
+    }
+}
+
+// Iterative Closest Point restricted to proper rotations. Runs ICP from each seed
+// orientation. Correspondences are by position, but the WINNER is chosen with normals
+// folded in: among seeds whose positional residual is within a band of the best, the one
+// whose transformed src normals best agree with the dst normals wins. This disambiguates
+// position-symmetric meshes (where several orientations fit the points equally well but
+// only one matches the surface detail). samp/sampN and dst/dstN are parallel arrays;
+// normals are transformed by R (valid since R is orthonormal). outNormDefect is the mean
+// normal mismatch (0 = perfect, up to 2) of the chosen fit.
+static void properICP(const std::vector<glm::vec3>& samp, const std::vector<glm::vec3>& sampN,
+                      const std::vector<glm::vec3>& dst, const std::vector<glm::vec3>& dstN,
+                      const PointGrid& grid, const std::vector<glm::mat3>& seeds,
+                      const glm::vec3& dstCentroid, const glm::vec3& dstAxis,
+                      int maxIters, float earlyThreshold, float diag,
+                      glm::mat3& outR, glm::vec3& outT, float& outPosRmsd, float& outNormDefect) {
+    outR = glm::mat3(1.0f);
+    outT = glm::vec3(0.0f);
+    outPosRmsd = std::numeric_limits<float>::max();
+    outNormDefect = 2.0f;
+
+    glm::dvec3 csd(0.0);
+    for (const auto& p : samp) csd += glm::dvec3(p);
+    csd /= double(samp.size());
+    glm::vec3 cs(csd);
+
+    // Targeted spin-about-axis seeds (tried first, so early-out can fire on them), plus the
+    // coarse orientation seeds for everything else.
+    std::vector<glm::mat3> allSeeds;
+    allSeeds.reserve(seeds.size() + 24);
+    appendSpinSeeds(allSeeds, dominantAxis(samp), dstAxis, 12);
+    allSeeds.insert(allSeeds.end(), seeds.begin(), seeds.end());
+
+    std::vector<glm::vec3> matchedSrc(samp.size());
+    std::vector<glm::vec3> matchedDst(samp.size());
+
+    struct SeedResult { glm::mat3 R; glm::vec3 t; float pos; float norm; };
+    std::vector<SeedResult> results;
+    results.reserve(allSeeds.size());
+
+    for (const glm::mat3& seed : allSeeds) {
+        glm::mat3 R = seed;
+        glm::vec3 t = dstCentroid - R * cs; // start with centroids aligned
+        float prevRmsd = std::numeric_limits<float>::max();
+
+        for (int iter = 0; iter < maxIters; iter++) {
+            double sse = 0.0;
+            for (size_t i = 0; i < samp.size(); i++) {
+                glm::vec3 y = R * samp[i] + t;
+                int j = grid.nearest(y);
+                matchedSrc[i] = samp[i];
+                matchedDst[i] = dst[j];
+                glm::vec3 diff = y - dst[j];
+                sse += glm::dot(diff, diff);
+            }
+            float rmsd = float(std::sqrt(sse / double(samp.size())));
+
+            // Re-solve the best proper transform for the current correspondences.
+            RigidFit f = kabsch(matchedSrc, matchedDst);
+            if (!f.valid) break;
+            R = glm::mat3_cast(f.rotation);
+            t = f.translation;
+
+            if (prevRmsd - rmsd < 1e-4f * prevRmsd) break; // converged
+            prevRmsd = rmsd;
+        }
+
+        // Final positional residual + normal mismatch with the converged transform.
+        double sse = 0.0, ndSum = 0.0;
+        int ndCount = 0;
+        for (size_t i = 0; i < samp.size(); i++) {
+            glm::vec3 y = R * samp[i] + t;
+            int j = grid.nearest(y);
+            glm::vec3 diff = y - dst[j];
+            sse += glm::dot(diff, diff);
+
+            glm::vec3 na = R * sampN[i]; // normal transform == R (orthonormal)
+            float la = glm::length(na), lb = glm::length(dstN[j]);
+            if (la > 1e-6f && lb > 1e-6f) {
+                float d = glm::clamp(glm::dot(na / la, dstN[j] / lb), -1.0f, 1.0f);
+                ndSum += 1.0f - d;
+                ndCount++;
+            }
+        }
+        float pos = float(std::sqrt(sse / double(samp.size())));
+        float nd = ndCount ? float(ndSum / ndCount) : 0.0f;
+        results.push_back({R, t, pos, nd});
+
+        if (pos < earlyThreshold && nd < 0.05f) break; // fully correct (position + normals)
+    }
+
+    if (results.empty()) return;
+
+    // Band-select: among fits that explain the points about as well as the best, prefer the
+    // one with the best normal agreement.
+    float minPos = std::numeric_limits<float>::max();
+    for (const auto& r : results) minPos = std::min(minPos, r.pos);
+    float band = minPos * 1.5f + 1e-4f * diag;
+
+    int best = 0;
+    float bestNd = std::numeric_limits<float>::max();
+    for (int i = 0; i < int(results.size()); i++) {
+        if (results[i].pos <= band && results[i].norm < bestNd) { bestNd = results[i].norm; best = i; }
+    }
+
+    outR = results[best].R;
+    outT = results[best].t;
+    outPosRmsd = results[best].pos;
+    outNormDefect = results[best].norm;
+}
+
+// Best-fit transform mapping the src point set onto the dst point set WITHOUT assuming
+// any vertex correspondence (welded formats reorder vertices). Uses multi-start ICP, with
+// normals used to disambiguate symmetric meshes, and optionally tries a reflection so
+// mirrored instances can still be matched. src/srcNormals and dst/dstNormals are parallel
+// arrays. src is subsampled for speed; the residual (rmsd) reports alignment quality so
+// the caller can reject bad fits.
+static RigidFit icpAlign(const std::vector<glm::vec3>& src, const std::vector<glm::vec3>& srcNormals,
+                         const std::vector<glm::vec3>& dst, const std::vector<glm::vec3>& dstNormals,
+                         bool allowReflection = true, int maxSamples = 256, int maxIters = 25) {
+    RigidFit fit{glm::quat(1, 0, 0, 0), glm::vec3(0.0f), glm::vec3(1.0f),
+                 std::numeric_limits<float>::max(), false, false};
+    if (src.size() < 3 || dst.size() < 3) return fit;
+
+    // Subsample src (and its normals) to bound the cost of each ICP iteration.
+    std::vector<glm::vec3> samp, sampN;
+    size_t stride = std::max<size_t>(1, src.size() / std::max(1, maxSamples));
+    samp.reserve(src.size() / stride + 1);
+    sampN.reserve(src.size() / stride + 1);
+    bool haveSrcN = srcNormals.size() == src.size();
+    for (size_t i = 0; i < src.size(); i += stride) {
+        samp.push_back(src[i]);
+        sampN.push_back(haveSrcN ? srcNormals[i] : glm::vec3(0.0f));
+    }
+    if (samp.size() < 3) { samp = src; sampN = haveSrcN ? srcNormals : std::vector<glm::vec3>(src.size(), glm::vec3(0.0f)); }
+
+    // dst normals must be index-aligned with dst; fall back to zero (neutral) if not.
+    const std::vector<glm::vec3> zeroN(dst.size(), glm::vec3(0.0f));
+    const std::vector<glm::vec3>& dstN = (dstNormals.size() == dst.size()) ? dstNormals : zeroN;
+
+    PointGrid grid;
+    grid.build(dst);
+
+    glm::vec3 mn(std::numeric_limits<float>::max());
+    glm::vec3 mx(std::numeric_limits<float>::lowest());
+    glm::dvec3 cdd(0.0);
+    for (const auto& p : dst) { mn = glm::min(mn, p); mx = glm::max(mx, p); cdd += glm::dvec3(p); }
+    cdd /= double(dst.size());
+    glm::vec3 dstCentroid(cdd);
+    float diag = glm::length(mx - mn);
+    float earlyThreshold = diag * 1e-3f; // stop seeds once near-perfect
+    glm::vec3 dstAxis = dominantAxis(dst);
+
+    std::vector<glm::mat3> seeds = buildOrientationSeeds();
+
+    // Proper (non-reflected) alignment.
+    glm::mat3 R; glm::vec3 t; float pos, nd;
+    properICP(samp, sampN, dst, dstN, grid, seeds, dstCentroid, dstAxis, maxIters, earlyThreshold, diag, R, t, pos, nd);
+
+    glm::mat3 bestL = R;        // linear part mapping original src -> dst
+    glm::vec3 bestT = t;
+    float bestPos = pos, bestNd = nd;
+    bool mirrored = false;
+
+    if (allowReflection) {
+        // Reflect the source (positions and normals) across X about the origin, then look for
+        // a proper rotation; the combined map is improper, i.e. a reflection.
+        std::vector<glm::vec3> sampM(samp.size()), sampMN(samp.size());
+        for (size_t i = 0; i < samp.size(); i++) {
+            sampM[i]  = glm::vec3(-samp[i].x,  samp[i].y,  samp[i].z);
+            sampMN[i] = glm::vec3(-sampN[i].x, sampN[i].y, sampN[i].z);
+        }
+
+        glm::mat3 R2; glm::vec3 t2; float pos2, nd2;
+        properICP(sampM, sampMN, dst, dstN, grid, seeds, dstCentroid, dstAxis, maxIters, earlyThreshold, diag, R2, t2, pos2, nd2);
+
+        // Choose proper vs mirror by a combined position+normal cost (lower is better) so a
+        // reflection only wins when it genuinely fits better, not by a positional hair.
+        float costProper = bestPos / std::max(diag, 1e-6f) + 0.5f * bestNd;
+        float costMirror = pos2    / std::max(diag, 1e-6f) + 0.5f * nd2;
+        if (costMirror < costProper) {
+            glm::mat3 D(1.0f); D[0][0] = -1.0f;     // diag(-1,1,1)
+            bestL = R2 * D;                          // y = R2*(D*p) + t2 for original p
+            bestT = t2;
+            bestPos = pos2;
+            bestNd = nd2;
+            mirrored = true;
+        }
+    }
+
+    fit.rmsd = bestPos;
+    fit.translation = bestT;
+    fit.valid = true;
+    fit.mirrored = mirrored;
+    // scale stays (1,1,1): callers handle a reflection by using mirrored geometry + a proper
+    // rotation, never a negative scale (which would shear once the node system decomposes it).
+    fit.scale = glm::vec3(1.0f);
+    if (!mirrored) {
+        fit.rotation = glm::normalize(glm::quat_cast(bestL));
+    } else {
+        glm::mat3 Rp = bestL; Rp[0] = -Rp[0];        // proper part: Rp = bestL * diag(-1,1,1)
+        fit.rotation = glm::normalize(glm::quat_cast(Rp));
+    }
+    return fit;
 }
 
 // Frustum culling structures and functions

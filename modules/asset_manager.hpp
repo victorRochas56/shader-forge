@@ -5,6 +5,7 @@
 #include <queue>
 #include <limits>
 #include <iostream>
+#include <future>
 
 #include "structs.hpp"
 #include "resources.hpp"
@@ -27,6 +28,8 @@ class AssetManager {
     std::map<std::string, uint32_t>     loadedTextures;
     std::map<std::string, uint32_t>     loadedCubemaps;
     std::map<std::string, MeshLoadResult> loadedMeshes;
+    // source mesh index -> reflected geometry copy used by mirrored instances
+    std::map<uint32_t, uint32_t>        mirrorVariants;
 
     void init(ResourceManager* resourceManager, DescriptorSet* descriptorSet, uint32_t vertexBufferIndex, uint32_t indexBufferIndex, uint32_t positionBufferIndex) {
         this->resourceManager = resourceManager;
@@ -34,6 +37,56 @@ class AssetManager {
         this->vertexBufferIndex = vertexBufferIndex;
         this->indexBufferIndex = indexBufferIndex;
         this->positionBufferIndex = positionBufferIndex;
+    }
+
+    // Allocates GPU buffers for a mesh's geometry, records a Mesh entry, and returns its index.
+    uint32_t createMesh(const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices,
+                        const glm::vec3& bbMin, const glm::vec3& bbMax, const glm::vec3& center,
+                        float minRadius, float maxRadius, const std::string& name, const std::string& sourceFile) {
+        std::vector<Vertex> verts = vertices; // allocateVariableBuffer takes a mutable buffer
+        std::vector<uint32_t> inds = indices;
+
+        uint32_t vertexAllocOffset = descriptorSet->allocateVariableBuffer<Vertex>(verts, vertexBufferIndex);
+        VariableBufferAllocation vertexAlloc = descriptorSet->getVariableBufferAllocation(vertexBufferIndex, vertexAllocOffset);
+
+        uint32_t indexAllocOffset = descriptorSet->allocateVariableBuffer<uint32_t>(inds, indexBufferIndex);
+        VariableBufferAllocation indexAlloc = descriptorSet->getVariableBufferAllocation(indexBufferIndex, indexAllocOffset);
+
+        std::vector<glm::vec3> cpuPositions, cpuNormals;
+        cpuPositions.reserve(verts.size());
+        cpuNormals.reserve(verts.size());
+        for (const auto& v : verts) {
+            cpuPositions.push_back(v.position);
+            cpuNormals.push_back(v.normal);
+        }
+
+        uint32_t positionAllocOffset = descriptorSet->allocateVariableBuffer<glm::vec3>(cpuPositions, positionBufferIndex);
+        VariableBufferAllocation positionAlloc = descriptorSet->getVariableBufferAllocation(positionBufferIndex, positionAllocOffset);
+
+        Mesh mesh;
+        mesh.minRadius = minRadius;
+        mesh.maxRadius = maxRadius;
+        mesh.sourceFile = sourceFile;
+        mesh.name = name;
+        mesh.vertexAllocationOffset = vertexAllocOffset;
+        mesh.vertexOffset = vertexAlloc.offset;
+        mesh.vertexCount = vertexAlloc.count;
+        mesh.vertexStride = vertexAlloc.stride;
+        mesh.indexAllocationOffset = indexAllocOffset;
+        mesh.indexOffset = indexAlloc.offset;
+        mesh.indexCount = indexAlloc.count;
+        mesh.boundingBoxMin = bbMin;
+        mesh.boundingBoxMax = bbMax;
+        mesh.center = center;
+        mesh.positionAllocationOffset = positionAllocOffset;
+        mesh.positionOffset = positionAlloc.offset;
+        mesh.positionCount = positionAlloc.count;
+        mesh.cpuPositions = std::move(cpuPositions);
+        mesh.cpuNormals = std::move(cpuNormals);
+        mesh.cpuIndices = std::move(inds);
+
+        meshes.push_back(std::move(mesh));
+        return static_cast<uint32_t>(meshes.size() - 1);
     }
 
     // Loads an OBJ and returns mesh indices plus material grouping info.
@@ -96,54 +149,71 @@ class AssetManager {
             }
 
             uint32_t meshIdx;
+            glm::mat4 transform;
             if(existingInstance == 0) {
-
-                uint32_t vertexAllocOffset = descriptorSet->allocateVariableBuffer<Vertex>(vertices, vertexBufferIndex);
-                VariableBufferAllocation vertexAlloc = descriptorSet->getVariableBufferAllocation(vertexBufferIndex, vertexAllocOffset);
-    
-                uint32_t indexAllocOffset = descriptorSet->allocateVariableBuffer<uint32_t>(indices, indexBufferIndex);
-                VariableBufferAllocation indexAlloc = descriptorSet->getVariableBufferAllocation(indexBufferIndex, indexAllocOffset);
-    
-                std::vector<glm::vec3> cpuPositions;
-                cpuPositions.reserve(vertices.size());
-                for (const auto& v : vertices) {
-                    cpuPositions.push_back(v.position);
-                }
-    
-                uint32_t positionAllocOffset = descriptorSet->allocateVariableBuffer<glm::vec3>(cpuPositions, positionBufferIndex);
-                VariableBufferAllocation positionAlloc = descriptorSet->getVariableBufferAllocation(positionBufferIndex, positionAllocOffset);
-    
-    
-                Mesh mesh;
-                mesh.minRadius = inscribedRadius;
-                mesh.maxRadius = circumscribedRadius;
-    
-                mesh.sourceFile = filePath;
-                mesh.name = entry.shapeName;
-                mesh.vertexAllocationOffset = vertexAllocOffset;
-                mesh.vertexOffset = vertexAlloc.offset;
-                mesh.vertexCount = vertexAlloc.count;
-                mesh.vertexStride = vertexAlloc.stride;
-                mesh.indexAllocationOffset = indexAllocOffset;
-                mesh.indexOffset = indexAlloc.offset;
-                mesh.indexCount = indexAlloc.count;
-                mesh.boundingBoxMin = bbMin;
-                mesh.boundingBoxMax = bbMax;
-                mesh.center = center;
-                mesh.positionAllocationOffset = positionAllocOffset;
-                mesh.positionOffset = positionAlloc.offset;
-                mesh.positionCount = positionAlloc.count;
-                mesh.cpuPositions = std::move(cpuPositions);
-                mesh.cpuIndices = indices;
-    
-                meshes.push_back(std::move(mesh));
-                meshIdx = static_cast<uint32_t>(meshes.size() - 1);
+                meshIdx = createMesh(vertices, indices, bbMin, bbMax, center,
+                                     inscribedRadius, circumscribedRadius, entry.shapeName, filePath);
+                transform = makeTransform(center);
             }
             else {
                 meshIdx = existingInstance;
+
+                // Welded formats (OBJ/PLY) don't store instance transforms and reorder vertices,
+                // so we can't assume cpuPositions[i] matches entry.vertices[i]. Recover the
+                // transform with correspondence-free multi-start ICP instead (which also detects
+                // reflections). Both point sets are centered at their own bbox center, so ICP gives
+                // the rotation plus a residual centroid offset; adding `center` puts it in world space.
+                if (entry.vertices.size() >= 3 && meshes[meshIdx].cpuPositions.size() >= 3) {
+                    std::vector<glm::vec3> instancePositions, instanceNormals;
+                    instancePositions.reserve(entry.vertices.size());
+                    instanceNormals.reserve(entry.vertices.size());
+                    for (const auto& v : entry.vertices) {
+                        instancePositions.push_back(v.position);
+                        instanceNormals.push_back(v.normal);
+                    }
+
+                    float tol = glm::length(bbMax - bbMin) * 0.02f; // 2% of the bbox diagonal
+
+                    // Align the instance to the reference mesh. Reflection is allowed: a mirrored fit
+                    // is handled below by a reflected geometry copy (not a negative scale, which the
+                    // node system can't carry without shearing).
+                    RigidFit fit = icpAlign(meshes[meshIdx].cpuPositions, meshes[meshIdx].cpuNormals,
+                                            instancePositions, instanceNormals);
+
+                    if (!fit.valid || fit.rmsd >= tol) {
+                        // Not really the same mesh (false instance match) -> no rotation.
+                        printf("Instance alignment failed for mesh '%s' (rmsd=%f, tol=%f); placing without rotation.\n",
+                               meshes[meshIdx].name.c_str(), fit.rmsd, tol);
+                        transform = makeTransform(center);
+                    } else if (!fit.mirrored) {
+                        transform = makeTransform(center + fit.translation, fit.rotation);
+                    } else {
+                        // Mirrored instance: render a reflected geometry copy with a proper rotation so
+                        // winding/culling stay correct. The first mirror of a source becomes the canonical
+                        // mirror mesh (its own geometry is already correctly wound); later mirrors align to it.
+                        auto it = mirrorVariants.find(meshIdx);
+                        if (it == mirrorVariants.end()) {
+                            uint32_t mirrorIdx = createMesh(entry.vertices, entry.indices, bbMin, bbMax, center,
+                                                            inscribedRadius, circumscribedRadius,
+                                                            meshes[meshIdx].name + "_mirror", filePath);
+                            mirrorVariants[meshIdx] = mirrorIdx;
+                            meshIdx = mirrorIdx;
+                            transform = makeTransform(center); // geometry already in its correct orientation
+                        } else {
+                            uint32_t mirrorIdx = it->second;
+                            RigidFit mf = icpAlign(meshes[mirrorIdx].cpuPositions, meshes[mirrorIdx].cpuNormals,
+                                                   instancePositions, instanceNormals, /*allowReflection=*/false);
+                            meshIdx = mirrorIdx;
+                            transform = (mf.valid && mf.rmsd < tol) ? makeTransform(center + mf.translation, mf.rotation)
+                                                                    : makeTransform(center);
+                        }
+                    }
+                } else {
+                    transform = makeTransform(center);
+                }
             }
             result.meshIndices.push_back(meshIdx);
-            result.transforms.push_back(makeTransform(center));
+            result.transforms.push_back(transform);
             result.materialIds.push_back(entry.materialId);
             if (result.materialNames.find(entry.materialId) == result.materialNames.end()) {
                 result.materialNames[entry.materialId] = entry.materialName;

@@ -111,6 +111,7 @@ void showNodeMeshInfo(Node& node, Scene& scene) {
                     childNode.name = scene.assetManager.getMeshes()[meshIndices[i]].name;
                     decomposeTransform(loadResult.transforms[i], pos, rot, scale);
                     childNode.relativePosition = pos;
+                    childNode.relativeRotation = rot;
                     childNode.transformDirty = true;
                     NodeOps::assignMesh(childNode, meshIndices[i], scene);
 

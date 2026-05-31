@@ -31,7 +31,8 @@
 // TODO multithread command buffer recording
 
 /**
- * TODO : make adding new shaders to lit pipeline declarative - avoid having to write engine code for simple new shaders ideally (ie. water shader, toon, etc.)
+ * TODO : make adding new shaders to lit pipeline easy and declarative 
+ * avoid having to write much if any renderer code for simple new shaders ideally (ie. water shader, toon, etc.)
  * 
  * declare resources needed & associate indices, expose shader on material options, passData / push constants
  * along with this i can do hot shader reloading too

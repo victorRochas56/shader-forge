@@ -513,6 +513,7 @@ struct Mesh {
 
     // CPU-side geometry for raycasting
     std::vector<glm::vec3> cpuPositions;
+    std::vector<glm::vec3> cpuNormals;
     std::vector<uint32_t> cpuIndices;
 
     bool freed = false;
