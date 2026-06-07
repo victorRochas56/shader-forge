@@ -24,6 +24,7 @@
 #include "ssao_pass.hpp"
 #include "ssr_pass.hpp"
 #include "volumetrics_pass.hpp"
+#include "thumbnail_pass.hpp"
 
 // TODO clustered lights? (forward +)
 //      pass the N nearest lights to the lit shader
@@ -70,6 +71,8 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     indexBufferIndex    = bindless.descriptorSet->createVariableBuffer(128 * 1024 * 1024, vk::BufferUsageFlagBits::eIndexBuffer, false, "Index");
     positionBufferIndex = bindless.descriptorSet->createVariableBuffer(128 * 1024 * 1024, vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress, false, "Position");
     scene.assetManager.init(bindless.resourceManager.get(), bindless.descriptorSet.get(), vertexBufferIndex, indexBufferIndex, positionBufferIndex);
+    passResources.vertexBufferIndex = vertexBufferIndex;
+    passResources.indexBufferIndex  = indexBufferIndex;
 
     billboardBufferIndex   = bindless.descriptorSet->createFixedBuffer<GPUBillboard>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true, "Billboard");
     sdfPassDataBufferIndex = bindless.descriptorSet->createFixedBuffer<SDF>(MAX_FIXED_BUFFER, false, "SDF");
@@ -116,6 +119,7 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     passes.emplace(PassId::SSAO,std::make_unique<SSAOPass>(gpu, bindless, scene, features, passResources));
     passes.emplace(PassId::SSR,std::make_unique<SSRPass>(gpu, bindless, scene, features, passResources));
     passes.emplace(PassId::VOLUMETRICS,std::make_unique<VolumetricsPass>(gpu, bindless, scene, features, passResources));
+    passes.emplace(PassId::THUMBNAIL,std::make_unique<ThumbnailPass>(gpu, bindless, scene, features, passResources));
 
     createShadowAtlas(SHADOW_ATLAS_SIZE);
     createRoughnessMetalResources(startWidth, startHeight);
@@ -364,7 +368,7 @@ void Renderer::drawFrame() {
         throw std::runtime_error("failed to present swap chain image!");
     }
     Tracer::endTrace("submit & present");
-
+    
     gpu.currentFrame = (gpu.currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
     gpu.totalFrames++;
     //bindless.pipelineManager->checkForShaderUpdates(); // TODO enable this

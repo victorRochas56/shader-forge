@@ -188,6 +188,7 @@ class App {
         showTraces();
         showToggles(renderer.features);
         showScenesMenu(scene, bindless, renderer.buffers, sceneLoader);
+        showMeshList(scene.assetManager, bindless, renderer.defaultAlbedoIndex);
         ImGui::Render();
     }
 

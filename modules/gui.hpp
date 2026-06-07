@@ -72,4 +72,5 @@ void showToggles(RenderFeatures& features);
 void showScenesMenu(Scene& scene, BindlessSystem& bindless, RenderBuffers& buffers,SceneLoader& sceneLoader);
 void showBufferAllocs(DescriptorSet& descriptorSet, AssetManager& assetManager, const std::vector<DrawIndexedIndirectCommand>& indirectDraws);
 void showDebugWindow(uint32_t culledCount, float& cullFovScale);
+void showMeshList(AssetManager& assetManager, BindlessSystem& bindless, uint32_t whiteTextureIndex);
 void showTraces();

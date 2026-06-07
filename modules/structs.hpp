@@ -379,6 +379,14 @@ struct LitPushConstants {
     uint64_t litPassDataAddress;
 };
 
+// Field order matches ThumbnailPush in thumbnail.slang (mat4, then 8-byte address, then uints).
+struct ThumbnailPushConstants {
+    glm::mat4 mvp;
+    uint64_t  vertexBufferAddress;
+    uint32_t  vertexStride;
+    uint32_t  vertexOffset;
+};
+
 struct LitPassData {
     uint32_t samplerIndex;
     uint32_t lightCount;
@@ -518,6 +526,10 @@ struct Mesh {
 
     bool freed = false;
     uint32_t refCount = 0;
+
+    // GUI preview thumbnail; thumbnail pass renders into thumbnailTextureIndex when dirty.
+    uint32_t thumbnailTextureIndex = 0xFFFFFFFF;
+    bool     thumbnailDirty = true;
 };
 
 enum class QuadTileState : uint8_t { Free, Split, Occupied };

@@ -6,6 +6,8 @@
 #include <limits>
 #include <iostream>
 #include <future>
+#include <thread>
+#include <atomic>
 
 #include "structs.hpp"
 #include "resources.hpp"
@@ -103,9 +105,17 @@ class AssetManager {
 #endif
         MeshData meshData = resourceManager->loadMeshFromFile(filePath);
 
-        for (auto& entry : meshData.entries) {
-            auto& vertices = entry.vertices;
-            auto& indices = entry.indices;
+        const size_t entryCount = meshData.entries.size();
+        std::vector<float> inscribedRadii(entryCount);
+        std::vector<float> circumscribedRadii(entryCount);
+        std::vector<glm::vec3> bbMins(entryCount);
+        std::vector<glm::vec3> bbMaxes(entryCount);
+        std::vector<glm::vec3> bbCenters(entryCount);
+
+        // Each entry is independent: it only touches its own vertices and writes its
+        // results to a fixed index, so the per-entry work can run on worker threads.
+        auto processEntry = [&](size_t idx) {
+            auto& vertices = meshData.entries[idx].vertices;
 
             glm::vec3 bbMin(std::numeric_limits<float>::max());
             glm::vec3 bbMax(std::numeric_limits<float>::lowest());
@@ -119,12 +129,15 @@ class AssetManager {
             glm::vec3 averagePoint = glm::vec3(averagePointAccum / static_cast<double>(vertices.size()));
 
             glm::vec3 center = (bbMax + bbMin) * 0.5f;
+            bbCenters[idx] = center;
             averagePoint -= center;
-            printf("AVERAGE POINT OF MESH : %f, %f, %f \n",averagePoint.x,averagePoint.y,averagePoint.z);
             // Center the vertices at origin
             for (auto& vertex : vertices) {
                 vertex.position -= center;
             }
+            // Store the bounding box centered to match the centered vertices.
+            bbMins[idx] = bbMin - center;
+            bbMaxes[idx] = bbMax - center;
 
             float inscribedRadius = std::numeric_limits<float>::max();
             float circumscribedRadius = 0.0f;
@@ -134,36 +147,161 @@ class AssetManager {
                 inscribedRadius = std::min(inscribedRadius, d);
                 circumscribedRadius = std::max(circumscribedRadius, d);
             }
-            printf("INSCRIBED SPHERE RADIUS    : %f\n", inscribedRadius);
-            printf("CIRCUMSCRIBED SPHERE RADIUS: %f\n", circumscribedRadius);
-            // Update bounding box to be centered
-            bbMin -= center;
-            bbMax -= center;
+            inscribedRadii[idx] = inscribedRadius;
+            circumscribedRadii[idx] = circumscribedRadius;
+        };
+        if (entryCount > 1) {
+            unsigned int hw = std::thread::hardware_concurrency();
+            size_t workerCount = std::min<size_t>(entryCount, hw ? hw : 4);
+            std::atomic<size_t> nextEntry{0};
+            auto worker = [&]() {
+                for (size_t idx = nextEntry.fetch_add(1); idx < entryCount; idx = nextEntry.fetch_add(1)) {
+                    processEntry(idx);
+                }
+            };
+            std::vector<std::thread> workers;
+            workers.reserve(workerCount);
+            for (size_t w = 0; w < workerCount; ++w) {
+                workers.emplace_back(worker);
+            }
+            for (auto& t : workers) {
+                t.join();
+            }
+        } else if (entryCount == 1) {
+            processEntry(0);
+        }
+
+        // The remaining per-entry work: classify each entry as a new mesh or an instance of an
+        // existing one, and for instances recover the placement transform via ICP. This can't be
+        // a flat parallel-for: instance dedup reads `meshes` while createMesh grows it (so
+        // classification is order-dependent), createMesh allocates GPU buffers (not thread-safe),
+        // and mirror-variant creation is order-dependent. Only icpAlign is both expensive and
+        // pure, so we split into three phases and parallelize just the ICP.
+        struct EntryResolution {
+            uint32_t meshIdx = 0;
+            glm::mat4 transform{1.0f};
+            uint32_t refMeshIdx = 0;  // for instances: the matched reference mesh
+            bool runIcp = false;      // instance that needs an ICP fit in phase B
+            RigidFit fit{};           // filled by phase B
+        };
+        std::vector<EntryResolution> resolutions(entryCount);
+
+        // Phase A (serial): classify entries and create all new base meshes. Afterwards `meshes`
+        // is stable for every reference an instance could point at. Mirror meshes are created
+        // later in phase C, but they share their source's radii so they never change which mesh
+        // the dedup scan matches (it breaks on the earliest match).
+        for (size_t idx = 0; idx < entryCount; ++idx) {
+            auto& entry = meshData.entries[idx];
+            float inscribedRadius = inscribedRadii[idx];
+            float circumscribedRadius = circumscribedRadii[idx];
+            const glm::vec3& bbMin = bbMins[idx];
+            const glm::vec3& bbMax = bbMaxes[idx];
+            const glm::vec3& center = bbCenters[idx];
 
             uint32_t existingInstance = false;
-            for(uint32_t i = 0; i < meshes.size(); i++) {
-                if(std::abs(inscribedRadius - meshes[i].minRadius) < 0.001f && std::abs(circumscribedRadius - meshes[i].maxRadius) < 0.001f ) {
-                    existingInstance = i;
-                    break; 
+            for (uint32_t m = 0; m < meshes.size(); m++) {
+                if (std::abs(inscribedRadius - meshes[m].minRadius) < 0.001f && std::abs(circumscribedRadius - meshes[m].maxRadius) < 0.001f) {
+                    existingInstance = m;
+                    break;
                 }
             }
 
-            uint32_t meshIdx;
-            glm::mat4 transform;
-            if(existingInstance == 0) {
-                meshIdx = createMesh(vertices, indices, bbMin, bbMax, center,
-                                     inscribedRadius, circumscribedRadius, entry.shapeName, filePath);
-                transform = makeTransform(center);
-            }
-            else {
-                meshIdx = existingInstance;
-
+            EntryResolution& r = resolutions[idx];
+            if (existingInstance == 0) {
+                r.meshIdx = createMesh(entry.vertices, entry.indices, bbMin, bbMax, center,
+                                       inscribedRadius, circumscribedRadius, entry.shapeName, filePath);
+                r.transform = makeTransform(center);
+            } else {
+                // Default placement for an instance; refined in phase C once its ICP fit is known.
+                r.refMeshIdx = existingInstance;
+                r.meshIdx = existingInstance;
+                r.transform = makeTransform(center);
                 // Welded formats (OBJ/PLY) don't store instance transforms and reorder vertices,
                 // so we can't assume cpuPositions[i] matches entry.vertices[i]. Recover the
                 // transform with correspondence-free multi-start ICP instead (which also detects
                 // reflections). Both point sets are centered at their own bbox center, so ICP gives
                 // the rotation plus a residual centroid offset; adding `center` puts it in world space.
-                if (entry.vertices.size() >= 3 && meshes[meshIdx].cpuPositions.size() >= 3) {
+                if (entry.vertices.size() >= 3 && meshes[existingInstance].cpuPositions.size() >= 3) {
+                    r.runIcp = true;
+                }
+            }
+        }
+
+        // Phase B (parallel): run the first (expensive) icpAlign for every instance against its
+        // now-fixed reference mesh. Read-only on `meshes` and icpAlign is pure, so this fans out
+        // safely across the bounded worker pool.
+        {
+            std::vector<size_t> icpEntries;
+            for (size_t idx = 0; idx < entryCount; ++idx) {
+                if (resolutions[idx].runIcp) icpEntries.push_back(idx);
+            }
+            auto runIcpFor = [&](size_t idx) {
+                auto& entry = meshData.entries[idx];
+                std::vector<glm::vec3> instancePositions, instanceNormals;
+                instancePositions.reserve(entry.vertices.size());
+                instanceNormals.reserve(entry.vertices.size());
+                for (const auto& v : entry.vertices) {
+                    instancePositions.push_back(v.position);
+                    instanceNormals.push_back(v.normal);
+                }
+                uint32_t ref = resolutions[idx].refMeshIdx;
+                // Reflection is allowed here; a mirrored fit is handled in phase C with a reflected
+                // geometry copy (not a negative scale, which the node system can't carry without shearing).
+                resolutions[idx].fit = icpAlign(meshes[ref].cpuPositions, meshes[ref].cpuNormals,
+                                                instancePositions, instanceNormals);
+            };
+            if (icpEntries.size() > 1) {
+                unsigned int hw = std::thread::hardware_concurrency();
+                size_t workerCount = std::min<size_t>(icpEntries.size(), hw ? hw : 4);
+                std::atomic<size_t> nextJob{0};
+                auto worker = [&]() {
+                    for (size_t j = nextJob.fetch_add(1); j < icpEntries.size(); j = nextJob.fetch_add(1)) {
+                        runIcpFor(icpEntries[j]);
+                    }
+                };
+                std::vector<std::thread> workers;
+                workers.reserve(workerCount);
+                for (size_t w = 0; w < workerCount; ++w) workers.emplace_back(worker);
+                for (auto& t : workers) t.join();
+            } else if (icpEntries.size() == 1) {
+                runIcpFor(icpEntries[0]);
+            }
+        }
+
+        // Phase C (serial): turn each instance's fit into a transform, creating mirror-variant
+        // meshes in order. The first mirror of a source becomes the canonical mirror mesh (its own
+        // geometry is already correctly wound); later mirrors align to it, so this must stay serial.
+        for (size_t idx = 0; idx < entryCount; ++idx) {
+            EntryResolution& r = resolutions[idx];
+            if (!r.runIcp) continue;
+            auto& entry = meshData.entries[idx];
+            const glm::vec3& bbMin = bbMins[idx];
+            const glm::vec3& bbMax = bbMaxes[idx];
+            const glm::vec3& center = bbCenters[idx];
+            uint32_t refMeshIdx = r.refMeshIdx;
+            const RigidFit& fit = r.fit;
+            float tol = glm::length(bbMax - bbMin) * 0.02f; // 2% of the bbox diagonal
+
+            if (!fit.valid || fit.rmsd >= tol) {
+                // Not really the same mesh (false instance match) -> no rotation.
+                printf("Instance alignment failed for mesh '%s' (rmsd=%f, tol=%f); placing without rotation.\n",
+                       meshes[refMeshIdx].name.c_str(), fit.rmsd, tol);
+                r.transform = makeTransform(center);
+            } else if (!fit.mirrored) {
+                r.transform = makeTransform(center + fit.translation, fit.rotation);
+            } else {
+                // Mirrored instance: render a reflected geometry copy with a proper rotation so
+                // winding/culling stay correct.
+                auto it = mirrorVariants.find(refMeshIdx);
+                if (it == mirrorVariants.end()) {
+                    uint32_t mirrorIdx = createMesh(entry.vertices, entry.indices, bbMin, bbMax, center,
+                                                    inscribedRadii[idx], circumscribedRadii[idx],
+                                                    meshes[refMeshIdx].name + "_mirror", filePath);
+                    mirrorVariants[refMeshIdx] = mirrorIdx;
+                    r.meshIdx = mirrorIdx;
+                    r.transform = makeTransform(center); // geometry already in its correct orientation
+                } else {
+                    uint32_t mirrorIdx = it->second;
                     std::vector<glm::vec3> instancePositions, instanceNormals;
                     instancePositions.reserve(entry.vertices.size());
                     instanceNormals.reserve(entry.vertices.size());
@@ -171,49 +309,20 @@ class AssetManager {
                         instancePositions.push_back(v.position);
                         instanceNormals.push_back(v.normal);
                     }
-
-                    float tol = glm::length(bbMax - bbMin) * 0.02f; // 2% of the bbox diagonal
-
-                    // Align the instance to the reference mesh. Reflection is allowed: a mirrored fit
-                    // is handled below by a reflected geometry copy (not a negative scale, which the
-                    // node system can't carry without shearing).
-                    RigidFit fit = icpAlign(meshes[meshIdx].cpuPositions, meshes[meshIdx].cpuNormals,
-                                            instancePositions, instanceNormals);
-
-                    if (!fit.valid || fit.rmsd >= tol) {
-                        // Not really the same mesh (false instance match) -> no rotation.
-                        printf("Instance alignment failed for mesh '%s' (rmsd=%f, tol=%f); placing without rotation.\n",
-                               meshes[meshIdx].name.c_str(), fit.rmsd, tol);
-                        transform = makeTransform(center);
-                    } else if (!fit.mirrored) {
-                        transform = makeTransform(center + fit.translation, fit.rotation);
-                    } else {
-                        // Mirrored instance: render a reflected geometry copy with a proper rotation so
-                        // winding/culling stay correct. The first mirror of a source becomes the canonical
-                        // mirror mesh (its own geometry is already correctly wound); later mirrors align to it.
-                        auto it = mirrorVariants.find(meshIdx);
-                        if (it == mirrorVariants.end()) {
-                            uint32_t mirrorIdx = createMesh(entry.vertices, entry.indices, bbMin, bbMax, center,
-                                                            inscribedRadius, circumscribedRadius,
-                                                            meshes[meshIdx].name + "_mirror", filePath);
-                            mirrorVariants[meshIdx] = mirrorIdx;
-                            meshIdx = mirrorIdx;
-                            transform = makeTransform(center); // geometry already in its correct orientation
-                        } else {
-                            uint32_t mirrorIdx = it->second;
-                            RigidFit mf = icpAlign(meshes[mirrorIdx].cpuPositions, meshes[mirrorIdx].cpuNormals,
-                                                   instancePositions, instanceNormals, /*allowReflection=*/false);
-                            meshIdx = mirrorIdx;
-                            transform = (mf.valid && mf.rmsd < tol) ? makeTransform(center + mf.translation, mf.rotation)
-                                                                    : makeTransform(center);
-                        }
-                    }
-                } else {
-                    transform = makeTransform(center);
+                    RigidFit mf = icpAlign(meshes[mirrorIdx].cpuPositions, meshes[mirrorIdx].cpuNormals,
+                                           instancePositions, instanceNormals, /*allowReflection=*/false);
+                    r.meshIdx = mirrorIdx;
+                    r.transform = (mf.valid && mf.rmsd < tol) ? makeTransform(center + mf.translation, mf.rotation)
+                                                              : makeTransform(center);
                 }
             }
-            result.meshIndices.push_back(meshIdx);
-            result.transforms.push_back(transform);
+        }
+
+        // Final assembly (serial, in entry order).
+        for (size_t idx = 0; idx < entryCount; ++idx) {
+            auto& entry = meshData.entries[idx];
+            result.meshIndices.push_back(resolutions[idx].meshIdx);
+            result.transforms.push_back(resolutions[idx].transform);
             result.materialIds.push_back(entry.materialId);
             if (result.materialNames.find(entry.materialId) == result.materialNames.end()) {
                 result.materialNames[entry.materialId] = entry.materialName;

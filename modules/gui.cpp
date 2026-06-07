@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <unordered_map>
 
 static void check_vk_result(VkResult err) {
     if (err == 0)
@@ -584,6 +585,42 @@ void showBufferAllocs(DescriptorSet& descriptorSet, AssetManager& assetManager, 
     ImGui::Text("GPU Memory  Used: ~%s | Committed: ~%s",
         formatBytes(liveUsed).c_str(),
         formatBytes(committed).c_str());
+
+    ImGui::End();
+}
+
+void showMeshList(AssetManager& assetManager, BindlessSystem& bindless, uint32_t whiteTextureIndex) {
+    ImGui::Begin("Meshes");
+
+    // ImGui_ImplVulkan_AddTexture allocates a descriptor per call, so cache it. Keyed by image
+    // view so that a re-rendered thumbnail (new view) gets a fresh registration automatically.
+    static std::unordered_map<VkImageView, ImTextureID> imguiTexCache;
+    const std::vector<TextureResource>& textures = bindless.descriptorSet->getTextureResources();
+    const std::vector<SamplerResource>& samplers = bindless.descriptorSet->getSamplerResources();
+
+    for(const Mesh& mesh : assetManager.meshes) {
+        if (mesh.freed) continue;
+
+        // Use the rendered thumbnail once available, otherwise the white texture as a placeholder.
+        uint32_t texIndex = (mesh.thumbnailTextureIndex != 0xFFFFFFFF) ? mesh.thumbnailTextureIndex : whiteTextureIndex;
+        ImTextureID texId = ImTextureID_Invalid;
+        if (texIndex < textures.size() && !textures[texIndex].isEmpty() && !samplers.empty()) {
+            VkImageView view = static_cast<VkImageView>(**textures[texIndex].imageView);
+            auto it = imguiTexCache.find(view);
+            if (it != imguiTexCache.end()) {
+                texId = it->second;
+            } else {
+                VkDescriptorSet ds = ImGui_ImplVulkan_AddTexture(static_cast<VkSampler>(**samplers[0].sampler),
+                                                                 view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                texId = (ImTextureID)ds;
+                imguiTexCache.emplace(view, texId);
+            }
+        }
+
+        if (texId != ImTextureID_Invalid)
+            ImGui::Image(texId, ImVec2(64.0f, 64.0f));
+        ImGui::Text(mesh.name.c_str());
+    }
 
     ImGui::End();
 }
