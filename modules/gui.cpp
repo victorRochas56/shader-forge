@@ -7,9 +7,14 @@
 #include "pipelines.hpp"
 #include "swapchain.hpp"
 #include "scene_loader.hpp"
+#include "scene.hpp"
+#include "raycast.hpp"
+#include "node_ops.hpp"
 #define GLFW_INCLUDE_NONE
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/quaternion.hpp>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -103,7 +108,11 @@ void traverseNodeTree(Node& node, uint32_t level, uint32_t selectedNode, SceneGr
         if (node.getIndex() == selectedNode) {
             flag |= ImGuiTreeNodeFlags_Selected;
         }
+        // Append "##<index>" so the ImGui ID stays unique even if two nodes share a display name
+        // (the text after ## is not drawn). Node names are uniquified on spawn, but this guards
+        // legacy/default-named nodes too.
         displayText += node.name;
+        displayText += "##" + std::to_string(node.getIndex());
         if(node.firstChild == 0) flag |= ImGuiTreeNodeFlags_Leaf;
         if(ImGui::TreeNodeEx(displayText.c_str(),flag)){
             if(ImGui::IsItemClicked())
@@ -120,13 +129,32 @@ void traverseNodeTree(Node& node, uint32_t level, uint32_t selectedNode, SceneGr
     }
 }
 
-void showMaterialEditor(MaterialEditorState& state, Scene& scene) {
+void showMaterialEditor(MaterialEditorState& state, Scene& scene, BindlessSystem& bindless) {
     auto& materials = scene.getMaterials();
 
     ImGui::Begin("Materials");
 
+    // Cache the ImGui descriptor per thumbnail image view (see showMeshList for the rationale).
+    static std::unordered_map<VkImageView, ImTextureID> matThumbCache;
+    const std::vector<TextureResource>& textures = bindless.descriptorSet->getTextureResources();
+    const std::vector<SamplerResource>& samplers = bindless.descriptorSet->getSamplerResources();
+
     // material list
     for (int i = 0; i < static_cast<int>(materials.size()); i++) {
+        uint32_t ti = materials[i].thumbnailTextureIndex;
+        if (ti != 0xFFFFFFFF && ti < textures.size() && !textures[ti].isEmpty() && !samplers.empty()) {
+            VkImageView view = static_cast<VkImageView>(**textures[ti].imageView);
+            auto it = matThumbCache.find(view);
+            ImTextureID texId;
+            if (it != matThumbCache.end()) {
+                texId = it->second;
+            } else {
+                texId = (ImTextureID)ImGui_ImplVulkan_AddTexture(static_cast<VkSampler>(**samplers[0].sampler), view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                matThumbCache.emplace(view, texId);
+            }
+            ImGui::Image(texId, ImVec2(128.0f, 128.0f));
+        }
+
         std::string label = materials[i].name.empty() ? ("Material " + std::to_string(i)) : materials[i].name;
         if (i == 0) label += " (default)";
 
@@ -298,6 +326,7 @@ void showMaterialEditor(MaterialEditorState& state, Scene& scene) {
 
             // re-register all nodes that use this material with updated material data
             existingMat = newMat;
+            existingMat.thumbnailTextureIndex = oldMat.thumbnailTextureIndex; // keep preview target; pass re-renders it
             existingMat.materialID = static_cast<uint32_t>(std::hash<Material>{}(newMat));
 
             // update shader mappings for all nodes using this material
@@ -589,8 +618,10 @@ void showBufferAllocs(DescriptorSet& descriptorSet, AssetManager& assetManager, 
     ImGui::End();
 }
 
-void showMeshList(AssetManager& assetManager, BindlessSystem& bindless, uint32_t whiteTextureIndex) {
+void showMeshList(Scene& scene, BindlessSystem& bindless, uint32_t whiteTextureIndex) {
     ImGui::Begin("Meshes");
+
+    AssetManager& assetManager = scene.assetManager;
 
     // ImGui_ImplVulkan_AddTexture allocates a descriptor per call, so cache it. Keyed by image
     // view so that a re-rendered thumbnail (new view) gets a fresh registration automatically.
@@ -598,7 +629,13 @@ void showMeshList(AssetManager& assetManager, BindlessSystem& bindless, uint32_t
     const std::vector<TextureResource>& textures = bindless.descriptorSet->getTextureResources();
     const std::vector<SamplerResource>& samplers = bindless.descriptorSet->getSamplerResources();
 
-    for(const Mesh& mesh : assetManager.meshes) {
+    // Drag-to-place state: pressing and holding a mesh thumbnail spawns a node carrying that
+    // mesh, which is tracked under the cursor until the mouse is released (handled below).
+    static uint32_t draggedNodeIdx = 0;
+    static uint32_t draggedMeshIdx = 0;
+
+    for (uint32_t meshIdx = 0; meshIdx < assetManager.meshes.size(); meshIdx++) {
+        const Mesh& mesh = assetManager.meshes[meshIdx];
         if (mesh.freed) continue;
 
         // Use the rendered thumbnail once available, otherwise the white texture as a placeholder.
@@ -617,12 +654,67 @@ void showMeshList(AssetManager& assetManager, BindlessSystem& bindless, uint32_t
             }
         }
 
-        if (texId != ImTextureID_Invalid)
-            ImGui::Image(texId, ImVec2(64.0f, 64.0f));
+        if (texId != ImTextureID_Invalid) {
+            ImGui::ImageButton(mesh.name.c_str(), texId, ImVec2(64.0f, 64.0f));
+            // On click & hold: spawn a node with this mesh and start tracking it. The button
+            // stays "active" while the mouse stays down, even once the cursor leaves it.
+            if (draggedNodeIdx == 0 && ImGui::IsItemActivated()) {
+                uint32_t idx = scene.sceneGraph.addNode(false, SceneGraph::ROOT_INDEX);
+                Node& node = scene.sceneGraph.getNode(idx);
+                node.name = scene.sceneGraph.makeUniqueNodeName(mesh.name);
+                NodeOps::assignMesh(node, meshIdx, scene);
+                NodeOps::assignMaterial(node, scene.getFallBackMaterial(), scene);
+                draggedNodeIdx = idx;
+                draggedMeshIdx = meshIdx;
+            }
+        }
         ImGui::Text(mesh.name.c_str());
     }
 
     ImGui::End();
+
+    // Track the dragged node. Done outside the window scope so it keeps updating while the
+    // cursor is over the viewport, and stops the moment the mouse is released.
+    if (draggedNodeIdx != 0) {
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && scene.sceneGraph.isNodeValid(draggedNodeIdx)) {
+            // Use the same GLFW-derived NDC as the selection raycast. ImGui::GetMousePos() would be
+            // wrong under multi-viewports (it reports desktop-global coords), causing the placement
+            // to drift from the cursor by the window's screen position.
+            glm::vec2 ndc = InputManager::getCurrentState().ndcMousePos;
+            glm::vec3 origin, direction;
+            scene.activeCamera.rayFromScreenCoords(ndc.x, ndc.y, origin, direction);
+
+            Node& node = scene.sceneGraph.getNode(draggedNodeIdx);
+            const Mesh& mesh = assetManager.meshes[draggedMeshIdx];
+
+            // Skip the dragged node itself so the ray reaches the surface beneath it.
+            Raycast::MeshHit hit = Raycast::castMeshes(origin, direction, scene.sceneGraph.getNodes(),
+                                                       scene.sceneGraph.getLastNode(), assetManager.meshes, draggedNodeIdx);
+
+            if (hit.nodeIndex != 0) {
+                // Orient the node's up axis to the surface normal and rest the base of its
+                // bounding box on the hit point. Geometry is centered at the origin on import, so
+                // the bbox-base anchor comes from the (centered) bounding box itself — NOT mesh.center,
+                // which stores the mesh's pre-centering authoring offset and would shove the node away.
+                glm::quat rot = glm::rotation(glm::vec3(0.0f, 1.0f, 0.0f), hit.hitNormal);
+                glm::vec3 bbCenter = (mesh.boundingBoxMin + mesh.boundingBoxMax) * 0.5f;
+                glm::vec3 anchor(bbCenter.x, mesh.boundingBoxMin.y, bbCenter.z);
+                node.relativePosition = hit.hitPoint - rot * anchor;
+                node.relativeRotation = rot;
+                node.relativeRotationEuler = glm::eulerAngles(rot);
+            } else {
+                // No surface under the cursor — float the node along the ray.
+                node.relativePosition = origin + direction * 10.0f;
+                node.relativeRotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+                node.relativeRotationEuler = glm::vec3(0.0f);
+            }
+            node.transformDirty = true;
+        } else {
+            // Mouse released (or the node was removed) — stop tracking.
+            draggedNodeIdx = 0;
+            draggedMeshIdx = 0;
+        }
+    }
 }
 
 void showDebugWindow(uint32_t culledCount, float& cullFovScale){

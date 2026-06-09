@@ -17,6 +17,7 @@ struct RenderPassResources {
 
     uint32_t depthSamplerIndex = 0xFFFFFFFF;
     uint32_t defaultSamplerIndex = 0xFFFFFFFF;
+    uint32_t shadowSamplerIndex = 0xFFFFFFFF;
 
     // Global geometry buffers, for passes that draw meshes (thumbnails).
     uint32_t vertexBufferIndex = 0xFFFFFFFF;
@@ -44,6 +45,7 @@ enum PassId {
     SSR,
     VOLUMETRICS,
     THUMBNAIL,
+    MATERIAL_THUMBNAIL,
 };
 
 class RenderPass {

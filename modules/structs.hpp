@@ -453,6 +453,8 @@ struct Material {
     uint32_t environmentMapIndex;
     float alphaCutoff = 0.5f;
     bool alphaClip = false;
+    // GUI preview thumbnail; MaterialThumbnailPass renders into this. Not hashed/compared.
+    uint32_t thumbnailTextureIndex = 0xFFFFFFFF;
 
     bool operator<(const Material& other) const {
         if (name != other.name)
@@ -518,6 +520,14 @@ struct Mesh {
     // for uniqueness heuristic
     float minRadius = 0.0f;
     float maxRadius = 0.0f;
+
+    // Unit scale of the source file, baked into the geometry at import time (1.0 = as-authored).
+    // Persisted per source file so scene reloads re-bake identically.
+    float importScale = 1.0f;
+
+    // Index of the source-file entry (shape/material group) this geometry was built from.
+    // Persisted so scene loads can rebuild the mesh directly, skipping instance detection.
+    uint32_t sourceEntryIndex = 0;
 
     // CPU-side geometry for raycasting
     std::vector<glm::vec3> cpuPositions;

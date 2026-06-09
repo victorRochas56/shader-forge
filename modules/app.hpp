@@ -181,14 +181,14 @@ class App {
             showActionMenu(0, gpu.getWindow(), scene.activeCamera, scene.sceneGraph, InputManager::getInstance().contextMenuPinX, InputManager::getInstance().contextMenuPinY);
         }
         
-        showMaterialEditor(materialEditorState, scene);
+        showMaterialEditor(materialEditorState, scene, bindless);
         showImageViewList(bindless, renderer.features);
         showBufferAllocs(*bindless.descriptorSet,scene.assetManager,renderer.getIndirectCommands());
         showDebugWindow(renderer.culledCount,renderer.cullFovScale);
         showTraces();
         showToggles(renderer.features);
         showScenesMenu(scene, bindless, renderer.buffers, sceneLoader);
-        showMeshList(scene.assetManager, bindless, renderer.defaultAlbedoIndex);
+        showMeshList(scene, bindless, renderer.defaultAlbedoIndex);
         ImGui::Render();
     }
 

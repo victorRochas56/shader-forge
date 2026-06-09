@@ -107,6 +107,12 @@ struct FixedBufferResourceBase {
     virtual uint32_t allocateImpl(const void* data) = 0;
     virtual void updateImpl(uint32_t index, const void* data) = 0;
     virtual size_t getElementSize() const = 0;
+    // Reset to empty, keeping capacity. Clear cost tracks current count, not historical peak.
+    virtual void resetAllocations() {
+        allocations.clear();
+        freeSlots = {};
+        liveCount = 0;
+    }
 
   protected:
     FixedBufferResourceBase(vk::raii::Buffer&& buf, vk::raii::DeviceMemory&& mem) : buffer(std::move(buf)), memory(std::move(mem)) {}
@@ -132,6 +138,11 @@ template <typename T> struct FixedBufferResource : FixedBufferResourceBase {
     }
 
     size_t getElementSize() const override { return sizeof(T); }
+
+    void resetAllocations() override {
+        FixedBufferResourceBase::resetAllocations();
+        data.clear();
+    }
 
     uint32_t allocateTyped(const T& newData) {
         uint32_t index;
@@ -499,14 +510,7 @@ class DescriptorSet {
         if (bufferIndex >= fixedBuffers.size()) {
             return;
         }
-        auto* basePtr = fixedBuffers[bufferIndex].get();
-        for (auto& allocation : basePtr->allocations) {
-            allocation.inUse = false;
-        }
-        basePtr->freeSlots = {};
-        for (uint32_t i = 0; i < basePtr->allocations.size(); i++) {
-            basePtr->freeSlots.push(i);
-        }
+        fixedBuffers[bufferIndex]->resetAllocations();
     }
 
     template <typename T> void updateFixedBuffer(uint32_t bufferIndex, uint32_t index, const T& data) {

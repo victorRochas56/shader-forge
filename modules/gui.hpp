@@ -65,12 +65,12 @@ static void browseButton(const char* id, char* pathBuffer, size_t bufferSize) {
 void initIMGUI(Device& device, vk::Instance instance, uint32_t graphicsQueueFamily,
                Swapchain& swapchain, GLFWwindow* window);
 void traverseNodeTree(Node& node, uint32_t level, uint32_t selectedNode, SceneGraph& sceneGraph);
-void showMaterialEditor(MaterialEditorState& state, Scene& scene);
+void showMaterialEditor(MaterialEditorState& state, Scene& scene, BindlessSystem& bindless);
 void showImageViewList(BindlessSystem& bindless, RenderFeatures& features);
 void showActionMenu(uint32_t context, GLFWwindow* window, Camera& camera, SceneGraph& sceneGraph, float posX, float posY);
 void showToggles(RenderFeatures& features);
 void showScenesMenu(Scene& scene, BindlessSystem& bindless, RenderBuffers& buffers,SceneLoader& sceneLoader);
 void showBufferAllocs(DescriptorSet& descriptorSet, AssetManager& assetManager, const std::vector<DrawIndexedIndirectCommand>& indirectDraws);
 void showDebugWindow(uint32_t culledCount, float& cullFovScale);
-void showMeshList(AssetManager& assetManager, BindlessSystem& bindless, uint32_t whiteTextureIndex);
+void showMeshList(Scene& scene, BindlessSystem& bindless, uint32_t whiteTextureIndex);
 void showTraces();

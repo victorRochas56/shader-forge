@@ -25,6 +25,7 @@
 #include "ssr_pass.hpp"
 #include "volumetrics_pass.hpp"
 #include "thumbnail_pass.hpp"
+#include "material_thumbnail_pass.hpp"
 
 // TODO clustered lights? (forward +)
 //      pass the N nearest lights to the lit shader
@@ -120,6 +121,7 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     passes.emplace(PassId::SSR,std::make_unique<SSRPass>(gpu, bindless, scene, features, passResources));
     passes.emplace(PassId::VOLUMETRICS,std::make_unique<VolumetricsPass>(gpu, bindless, scene, features, passResources));
     passes.emplace(PassId::THUMBNAIL,std::make_unique<ThumbnailPass>(gpu, bindless, scene, features, passResources));
+    passes.emplace(PassId::MATERIAL_THUMBNAIL,std::make_unique<MaterialThumbnailPass>(gpu, bindless, scene, features, passResources));
 
     createShadowAtlas(SHADOW_ATLAS_SIZE);
     createRoughnessMetalResources(startWidth, startHeight);
@@ -152,6 +154,7 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
                                                         vk::CompareOp::eLessOrEqual,
                                                         vk::BorderColor::eFloatOpaqueWhite
     );
+    passResources.shadowSamplerIndex = shadowSamplerIndex;
     // Dedicated hardware-PCF comparison sampler — lives at its own binding.
     bindless.descriptorSet->allocateShadowCompareSampler(vk::Filter::eLinear,
                                                         vk::SamplerAddressMode::eClampToBorder,
@@ -1412,7 +1415,7 @@ glm::mat4 calculateLightSpaceMatrix(Light& light, Camera& camera) {
 }
 
 void calculatePointLightFaceMatrices(Light& light, const glm::vec3& lightPos) {
-    float nearPlane = 0.1f;
+    float nearPlane = 0.05f;
     float farPlane = light.range;
     glm::mat4 projection = glm::perspective(glm::radians(90.0f), 1.0f, nearPlane, farPlane);
 

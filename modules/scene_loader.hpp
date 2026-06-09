@@ -83,6 +83,7 @@ class SceneLoader {
         }
 
         ifs.close();
+        scene.assetManager.clearSceneMeshLoadCache(); // free the transient raw-file cache used during load
         std::cout << "Scene loaded successfully!" << std::endl;
     }
 
@@ -338,6 +339,8 @@ class SceneLoader {
         glm::vec3 scale(1.0f);
         std::string meshPath;
         std::string meshName;
+        float meshScale = 1.0f;
+        int meshEntry = -1; // -1 = not present (legacy scene) -> fall back to detection-based load
         std::vector<uint32_t> materialIDs;
         bool hasLight = false;
         bool hasVolume = false;
@@ -395,6 +398,10 @@ class SceneLoader {
                 meshPath = value;
             } else if (key == "MeshName") {
                 meshName = value;
+            } else if (key == "MeshEntry") {
+                meshEntry = std::stoi(value);
+            } else if (key == "MeshScale") {
+                meshScale = std::stof(value);
             } else if (key == "MaterialID") {
                 materialIDs.push_back(std::stoul(value));
             } else if (key == "Light") {
@@ -456,16 +463,23 @@ class SceneLoader {
         // Load mesh if specified
         if (!meshPath.empty()) {
             try {
-                auto loadResult = scene.assetManager.loadMeshFromFile(meshPath);
-                auto& meshIndices = loadResult.meshIndices;
+                uint32_t meshIdx;
+                if (meshEntry >= 0) {
+                    // Fast path: rebuild this exact mesh from its source entry, no instance detection.
+                    meshIdx = scene.assetManager.loadSceneMesh(meshPath, static_cast<uint32_t>(meshEntry), meshName, meshScale);
+                } else {
+                    // Legacy scene without entry indices — fall back to the full detection-based load.
+                    auto loadResult = scene.assetManager.loadMeshFromFile(meshPath, meshScale);
+                    auto& meshIndices = loadResult.meshIndices;
 
-                // Find the specific sub-mesh by name, or fall back to the first one
-                uint32_t meshIdx = meshIndices[0];
-                if (!meshName.empty()) {
-                    for (uint32_t idx : meshIndices) {
-                        if (scene.assetManager.getMeshes()[idx].name == meshName) {
-                            meshIdx = idx;
-                            break;
+                    // Find the specific sub-mesh by name, or fall back to the first one
+                    meshIdx = meshIndices[0];
+                    if (!meshName.empty()) {
+                        for (uint32_t idx : meshIndices) {
+                            if (scene.assetManager.getMeshes()[idx].name == meshName) {
+                                meshIdx = idx;
+                                break;
+                            }
                         }
                     }
                 }
@@ -600,6 +614,11 @@ class SceneLoader {
             ofs << indent << "  Mesh : " << mesh.sourceFile << std::endl;
             if (!mesh.name.empty()) {
                 ofs << indent << "  MeshName : " << mesh.name << std::endl;
+            }
+            // Source entry index lets scene load rebuild the mesh directly, skipping instance detection.
+            ofs << indent << "  MeshEntry : " << mesh.sourceEntryIndex << std::endl;
+            if (mesh.importScale != 1.0f) {
+                ofs << indent << "  MeshScale : " << mesh.importScale << std::endl;
             }
 
             if (node.getMaterialIndex() != 0xFFFFFFFF) {

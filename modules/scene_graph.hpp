@@ -3,6 +3,7 @@
 #include <optional>
 #include <queue>
 #include <stdexcept>
+#include <stack>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -14,6 +15,25 @@
 
 class Scene;
 class BindlessSystem;
+
+// NOTE: members are suffixed to dodge <windows.h> macros (DELETE is a winnt.h
+// macro) — this header gets pulled in after windows.h in some translation units.
+enum NodeOpType {
+    MUTATE_NODE,
+    ADD_NODE,
+    DELETE_NODE,
+};
+
+struct NodeOp {
+
+    NodeOp(NodeOpType op, Node& node) {
+        this->node = node;
+        this->op = op;
+    }
+    NodeOpType op;
+    std::optional<Node> node;        
+};
+
 
 class SceneGraph {
   public:
@@ -51,8 +71,27 @@ class SceneGraph {
     void deSelectNode() {
         if (isNodeValid(selectedNode)){
             nodes[selectedNode].isSelected = false;
-        } 
+        }
         selectedNode = 0;
+    }
+
+    // Returns a name not currently used by any alive node, appending a Blender-style ".NNN" suffix
+    // on collision. Used when spawning instances so the node tree (and ImGui IDs) stay unambiguous.
+    std::string makeUniqueNodeName(const std::string& base) {
+        auto nameTaken = [&](const std::string& candidate) {
+            for (const Node& n : nodes) {
+                if (n.alive && n.name == candidate) return true;
+            }
+            return false;
+        };
+        if (!nameTaken(base)) return base;
+        for (uint32_t i = 1; i < 100000; i++) {
+            std::string num = std::to_string(i);
+            if (num.size() < 3) num = std::string(3 - num.size(), '0') + num;
+            std::string candidate = base + "." + num;
+            if (!nameTaken(candidate)) return candidate;
+        }
+        return base;
     }
 
     // Link child into parent's sibling list (firstChild/nextSibling)
@@ -133,7 +172,15 @@ class SceneGraph {
         }
     }
 
+    void pushUndo(NodeOpType op, Node& node) {
+        NodeOp nodeOp = NodeOp(op,node);
+    }
+
+    void popUndo() {
+        
+    }
   private:
+
     Scene* scene = nullptr;
     BindlessSystem* bindless = nullptr;
     // Non-owning view of the renderer-owned RenderBuffers. Read every access
@@ -144,6 +191,7 @@ class SceneGraph {
     std::vector<Node> nodes;
     uint32_t lastNode = 0;
     std::queue<uint32_t> freeSlots;
+    std::stack<Node> undoStack;
 
     // Allocate GPU model matrix buffer for a node
     void allocateNodeGPU(Node& node);

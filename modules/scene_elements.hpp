@@ -28,6 +28,8 @@ class Node { // need to be able to hide nodes from tree for internal logic
   public:
     std::string name = "empty";
 
+    Node(const Node& node) = default;
+
     Node(uint32_t arrayIndex, bool internal = true, uint32_t parentIndex = 0, glm::vec3 position = glm::vec3(0.0f), glm::quat rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
          glm::vec3 scale = glm::vec3(1.0f), std::string nodeName = "empty");
     glm::vec3 getWorldPosition() { return glm::vec3(worldTransform[3]); }

@@ -5,6 +5,8 @@
 //parameters for scene size limits this 
 //TODO expand this into a settings menu / system and handle buffer resizing for limits
 
+constexpr int MAX_UNDO = 32;
+
 constexpr int MAX_FRAMES_IN_FLIGHT = 2;
 
 constexpr uint32_t MAX_MESHES = 2048;

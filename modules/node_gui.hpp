@@ -13,6 +13,8 @@ struct NodeGuiState {
     std::vector<std::string> materialList;
     bool lightShadow = false;
     bool keepMaterialAssignments = false;
+    // Unit scale baked into the imported file's geometry (e.g. 0.01 for a cm-authored model).
+    float importScale = 1.0f;
 };
 
 NodeGuiState& getNodeGuiState(uint32_t nodeIndex);

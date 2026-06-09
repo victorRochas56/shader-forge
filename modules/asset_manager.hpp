@@ -44,7 +44,8 @@ class AssetManager {
     // Allocates GPU buffers for a mesh's geometry, records a Mesh entry, and returns its index.
     uint32_t createMesh(const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices,
                         const glm::vec3& bbMin, const glm::vec3& bbMax, const glm::vec3& center,
-                        float minRadius, float maxRadius, const std::string& name, const std::string& sourceFile) {
+                        float minRadius, float maxRadius, const std::string& name, const std::string& sourceFile,
+                        float importScale = 1.0f, uint32_t sourceEntryIndex = 0) {
         std::vector<Vertex> verts = vertices; // allocateVariableBuffer takes a mutable buffer
         std::vector<uint32_t> inds = indices;
 
@@ -68,6 +69,8 @@ class AssetManager {
         Mesh mesh;
         mesh.minRadius = minRadius;
         mesh.maxRadius = maxRadius;
+        mesh.importScale = importScale;
+        mesh.sourceEntryIndex = sourceEntryIndex;
         mesh.sourceFile = sourceFile;
         mesh.name = name;
         mesh.vertexAllocationOffset = vertexAllocOffset;
@@ -93,7 +96,11 @@ class AssetManager {
 
     // Loads an OBJ and returns mesh indices plus material grouping info.
     // Each mesh is a single draw unit with its own vertex/index data.
-    MeshLoadResult loadMeshFromFile(std::string filePath) {
+    // importScale defines the unit scale of the source file (e.g. 0.01 for a model authored in
+    // centimeters). It is baked into the geometry here so the rest of the pipeline — bounding boxes,
+    // instance dedup, raycasting — operates on already-scaled positions. The scale is fixed per file
+    // for the session: a re-load of an already-imported path returns the cached (already-baked) result.
+    MeshLoadResult loadMeshFromFile(std::string filePath, float importScale = 1.0f) {
         if (auto it = loadedMeshes.find(filePath); it != loadedMeshes.end()) {
             return it->second;
         }
@@ -101,9 +108,19 @@ class AssetManager {
         MeshLoadResult result;
 
 #if DEBUG == 1
-        std::cout << "Loading mesh from " << filePath << std::endl;
+        std::cout << "Loading mesh from " << filePath << " (import scale " << importScale << ")" << std::endl;
 #endif
         MeshData meshData = resourceManager->loadMeshFromFile(filePath);
+
+        // Bake the file's unit scale into vertex positions. Uniform scaling leaves normal
+        // directions unchanged, so normals need no renormalization.
+        if (importScale != 1.0f) {
+            for (auto& entry : meshData.entries) {
+                for (auto& vertex : entry.vertices) {
+                    vertex.position *= importScale;
+                }
+            }
+        }
 
         const size_t entryCount = meshData.entries.size();
         std::vector<float> inscribedRadii(entryCount);
@@ -209,7 +226,8 @@ class AssetManager {
             EntryResolution& r = resolutions[idx];
             if (existingInstance == 0) {
                 r.meshIdx = createMesh(entry.vertices, entry.indices, bbMin, bbMax, center,
-                                       inscribedRadius, circumscribedRadius, entry.shapeName, filePath);
+                                       inscribedRadius, circumscribedRadius, entry.shapeName, filePath, importScale,
+                                       static_cast<uint32_t>(idx));
                 r.transform = makeTransform(center);
             } else {
                 // Default placement for an instance; refined in phase C once its ICP fit is known.
@@ -296,7 +314,8 @@ class AssetManager {
                 if (it == mirrorVariants.end()) {
                     uint32_t mirrorIdx = createMesh(entry.vertices, entry.indices, bbMin, bbMax, center,
                                                     inscribedRadii[idx], circumscribedRadii[idx],
-                                                    meshes[refMeshIdx].name + "_mirror", filePath);
+                                                    meshes[refMeshIdx].name + "_mirror", filePath, importScale,
+                                                    static_cast<uint32_t>(idx));
                     mirrorVariants[refMeshIdx] = mirrorIdx;
                     r.meshIdx = mirrorIdx;
                     r.transform = makeTransform(center); // geometry already in its correct orientation
@@ -331,6 +350,77 @@ class AssetManager {
 
         loadedMeshes[filePath] = result;
         return result;
+    }
+
+    // Fast scene-load path: build (or reuse) a single mesh from a specific source-file entry,
+    // doing only the cheap per-entry processing that import does (center + bbox + radii). It skips
+    // instance dedup and ICP entirely, because the scene file already stores each node's final
+    // transform and the entry every mesh came from. Meshes are deduped by (file, entry) so the
+    // instances and mirror groups that shared one mesh on import share one again here.
+    uint32_t loadSceneMesh(const std::string& filePath, uint32_t entryIndex, const std::string& meshName,
+                           float importScale = 1.0f) {
+        std::string key = filePath + "#" + std::to_string(entryIndex);
+        if (auto it = sceneMeshCache.find(key); it != sceneMeshCache.end()) {
+            return it->second;
+        }
+
+        // Parse the source file once and keep it around for the rest of this scene load.
+        auto rawIt = rawMeshDataCache.find(filePath);
+        if (rawIt == rawMeshDataCache.end()) {
+            rawIt = rawMeshDataCache.emplace(filePath, resourceManager->loadMeshFromFile(filePath)).first;
+        }
+        const MeshData& meshData = rawIt->second;
+        if (entryIndex >= meshData.entries.size()) {
+            throw std::runtime_error("scene references mesh entry " + std::to_string(entryIndex) +
+                                     " out of range in " + filePath);
+        }
+
+        // Work on a copy so the cached raw data stays pristine for sibling entries.
+        std::vector<Vertex> vertices = meshData.entries[entryIndex].vertices;
+        const std::vector<uint32_t>& indices = meshData.entries[entryIndex].indices;
+
+        // Bake the file's unit scale, then mirror the import path's per-entry processing exactly so
+        // the geometry lines up with the saved node transforms.
+        if (importScale != 1.0f) {
+            for (auto& v : vertices) v.position *= importScale;
+        }
+
+        glm::vec3 bbMin(std::numeric_limits<float>::max());
+        glm::vec3 bbMax(std::numeric_limits<float>::lowest());
+        glm::dvec3 averageAccum{0, 0, 0};
+        for (const auto& v : vertices) {
+            bbMin = glm::min(bbMin, v.position);
+            bbMax = glm::max(bbMax, v.position);
+            averageAccum += glm::dvec3(v.position);
+        }
+        glm::vec3 center = (bbMax + bbMin) * 0.5f;
+        glm::vec3 averagePoint = vertices.empty() ? glm::vec3(0.0f)
+                               : glm::vec3(averageAccum / static_cast<double>(vertices.size())) - center;
+
+        // Center geometry at origin (import does the same; node transforms encode the offset).
+        for (auto& v : vertices) v.position -= center;
+        bbMin -= center;
+        bbMax -= center;
+
+        float inscribedRadius = std::numeric_limits<float>::max();
+        float circumscribedRadius = 0.0f;
+        for (const auto& v : vertices) {
+            float d = glm::length(v.position - averagePoint);
+            inscribedRadius = std::min(inscribedRadius, d);
+            circumscribedRadius = std::max(circumscribedRadius, d);
+        }
+
+        std::string name = meshName.empty() ? meshData.entries[entryIndex].shapeName : meshName;
+        uint32_t meshIdx = createMesh(vertices, indices, bbMin, bbMax, center, inscribedRadius,
+                                      circumscribedRadius, name, filePath, importScale, entryIndex);
+        sceneMeshCache[key] = meshIdx;
+        return meshIdx;
+    }
+
+    // Drop the transient caches used by loadSceneMesh; call once a scene finishes loading.
+    void clearSceneMeshLoadCache() {
+        rawMeshDataCache.clear();
+        sceneMeshCache.clear();
     }
 
     uint32_t loadTextureFromFile(std::string filePath, vk::Format format = vk::Format::eR8G8B8A8Srgb) {
@@ -379,6 +469,11 @@ class AssetManager {
     std::vector<Mesh>& getMeshes() { return meshes; }
 
   private:
+    // Transient caches for the scene-load fast path (loadSceneMesh): parsed source files and
+    // already-built meshes keyed by "file#entry". Cleared via clearSceneMeshLoadCache() after load.
+    std::map<std::string, MeshData> rawMeshDataCache;
+    std::map<std::string, uint32_t> sceneMeshCache;
+
     ResourceManager* resourceManager = nullptr;
     DescriptorSet* descriptorSet = nullptr;
     uint32_t vertexBufferIndex = 0;

@@ -17,6 +17,8 @@ namespace Raycast {
 struct MeshHit {
     uint32_t nodeIndex = 0;
     float distance = std::numeric_limits<float>::max();
+    glm::vec3 hitPoint = glm::vec3(0.0f);
+    glm::vec3 hitNormal = glm::vec3(0.0f, 1.0f, 0.0f);
 };
 
 inline bool rayIntersectsAABB(glm::vec3 origin, glm::vec3 dir, glm::vec3 bmin, glm::vec3 bmax) {
@@ -78,7 +80,7 @@ inline std::vector<uint32_t> castNodes(glm::vec3 origin, glm::vec3 direction, st
 
 // Raycast against actual mesh triangles, returns closest hit with node index
 inline MeshHit castMeshes(glm::vec3 origin, glm::vec3 direction, std::vector<Node>& nodes, uint32_t lastNode,
-                          std::vector<Mesh>& meshes) {
+                          std::vector<Mesh>& meshes, uint32_t excludeNode = 0) {
 
     glm::vec3 dir = glm::normalize(direction);
     MeshHit result;
@@ -88,6 +90,7 @@ inline MeshHit castMeshes(glm::vec3 origin, glm::vec3 direction, std::vector<Nod
 
     for (uint32_t i = 1; i <= lastNode; i++) {
         if (!nodes[i].alive) continue;
+        if (i == excludeNode) continue;
         auto& node = nodes[i];
         uint32_t meshIdx = node.getMeshIndex();
         if (meshIdx >= meshes.size())
@@ -136,9 +139,13 @@ inline MeshHit castMeshes(glm::vec3 origin, glm::vec3 direction, std::vector<Nod
             }
         }
     }
-    Gizmos::drawLine(resV0, resV1, glm::vec4(1, 1, 0, 1), true);
-    Gizmos::drawLine(resV1, resV2, glm::vec4(1, 1, 0, 1), true);
-    Gizmos::drawLine(resV0, resV2, glm::vec4(1, 1, 0, 1), true);
+    // Resolve the world-space hit point and surface normal for the closest triangle.
+    if (result.nodeIndex != 0) {
+        result.hitPoint = origin + dir * result.distance;
+        glm::vec3 n = glm::normalize(glm::cross(resV1 - resV0, resV2 - resV0));
+        if (glm::dot(n, dir) > 0.0f) n = -n; // face the normal back toward the ray origin
+        result.hitNormal = n;
+    }
     return result;
 }
 

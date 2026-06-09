@@ -23,7 +23,7 @@ BEFORE_GEOMETRY is only used by shadow rendering
 GEOMETRY is the main pass with 2 color attachments (color + roughness/metallic)
 POSTPROCESS are passes that process color attachments
 */
-enum class PipelineCategory { BEFORE_GEOMETRY, LIT_GEOMETRY, ALPHA_GEOMETRY, POSTPROCESS, POSTPROCESS_MULTIPLY, POSTPROCESS_ALPHA_BLEND, SHADOW, DEPTH_PREPASS, THUMBNAIL };
+enum class PipelineCategory { BEFORE_GEOMETRY, LIT_GEOMETRY, ALPHA_GEOMETRY, POSTPROCESS, POSTPROCESS_MULTIPLY, POSTPROCESS_ALPHA_BLEND, SHADOW, DEPTH_PREPASS, THUMBNAIL, MATERIAL_THUMBNAIL };
 
 class PipelineManager;
 
@@ -167,6 +167,7 @@ class PipelineManager {
         // Format variables must persist beyond the switch scope since pointers to them are used
         vk::Format pcfFormat = vk::Format::eR32Sfloat; // PCF uses R32F for raw depth values
         vk::Format mrtFormats[3] = {swapchain.getSwapChainImageFormat(), vk::Format::eR8G8B8A8Unorm, vk::Format::eR8G8B8A8Unorm};
+        vk::Format thumbMrtFormats[3] = {vk::Format::eR8G8B8A8Unorm, vk::Format::eR8G8B8A8Unorm, vk::Format::eR8G8B8A8Unorm};
         vk::PipelineColorBlendAttachmentState mrtBlendAttachments[3] = {
             {.blendEnable = vk::False, .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA},
             {.blendEnable = vk::False, .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA},
@@ -308,6 +309,31 @@ class PipelineManager {
             pipeline->layout = vk::raii::PipelineLayout(device.getDevice(), pipelineLayoutInfo);
             break;
         }
+        case PipelineCategory::MATERIAL_THUMBNAIL: {
+            // Single-sample lit pass into small MRT targets for material GUI previews (reuses lit.spv).
+            depthFormat = vk::Format::eD32Sfloat;
+            pipelineRenderingCreateInfo = {.colorAttachmentCount = 3, .pColorAttachmentFormats = thumbMrtFormats, .depthAttachmentFormat = depthFormat};
+            inputAssembly = {.topology = topology};
+            rasterizer = {.depthClampEnable = vk::False,
+                          .rasterizerDiscardEnable = vk::False,
+                          .polygonMode = vk::PolygonMode::eFill,
+                          .cullMode = cullMode,
+                          .frontFace = vk::FrontFace::eCounterClockwise,
+                          .depthBiasEnable = vk::False,
+                          .lineWidth = 1.0f};
+            multisampling = {.rasterizationSamples = vk::SampleCountFlagBits::e1, .sampleShadingEnable = vk::False};
+            depthStencil = {.depthTestEnable = depthTestEnable,
+                            .depthWriteEnable = depthWriteEnable,
+                            .depthCompareOp = vk::CompareOp::eLessOrEqual,
+                            .depthBoundsTestEnable = vk::False,
+                            .stencilTestEnable = vk::False};
+            colorBlending = {.logicOpEnable = vk::False, .attachmentCount = 3, .pAttachments = mrtBlendAttachments};
+            pushConstantRange = {.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, .offset = 0, .size = sizeof(T)};
+            vk::PipelineLayoutCreateInfo pipelineLayoutInfo{
+                .setLayoutCount = 1, .pSetLayouts = &*setLayout, .pushConstantRangeCount = 1, .pPushConstantRanges = &pushConstantRange};
+            pipeline->layout = vk::raii::PipelineLayout(device.getDevice(), pipelineLayoutInfo);
+            break;
+        }
         case PipelineCategory::ALPHA_GEOMETRY: {
             pipelineRenderingCreateInfo = {.colorAttachmentCount = 1, .pColorAttachmentFormats = &swapchain.getSwapChainImageFormat(), .depthAttachmentFormat = depthFormat};
             inputAssembly = {.topology = topology};
@@ -438,6 +464,7 @@ class PipelineManager {
         case PipelineCategory::BEFORE_GEOMETRY:
         case PipelineCategory::DEPTH_PREPASS:
         case PipelineCategory::THUMBNAIL:
+        case PipelineCategory::MATERIAL_THUMBNAIL:
             return &beforeGeometryPipelines;
         case PipelineCategory::LIT_GEOMETRY:
         case PipelineCategory::ALPHA_GEOMETRY:

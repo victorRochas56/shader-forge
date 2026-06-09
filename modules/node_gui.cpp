@@ -62,6 +62,8 @@ void showNodeMeshInfo(Node& node, Scene& scene) {
         ImGui::SetNextItemWidth(160);
         ImGui::InputText("mesh source", state.textBuffer, sizeof(state.textBuffer));
         browseButton("mesh", state.textBuffer, sizeof(state.textBuffer));
+        ImGui::SetNextItemWidth(160);
+        ImGui::InputFloat("import scale", &state.importScale);
         ImGui::Checkbox("Keep material assignments", &state.keepMaterialAssignments);
 
         if (ImGui::Button("Confirm")) {
@@ -73,7 +75,7 @@ void showNodeMeshInfo(Node& node, Scene& scene) {
                                                      scene.getMaterials()[node.materialIndex]);
             }
 
-            auto loadResult = scene.assetManager.loadMeshFromFile(std::string(state.textBuffer));
+            auto loadResult = scene.assetManager.loadMeshFromFile(std::string(state.textBuffer), state.importScale);
             auto& meshIndices = loadResult.meshIndices;
 
             // Build material mapping: source material ID -> renderer material index
@@ -108,7 +110,7 @@ void showNodeMeshInfo(Node& node, Scene& scene) {
                     uint32_t childIdx = scene.sceneGraph.addNode(false, thisNodeIndex);
                     // re-fetch after addNode since nodes vector may have reallocated
                     Node& childNode = scene.sceneGraph.getNodes()[childIdx];
-                    childNode.name = scene.assetManager.getMeshes()[meshIndices[i]].name;
+                    childNode.name = scene.sceneGraph.makeUniqueNodeName(scene.assetManager.getMeshes()[meshIndices[i]].name);
                     decomposeTransform(loadResult.transforms[i], pos, rot, scale);
                     childNode.relativePosition = pos;
                     childNode.relativeRotation = rot;
