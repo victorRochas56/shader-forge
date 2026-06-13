@@ -23,21 +23,21 @@ public:
     void init(uint32_t width, uint32_t height) {
         uint32_t volW = std::max(1u, static_cast<uint32_t>(width * features.volumetrics.resolutionScale));
         uint32_t volH = std::max(1u, static_cast<uint32_t>(height * features.volumetrics.resolutionScale)); 
-        resize(textureIndex,volW,volH,gpu.getSwapchain().getSwapChainImageFormat(),"internal/volumetrics");
-        resize(blurTextureIndex,volW,volH,gpu.getSwapchain().getSwapChainImageFormat(),"internal/volumetrics_blur");
+        resize(textureIndex,volW,volH,gpu.getSwapchain().getHDRColorFormat(),"internal/volumetrics");
+        resize(blurTextureIndex,volW,volH,gpu.getSwapchain().getHDRColorFormat(),"internal/volumetrics_blur");
 
         if (pipelineIndex == 0xFFFFFFFF) {
             pipelineIndex =
             bindless.pipelineManager->createPipeline<VolumetricPushConstants>(PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
                                                                vk::False, "shaders/volumetrics.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
-                                                               gpu.getSwapchain().getSwapChainImageFormat());
+                                                               gpu.getSwapchain().getHDRColorFormat());
         }
-        // apply pipeline — composites onto swapchain
+        // apply pipeline — composites onto the HDR composite target
         if (applyPipelineIndex == 0xFFFFFFFF) {
             applyPipelineIndex = bindless.pipelineManager->createPipeline<VolumetricApplyPushConstants>(
                 PipelineCategory::POSTPROCESS_ALPHA_BLEND, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone,
                 vk::False, vk::False, "shaders/volumetrics_apply.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
-                gpu.getSwapchain().getSwapChainImageFormat());
+                gpu.getSwapchain().getHDRColorFormat());
         }
     }
 
@@ -68,7 +68,7 @@ public:
 
         blurAttachment(bindless,cmd,shared.blurPipelineIndex,textureIndex,blurTextureIndex,extent.width,extent.height,features.volumetrics.blurRadius,shared.defaultSamplerIndex);
 
-        drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[applyPipelineIndex], *gpu.getSwapchain().getSwapChainImageViews()[imageIndex],
+        drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[applyPipelineIndex], *bindless.descriptorSet->getTextureResource(shared.compositeColorTextureIndex).imageView,
                         gpu.getSwapchain().getSwapChainExtent(),
                         VolumetricApplyPushConstants {
                                 .volumetricTextureIndex = textureIndex,

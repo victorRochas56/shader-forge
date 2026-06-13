@@ -191,11 +191,11 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
                                                                                bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
                                                                                vk::Format::eUndefined);
     // Blur is reused for many targets; callers re-bind the pipeline against the active attachment.
-    // Most blur sources are color-resolve mips (swapchain format), so create with that.
+    // Most blur sources are color-resolve mips (HDR), so create with that.
     passResources.blurPipelineIndex =
         bindless.pipelineManager->createPipeline<BlurPushConstants>(PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
                                                            vk::False, "shaders/blur.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
-                                                           gpu.getSwapchain().getSwapChainImageFormat());
+                                                           gpu.getSwapchain().getHDRColorFormat());
 
     depthPipelineIndex =
         bindless.pipelineManager->createPipeline<LitPushConstants>(PipelineCategory::DEPTH_PREPASS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eBack,vk::True,
@@ -219,12 +219,11 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     // lit-derived variants are added declaratively here, e.g.:
     // addLitShader("shaders/lit_toon.spv");
 
-    // Billboards composite onto the swapchain after SSR/SSAO, so use a single-sample alpha-blend
-    // pipeline that targets the swapchain format. Depth test is performed in-shader by sampling
-    // the resolved depth.
+    // Billboards alpha-blend into the HDR composite target after SSR/SSAO. Depth test is
+    // performed in-shader by sampling the resolved depth.
     billboardPipelineIndex = bindless.pipelineManager->createPipeline<BillboardPushConstants>(PipelineCategory::POSTPROCESS_ALPHA_BLEND, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
                                                                                             vk::False,"shaders/billboard.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
-                                                                                            gpu.getSwapchain().getSwapChainImageFormat());
+                                                                                            gpu.getSwapchain().getHDRColorFormat());
     gizmoPipelineIndex =
         bindless.pipelineManager->createPipeline<LinePushConstants>(PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eLineList, vk::CullModeFlagBits::eNone, vk::False, vk::False,
                                                            "shaders/line.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
@@ -233,6 +232,20 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
         bindless.pipelineManager->createPipeline<ImageVisPushConstants>(PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
                                                                vk::False, "shaders/image_view.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
                                                                gpu.getSwapchain().getSwapChainImageFormat());
+    // Tonemap: samples the HDR composite, writes the sRGB swapchain (hardware does sRGB encode).
+    tonemapPipelineIndex =
+        bindless.pipelineManager->createPipeline<TonemapPushConstants>(PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
+                                                               vk::False, "shaders/tonemap.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
+                                                               gpu.getSwapchain().getSwapChainImageFormat());
+    // Auto-exposure: log-luminance extract + temporal adaptation (both write R16F).
+    lumExtractPipelineIndex =
+        bindless.pipelineManager->createPipeline<LumExtractPushConstants>(PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
+                                                               vk::False, "shaders/lum_extract.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
+                                                               vk::Format::eR16Sfloat);
+    exposureAdaptPipelineIndex =
+        bindless.pipelineManager->createPipeline<ExposureAdaptPushConstants>(PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
+                                                               vk::False, "shaders/exposure_adapt.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
+                                                               vk::Format::eR16Sfloat);
 
     /**
      * post process pipelines added declaratively are added here?
@@ -500,7 +513,7 @@ void Renderer::createColorResolveResources(uint32_t width, uint32_t height) {
         bindless.descriptorSet->freeTexture(passResources.colorResolveTextureIndex);
     }
 
-    auto format = gpu.getSwapchain().getSwapChainImageFormat();
+    auto format = gpu.getSwapchain().getHDRColorFormat();
 
     vk::raii::Image image = nullptr;
     vk::raii::DeviceMemory memory = nullptr;
@@ -546,6 +559,33 @@ void Renderer::createColorResolveResources(uint32_t width, uint32_t height) {
     auto tempFullView = bindless.resourceManager->createImageView(tempImage, format, vk::ImageAspectFlagBits::eColor, passResources.fullscreenMipLevels);
     bindless.resourceManager->transitionImageLayout(nullptr, tempImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal, 0, passResources.fullscreenMipLevels);
     passResources.tempBlurTextureIndex = bindless.descriptorSet->allocateTexture(std::move(tempImage), std::move(tempMemory), std::move(tempFullView), "internal/blur_temp", false, width, height);
+
+    // HDR composite target seeded from colorResolve via copy, so it needs TransferDst.
+    createOrResizeRenderTarget(passResources.compositeColorTextureIndex, width, height, format, "internal/composite_color", vk::ImageUsageFlagBits::eTransferDst);
+
+    // Auto-exposure metering: mipped log-luminance target (box-averaged to 1x1 = geometric mean).
+    avgLumMip0View = nullptr;
+    if (avgLumTextureIndex != 0xFFFFFFFF) {
+        bindless.descriptorSet->freeTexture(avgLumTextureIndex);
+    }
+    vk::raii::Image lumImage = nullptr;
+    vk::raii::DeviceMemory lumMemory = nullptr;
+    bindless.resourceManager->createImage(width, height, passResources.fullscreenMipLevels, vk::SampleCountFlagBits::e1, vk::Format::eR16Sfloat, vk::ImageTiling::eOptimal,
+                                 vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst,
+                                 vk::MemoryPropertyFlagBits::eDeviceLocal, lumImage, lumMemory);
+    vk::ImageViewCreateInfo lumMip0Info{.image = lumImage, .viewType = vk::ImageViewType::e2D, .format = vk::Format::eR16Sfloat,
+                                        .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1}};
+    avgLumMip0View = vk::raii::ImageView(gpu.getDevice().getDevice(), lumMip0Info);
+    auto lumFullView = bindless.resourceManager->createImageView(lumImage, vk::Format::eR16Sfloat, vk::ImageAspectFlagBits::eColor, passResources.fullscreenMipLevels);
+    bindless.resourceManager->transitionImageLayout(nullptr, lumImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal, 0, passResources.fullscreenMipLevels);
+    avgLumTextureIndex = bindless.descriptorSet->allocateTexture(std::move(lumImage), std::move(lumMemory), std::move(lumFullView), "internal/avg_luminance", false, width, height);
+
+    // 1x1 ping-pong adapted-luminance targets (created once; persist across resizes for adaptation state).
+    if (adaptedLumIndex[0] == 0xFFFFFFFF) {
+        createOrResizeRenderTarget(adaptedLumIndex[0], 1, 1, vk::Format::eR16Sfloat, "internal/adapted_lum0");
+        createOrResizeRenderTarget(adaptedLumIndex[1], 1, 1, vk::Format::eR16Sfloat, "internal/adapted_lum1");
+        adaptInitialized = false;
+    }
 }
 
 void Renderer::createMotionVectorResources(uint32_t width, uint32_t height) {
@@ -603,12 +643,12 @@ void Renderer::createSDFResources(uint32_t width, uint32_t height) {
                                                            vk::False, "shaders/sdf.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
                                                            gpu.getSwapchain().getSwapChainImageFormat());
     }
-    // SDF apply pipeline — composites onto swapchain
+    // SDF apply pipeline — composites onto the HDR composite target
     if (sdfApplyPipelineIndex == 0xFFFFFFFF) {
         sdfApplyPipelineIndex = bindless.pipelineManager->createPipeline<SDFApplyPushConstants>(
             PipelineCategory::POSTPROCESS_ALPHA_BLEND, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone,
             vk::False, vk::False, "shaders/sdf_apply.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
-            gpu.getSwapchain().getSwapChainImageFormat());
+            gpu.getSwapchain().getHDRColorFormat());
     }
 }
 
@@ -642,7 +682,7 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
     recordGeometryPass(cmd, imageIndex);
     Tracer::endTrace("record geo pass");
 
-    recordResolveToSwapchainCopy(cmd, imageIndex);
+    recordResolveToCompositeCopy(cmd);
 
     Tracer::startTrace("record passes");
     for(auto& pass : passes) {
@@ -656,6 +696,9 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
     if(sdfPipelineIndex != 0xFFFFFFFF)
         recordSDFPass(cmd, imageIndex);
     Tracer::endTrace("record SDF pass");
+
+    // Tonemap HDR composite -> swapchain. Scene passes above run in HDR; UI passes below run in LDR.
+    recordTonemapPass(cmd, imageIndex);
 
     Tracer::startTrace("record image vis pass");
     if (features.imageVis.imageIndex != 0xFFFFFFFF)
@@ -1021,7 +1064,7 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
     cmd.endRendering();
 
     // Transition: color resolve to shader readable, roughness-metal to shader readable for SSR.
-    // Swapchain is no longer touched here — recordResolveToSwapchainCopy() seeds it after the billboard pass.
+    // colorResolve is copied into the HDR composite target by recordResolveToCompositeCopy().
     bindless.resourceManager->transitionImageLayouts(cmd, {
         {*colorResolve.image,                                                            vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal},
         {*bindless.descriptorSet->getTextureResource(passResources.roughnessMetalTextureIndex).image,  vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal},
@@ -1050,7 +1093,7 @@ void Renderer::recordBillboardBlendPass(vk::raii::CommandBuffer& cmd, uint32_t i
     bindless.resourceManager->transitionImageLayout(&cmd, *depthResolveTex.image,
         vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
 
-    vk::RenderingAttachmentInfo colorAttachment = {.imageView = gpu.getSwapchain().getSwapChainImageViews()[imageIndex],
+    vk::RenderingAttachmentInfo colorAttachment = {.imageView = *bindless.descriptorSet->getTextureResource(passResources.compositeColorTextureIndex).imageView,
                                                    .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
                                                    .loadOp = vk::AttachmentLoadOp::eLoad,
                                                    .storeOp = vk::AttachmentStoreOp::eStore};
@@ -1119,13 +1162,15 @@ void Renderer::recordBillboardBlendPass(vk::raii::CommandBuffer& cmd, uint32_t i
 
 }
 
-void Renderer::recordResolveToSwapchainCopy(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
+void Renderer::recordResolveToCompositeCopy(vk::raii::CommandBuffer& cmd) {
+    // Seed the HDR composite target with the lit scene color; post passes blend on top of it.
     auto& colorResolve = bindless.descriptorSet->getTextureResource(passResources.colorResolveTextureIndex);
+    auto& composite = bindless.descriptorSet->getTextureResource(passResources.compositeColorTextureIndex);
     auto extent = gpu.getSwapchain().getSwapChainExtent();
 
     bindless.resourceManager->transitionImageLayouts(cmd, {
-        {*colorResolve.image,                                 vk::ImageLayout::eShaderReadOnlyOptimal,  vk::ImageLayout::eTransferSrcOptimal},
-        {gpu.getSwapchain().getSwapChainImages()[imageIndex], vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eTransferDstOptimal},
+        {*colorResolve.image, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eTransferSrcOptimal},
+        {*composite.image,    vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eTransferDstOptimal},
     });
 
     vk::ImageCopy copyRegion{
@@ -1134,13 +1179,89 @@ void Renderer::recordResolveToSwapchainCopy(vk::raii::CommandBuffer& cmd, uint32
         .extent = {extent.width, extent.height, 1}
     };
     cmd.copyImage(*colorResolve.image, vk::ImageLayout::eTransferSrcOptimal,
-                  gpu.getSwapchain().getSwapChainImages()[imageIndex], vk::ImageLayout::eTransferDstOptimal,
+                  *composite.image, vk::ImageLayout::eTransferDstOptimal,
                   copyRegion);
 
     bindless.resourceManager->transitionImageLayouts(cmd, {
-        {*colorResolve.image,                                 vk::ImageLayout::eTransferSrcOptimal, vk::ImageLayout::eShaderReadOnlyOptimal},
-        {gpu.getSwapchain().getSwapChainImages()[imageIndex], vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eColorAttachmentOptimal},
+        {*colorResolve.image, vk::ImageLayout::eTransferSrcOptimal, vk::ImageLayout::eShaderReadOnlyOptimal},
+        {*composite.image,    vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eColorAttachmentOptimal},
     });
+}
+
+// Meters the lit scene's log-average luminance and adapts toward it over time.
+// Returns the 1x1 adapted-luminance texture index for the tonemap pass to sample.
+uint32_t Renderer::recordAutoExposure(vk::raii::CommandBuffer& cmd) {
+    auto extent = gpu.getSwapchain().getSwapChainExtent();
+    auto& avgLum = bindless.descriptorSet->getTextureResource(avgLumTextureIndex);
+
+    // 1. Extract log2(luminance) of the lit scene into avgLum mip 0.
+    bindless.resourceManager->transitionImageLayout(&cmd, *avgLum.image,
+        vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal, 0, 1);
+    drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[lumExtractPipelineIndex],
+        *avgLumMip0View, extent,
+        LumExtractPushConstants{.inputTextureIndex = passResources.colorResolveTextureIndex, .samplerIndex = passResources.defaultSamplerIndex});
+
+    // 2. Box-average down to 1x1 (the geometric mean, since values are log2). Leaves all mips shader-readable.
+    bindless.resourceManager->generateMipmaps(*avgLum.image, vk::Format::eR16Sfloat,
+        avgLum.width, avgLum.height, passResources.fullscreenMipLevels, 1, &cmd,
+        vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+
+    // 3. Temporally adapt toward the metered value (ping-pong since we read prev + write new).
+    uint32_t readIdx = adaptedLumIndex[adaptFlip];
+    uint32_t writeIdx = adaptedLumIndex[1 - adaptFlip];
+    auto& writeTex = bindless.descriptorSet->getTextureResource(writeIdx);
+
+    float dt = std::clamp(gpu.time - autoExposurePrevTime, 0.0f, 0.1f);
+    autoExposurePrevTime = gpu.time;
+
+    bindless.resourceManager->transitionImageLayout(&cmd, *writeTex.image,
+        vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
+    drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[exposureAdaptPipelineIndex],
+        *writeTex.imageView, vk::Extent2D{1, 1},
+        ExposureAdaptPushConstants{
+            .currentLumIndex = avgLumTextureIndex,
+            .currentLumMip = passResources.fullscreenMipLevels - 1,
+            .prevAdaptedIndex = readIdx,
+            .samplerIndex = passResources.defaultSamplerIndex,
+            .dt = dt,
+            .speed = features.tonemap.adaptationSpeed,
+            .initialized = adaptInitialized ? 1u : 0u,
+        });
+    bindless.resourceManager->transitionImageLayout(&cmd, *writeTex.image,
+        vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+
+    adaptFlip = 1 - adaptFlip;
+    adaptInitialized = true;
+    return writeIdx;
+}
+
+void Renderer::recordTonemapPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
+    auto extent = gpu.getSwapchain().getSwapChainExtent();
+    auto& composite = bindless.descriptorSet->getTextureResource(passResources.compositeColorTextureIndex);
+
+    uint32_t lumIndex = avgLumTextureIndex; // unused when auto off
+    if (features.tonemap.autoExposure) {
+        lumIndex = recordAutoExposure(cmd);
+    }
+
+    // Composite finished as a color attachment; make it sampleable, then resolve to the swapchain.
+    bindless.resourceManager->transitionImageLayout(&cmd, *composite.image,
+        vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+
+    drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[tonemapPipelineIndex],
+        *gpu.getSwapchain().getSwapChainImageViews()[imageIndex], extent,
+        TonemapPushConstants{
+            .hdrTextureIndex = passResources.compositeColorTextureIndex,
+            .samplerIndex = passResources.defaultSamplerIndex,
+            .exposure = computeExposure(features.tonemap),
+            .op = features.tonemap.op,
+            .autoExposure = features.tonemap.autoExposure ? 1u : 0u,
+            .lumTextureIndex = lumIndex,
+            .lumMipLevel = 0,
+            .exposureComp = features.tonemap.exposureComp,
+            .minEV = features.tonemap.minEV,
+            .maxEV = features.tonemap.maxEV,
+        });
 }
 
 void Renderer::recordOverlayPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
@@ -1360,7 +1481,7 @@ void Renderer::recordSDFPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) 
                                         .invViewProjection = glm::inverse(scene.activeCamera.viewProjection)
                                         }, vk::AttachmentLoadOp::eClear);
 
-    drawFullscreenPass(cmd,*bindless.pipelineManager->getPostProcessPipelines()[sdfApplyPipelineIndex], *gpu.getSwapchain().getSwapChainImageViews()[imageIndex],
+    drawFullscreenPass(cmd,*bindless.pipelineManager->getPostProcessPipelines()[sdfApplyPipelineIndex], *bindless.descriptorSet->getTextureResource(passResources.compositeColorTextureIndex).imageView,
                        extent,
                        SDFApplyPushConstants{.sdfTextureIndex = sdfTextureIndex,
                                              .samplerIndex = passResources.defaultSamplerIndex},

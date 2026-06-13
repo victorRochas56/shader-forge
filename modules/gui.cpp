@@ -494,6 +494,26 @@ void showToggles(RenderFeatures& f){
     if(ImGui::Button("Show BBOXes")){
         f.showBBoxes = !f.showBBoxes;
     }
+
+    ImGui::SeparatorText("Tonemap / Exposure");
+    const char* tonemapOps[] = {"Reinhard", "ACES", "None"};
+    int op = static_cast<int>(f.tonemap.op);
+    if(ImGui::Combo("Operator", &op, tonemapOps, IM_ARRAYSIZE(tonemapOps))){
+        f.tonemap.op = static_cast<uint32_t>(op);
+    }
+    ImGui::Checkbox("Auto Exposure", &f.tonemap.autoExposure);
+    if(f.tonemap.autoExposure){
+        ImGui::SliderFloat("Exposure Comp (EV)", &f.tonemap.exposureComp, -8.0f, 8.0f, "%.2f");
+        ImGui::SetItemTooltip("Bias on the metered exposure; + = brighter.");
+        ImGui::DragFloatRange2("EV clamp", &f.tonemap.minEV, &f.tonemap.maxEV, 0.1f, -10.0f, 20.0f, "min %.1f", "max %.1f");
+        ImGui::SliderFloat("Adaptation Speed", &f.tonemap.adaptationSpeed, 0.1f, 10.0f, "%.2f /s");
+        ImGui::SetItemTooltip("Eye-adaptation rate; higher = snappier, lower = slower fade.");
+    } else {
+        ImGui::SliderFloat("Exposure (EV100)", &f.tonemap.ev100, -2.0f, 20.0f, "%.2f");
+        ImGui::SetItemTooltip("Higher = darker. ~log2(directionalIntensity) - 3.6 keys whites near clipping.");
+        ImGui::Text("Exposure factor: %.3e", computeExposure(f.tonemap));
+    }
+
     ImGui::End();
 }
 

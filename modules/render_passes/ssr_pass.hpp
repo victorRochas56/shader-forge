@@ -31,18 +31,18 @@ public:
     void init(uint32_t width, uint32_t height) {
         uint32_t ssrW = std::max(1u, static_cast<uint32_t>(width * features.ssr.resolutionScale));
         uint32_t ssrH = std::max(1u, static_cast<uint32_t>(height * features.ssr.resolutionScale));
-        resize(currentTextureIndex, width, height, gpu.getSwapchain().getSwapChainImageFormat(), "internal/ssr_current");
-        resize(historyTextureIndices[0], width, height, gpu.getSwapchain().getSwapChainImageFormat(), "internal/ssr_history0");
-        resize(historyTextureIndices[1], width, height, gpu.getSwapchain().getSwapChainImageFormat(), "internal/ssr_history1");
+        resize(currentTextureIndex, width, height, gpu.getSwapchain().getHDRColorFormat(), "internal/ssr_current");
+        resize(historyTextureIndices[0], width, height, gpu.getSwapchain().getHDRColorFormat(), "internal/ssr_history0");
+        resize(historyTextureIndices[1], width, height, gpu.getSwapchain().getHDRColorFormat(), "internal/ssr_history1");
 
         historyInvalid = true;
 
-        // SSR ray-trace + accumulate write into ssr_current / ssr_history (swapchain format).
+        // SSR ray-trace + accumulate write into ssr_current / ssr_history (HDR; reflections sample HDR scene color).
         if (pipelineIndex == 0xFFFFFFFF) {
             pipelineIndex = bindless.pipelineManager->createPipeline<SSRPushConstants>(
                 PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone,
                 vk::False, vk::False, "shaders/ssr.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
-                gpu.getSwapchain().getSwapChainImageFormat());
+                gpu.getSwapchain().getHDRColorFormat());
 
             //initialize pass data too
             bindless.descriptorSet->allocateFixedBuffer(passDataBufferIndex,SSRPassData {});
@@ -52,15 +52,15 @@ public:
             accumulatePipelineIndex = bindless.pipelineManager->createPipeline<SSRAccumulatePushConstants>(
                 PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone,
                 vk::False, vk::False, "shaders/ssr_accumulate.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
-                gpu.getSwapchain().getSwapChainImageFormat());
+                gpu.getSwapchain().getHDRColorFormat());
         }
 
-        // Apply composites onto the swapchain image.
+        // Apply composites onto the HDR composite target.
         if (applyPipelineIndex == 0xFFFFFFFF) {
             applyPipelineIndex = bindless.pipelineManager->createPipeline<SSRApplyPushConstants>(
                 PipelineCategory::POSTPROCESS_ALPHA_BLEND, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone,
                 vk::False, vk::False, "shaders/ssr_apply.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
-                gpu.getSwapchain().getSwapChainImageFormat());
+                gpu.getSwapchain().getHDRColorFormat());
         }
         
     }
@@ -166,8 +166,8 @@ public:
 
         bindless.resourceManager->transitionImageLayout(&cmd, *ssrWriteHist.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
 
-        // --- Sub-pass 3: Apply accumulated SSR to swapchain ---
-        drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[applyPipelineIndex], *gpu.getSwapchain().getSwapChainImageViews()[imageIndex], swapExtent,
+        // --- Sub-pass 3: Apply accumulated SSR to the HDR composite ---
+        drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[applyPipelineIndex], *bindless.descriptorSet->getTextureResource(shared.compositeColorTextureIndex).imageView, swapExtent,
             SSRApplyPushConstants{
                 .samplerIndex = shared.defaultSamplerIndex,
                 .ssrTextureIndex = writeHistory,

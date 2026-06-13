@@ -224,7 +224,7 @@ class PipelineManager {
 
         // Format variables must persist beyond the switch scope since pointers to them are used
         vk::Format pcfFormat = vk::Format::eR32Sfloat; // PCF uses R32F for raw depth values
-        vk::Format mrtFormats[3] = {swapchain.getSwapChainImageFormat(), vk::Format::eR8G8B8A8Unorm, vk::Format::eR8G8B8A8Unorm};
+        vk::Format mrtFormats[3] = {swapchain.getHDRColorFormat(), vk::Format::eR8G8B8A8Unorm, vk::Format::eR8G8B8A8Unorm};
         vk::Format thumbMrtFormats[3] = {vk::Format::eR8G8B8A8Unorm, vk::Format::eR8G8B8A8Unorm, vk::Format::eR8G8B8A8Unorm};
         vk::PipelineColorBlendAttachmentState mrtBlendAttachments[3] = {
             {.blendEnable = vk::False, .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA},

@@ -81,6 +81,8 @@ class Swapchain {
     const size_t getSwapImageSize() { return swapChainImages.size(); }
     const vk::Extent2D& getSwapChainExtent() { return swapChainExtent; }
     const vk::Format& getSwapChainImageFormat() { return swapChainImageFormat; }
+    // Linear HDR format for the internal scene buffers (pre-tonemap).
+    const vk::Format& getHDRColorFormat() { return hdrColorFormat; }
     const vk::raii::Image& getColorImage() { return colorImage; }
     const vk::raii::Image& getDepthImage() { return depthImage; }
     const vk::raii::ImageView& getColorImageView() { return colorImageView; }
@@ -100,6 +102,7 @@ class Swapchain {
     vk::raii::SwapchainKHR swapChain = nullptr;
     std::vector<vk::Image> swapChainImages;
     vk::Format swapChainImageFormat = vk::Format::eUndefined;
+    vk::Format hdrColorFormat = vk::Format::eR16G16B16A16Sfloat;
     vk::Extent2D swapChainExtent;
     std::vector<vk::raii::ImageView> swapChainImageViews;
 
@@ -157,7 +160,8 @@ class Swapchain {
     }
 
     void createColorResources() {
-        vk::Format colorFormat = swapChainImageFormat;
+        // MSAA color target is HDR; resolves into colorResolve.
+        vk::Format colorFormat = hdrColorFormat;
         resourceManager.createImage(swapChainExtent.width, swapChainExtent.height, 1, msaaSamples, colorFormat, vk::ImageTiling::eOptimal,
                                     vk::ImageUsageFlagBits::eTransientAttachment | vk::ImageUsageFlagBits::eColorAttachment, vk::MemoryPropertyFlagBits::eDeviceLocal, colorImage,
                                     colorImageMemory);

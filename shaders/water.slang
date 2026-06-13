@@ -170,7 +170,7 @@ FragmentOutput fragMain(VertexOutput input)
         float denominator = max(4.0 * NdotV * NdotL, 0.001);
         float3 specular = numerator / denominator;
         specular = max(specular, float3(0.0, 0.0, 0.0));
-        specular = min(specular, float3(10.0, 10.0, 10.0));
+        specular = min(specular, float3(100.0, 100.0, 100.0));
 
         float shadow = 0.0;
         if(currentLight.castsShadows == 1) {

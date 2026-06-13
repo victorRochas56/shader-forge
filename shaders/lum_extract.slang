@@ -1,0 +1,33 @@
+struct LumExtractPushConstants {
+    uint inputTextureIndex;
+    uint samplerIndex;
+    uint padding0;
+    uint padding1;
+};
+
+[[vk::push_constant]] LumExtractPushConstants pc;
+
+[[vk::binding(0, 0)]] Texture2D textures[];
+[[vk::binding(2, 0)]] SamplerState samplers[];
+
+struct VSOutput {
+    float4 position : SV_Position;
+    float2 texCoord : TEXCOORD0;
+};
+
+[shader("vertex")]
+VSOutput vertMain(uint vertexID : SV_VertexID) {
+    VSOutput output;
+    float2 uv = float2((vertexID << 1) & 2, vertexID & 2);
+    output.texCoord = uv;
+    output.position = float4(uv * 2.0 - 1.0, 0.0, 1.0);
+    return output;
+}
+
+// Writes log2(luminance); box-averaging the mip chain then yields the geometric mean (log-average).
+[shader("fragment")]
+float fragMain(VSOutput input) : SV_Target {
+    float3 c = textures[pc.inputTextureIndex].SampleLevel(samplers[pc.samplerIndex], input.texCoord, 0).rgb;
+    float L = max(dot(c, float3(0.2126, 0.7152, 0.0722)), 1e-4);
+    return log2(L);
+}

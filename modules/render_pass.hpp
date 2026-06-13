@@ -25,6 +25,8 @@ struct RenderPassResources {
 
     // gbuffer
     uint32_t colorResolveTextureIndex = 0xFFFFFFFF;
+    // HDR composite target: post passes blend into this, then it's tonemapped to the swapchain.
+    uint32_t compositeColorTextureIndex = 0xFFFFFFFF;
     uint32_t roughnessMetalTextureIndex = 0xFFFFFFFF;
     uint32_t normalTextureIndex = 0xFFFFFFFF;
     uint32_t motionVectorTextureIndex = 0xFFFFFFFF;

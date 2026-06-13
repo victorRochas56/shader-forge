@@ -67,6 +67,17 @@ class Renderer {
     uint32_t                            imageViewPipelineIndex;
     uint32_t                            depthPipelineIndex;
     uint32_t                            billboardPipelineIndex;
+    uint32_t                            tonemapPipelineIndex = 0xFFFFFFFF;
+
+    // Auto-exposure (metering + eye adaptation)
+    uint32_t                            lumExtractPipelineIndex = 0xFFFFFFFF;
+    uint32_t                            exposureAdaptPipelineIndex = 0xFFFFFFFF;
+    uint32_t                            avgLumTextureIndex = 0xFFFFFFFF;   // mipped log-luminance
+    vk::raii::ImageView                 avgLumMip0View = nullptr;          // mip-0 render view
+    uint32_t                            adaptedLumIndex[2] = {0xFFFFFFFF, 0xFFFFFFFF}; // ping-pong 1x1
+    uint32_t                            adaptFlip = 0;
+    bool                                adaptInitialized = false;
+    float                               autoExposurePrevTime = 0.0f;
 
     //defaults
     uint32_t                            shadowSamplerIndex;
@@ -187,7 +198,9 @@ class Renderer {
     void recordHiZPass(vk::raii::CommandBuffer& cmd);
     void recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex);
     void recordBillboardBlendPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex);
-    void recordResolveToSwapchainCopy(vk::raii::CommandBuffer& cmd, uint32_t imageIndex);
+    void recordResolveToCompositeCopy(vk::raii::CommandBuffer& cmd);
+    uint32_t recordAutoExposure(vk::raii::CommandBuffer& cmd); // returns adapted-luminance texture index
+    void recordTonemapPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex);
     void recordOverlayPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex);
     void recordImageVisPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex);
     void recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light, uint32_t shadowSlot);

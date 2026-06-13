@@ -71,12 +71,12 @@ public:
                 vk::Format::eR8Unorm);
         }
 
-        // SSAO apply uses multiplicative blending onto the swapchain.
+        // SSAO apply uses multiplicative blending onto the HDR composite target.
         if (applyPipelineIndex == 0xFFFFFFFF) {
             applyPipelineIndex = bindless.pipelineManager->createPipeline<SSAOApplyPushConstants>(
                 PipelineCategory::POSTPROCESS_MULTIPLY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone,
                 vk::False, vk::False, "shaders/ssao_apply.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
-                gpu.getSwapchain().getSwapChainImageFormat());
+                gpu.getSwapchain().getHDRColorFormat());
         }
     
     }
@@ -114,8 +114,8 @@ public:
         bindless.resourceManager->transitionImageLayout(&cmd, *ssaoTexture.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
         blurAttachment(bindless, cmd, blurPipelineIndex, textureIndex, blurTextureIndex, ssaoExtent.width, ssaoExtent.height, 2.0f, shared.depthSamplerIndex);
 
-        // Apply to swapchain at full resolution (sampler handles upscale)
-        drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[applyPipelineIndex], *gpu.getSwapchain().getSwapChainImageViews()[imageIndex], swapExtent,
+        // Apply to the HDR composite at full resolution (sampler handles upscale)
+        drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[applyPipelineIndex], *bindless.descriptorSet->getTextureResource(shared.compositeColorTextureIndex).imageView, swapExtent,
             SSAOApplyPushConstants{.ssaoTextureIndex = textureIndex, .samplerIndex = shared.depthSamplerIndex},
             vk::AttachmentLoadOp::eLoad);
 

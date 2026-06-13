@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cmath>
 #include <string>
 #include <unordered_set>
 
@@ -140,13 +141,59 @@ struct VolumetricSettings {
     float maxDist = 35.0f;
 };
 
+struct TonemapSettings {
+    float ev100 = 6.0f;        // manual exposure; higher = darker (used when autoExposure off)
+    uint32_t op = 1;           // 0 = Reinhard, 1 = ACES, 2 = none (clamp)
+    bool autoExposure = false; // meter scene average luminance and expose automatically
+    float exposureComp = 0.0f; // EV bias on auto exposure; + = brighter
+    float minEV = -2.0f;       // clamp the auto-metered EV100
+    float maxEV = 16.0f;
+    float adaptationSpeed = 2.5f; // eye-adaptation rate (1/s); higher = snappier
+};
+
+// EV100-based exposure factor (Lagarde/Frostbite). Multiply scene radiance by this.
+inline float computeExposure(const TonemapSettings& t) {
+    return 1.0f / (1.2f * std::exp2(t.ev100));
+}
+
 struct RenderFeatures {
     ImageVisSettings imageVis;
     SSAOSettings ssao;
     SSRSettings ssr;
     VolumetricSettings volumetrics;
+    TonemapSettings tonemap;
     bool showGizmos = true;
     bool showBBoxes = false;
+};
+
+struct TonemapPushConstants {
+    uint32_t hdrTextureIndex;
+    uint32_t samplerIndex;
+    float exposure;          // manual exposure factor (used when autoExposure == 0)
+    uint32_t op;
+    uint32_t autoExposure;   // 0/1
+    uint32_t lumTextureIndex; // metering source (mipped); smallest mip ≈ scene average
+    uint32_t lumMipLevel;
+    float exposureComp;
+    float minEV;
+    float maxEV;
+};
+
+struct LumExtractPushConstants {
+    uint32_t inputTextureIndex; // scene color to meter (colorResolve)
+    uint32_t samplerIndex;
+    uint32_t padding[2];
+};
+
+struct ExposureAdaptPushConstants {
+    uint32_t currentLumIndex;   // mipped log-luminance target
+    uint32_t currentLumMip;     // smallest mip = avg log-luminance
+    uint32_t prevAdaptedIndex;  // previous frame's adapted luminance (1x1)
+    uint32_t samplerIndex;
+    float dt;
+    float speed;
+    uint32_t initialized;       // 0 on first frame -> snap instead of lerp
+    uint32_t padding;
 };
 
 struct ShadowPushConstants {
