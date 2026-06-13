@@ -358,10 +358,25 @@ class DescriptorSet {
     uint32_t getTextureMipLevels(uint32_t index) const { return textureResources[index].mipLevels; }
 
     //ensure no in-flight command buffers are using this texture when calling this
+    // Defer destruction: the slot may still be read by frames in flight (e.g. an ImGui thumbnail
+    // recorded this frame), so hold its resources until those frames retire, then recycle the slot.
     void freeTexture(uint32_t index) {
-        device.getDevice().waitIdle();
-        textureResources[index].reset();
-        freeTextureSlots.push(index);
+        pendingTextureFrees.push_back({index, MAX_FRAMES_IN_FLIGHT + 1});
+    }
+
+    // Tick deferred frees; destroys + recycles each slot once no in-flight frame can reference it.
+    // Pump once per frame, right after the in-flight fence wait.
+    void processDeferredTextureFrees() {
+        for (size_t i = 0; i < pendingTextureFrees.size();) {
+            if (--pendingTextureFrees[i].framesRemaining == 0) {
+                textureResources[pendingTextureFrees[i].index].reset();
+                freeTextureSlots.push(pendingTextureFrees[i].index);
+                pendingTextureFrees[i] = pendingTextureFrees.back();
+                pendingTextureFrees.pop_back();
+            } else {
+                i++;
+            }
+        }
     }
 
     uint32_t allocateSampler(vk::Filter filter, vk::SamplerMipmapMode mipmapMode, vk::SamplerAddressMode addressMode, vk::Bool32 anisotropyEnabled, float maxAnisotropy,
@@ -692,6 +707,8 @@ class DescriptorSet {
     uint32_t textureBindingIndex;
     uint32_t cubemapBindingIndex;
     std::queue<uint32_t> freeTextureSlots;
+    struct PendingTextureFree { uint32_t index; uint32_t framesRemaining; };
+    std::vector<PendingTextureFree> pendingTextureFrees;  // slots awaiting safe destruction
     std::vector<std::optional<VariableBufferResource>> variableBuffers;
     std::vector<std::unique_ptr<FixedBufferResourceBase>> fixedBuffers;
 

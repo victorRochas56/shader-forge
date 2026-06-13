@@ -9,11 +9,14 @@
 #include <array>
 #include <vector>
 #include <fstream>
+#include <iostream>
+#include <cstdio>
 #include <cmath>
 #include <limits>
 #include <algorithm>
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_raii.hpp>
+#include <filesystem>
 
 #include "devices.hpp"
 
@@ -212,8 +215,49 @@ static std::vector<char> readFile(const std::string& filename) {
     return buffer;
 }
 
-static bool hasFileChanged(const std::string& filePath) {
+inline bool hasFileChanged(const std::string& filePath, std::filesystem::file_time_type& lastWriteTime) {
+    if(std::filesystem::last_write_time(filePath) > lastWriteTime) {
+        lastWriteTime = std::filesystem::last_write_time(filePath);
+        return true;
+    }
     return false;
+}
+
+// Fallbacks so this still compiles if the CMake defines are absent (slangc from PATH, shaders/ next to exe).
+#ifndef SLANGC_PATH
+#define SLANGC_PATH "slangc"
+#endif
+#ifndef SHADER_SRC_DIR
+#define SHADER_SRC_DIR "shaders"
+#endif
+
+// Compiles a .slang source to SPIR-V at spvOut, mirroring the CMake build flags. Captures slangc
+// output and prints it on failure so shader errors surface without killing the app. Returns success.
+inline bool compileSlangToSpv(const std::string& slangSrc, const std::string& spvOut) {
+    namespace fs = std::filesystem;
+    std::string srcDir = fs::path(slangSrc).parent_path().string();
+    std::string spvAbs = fs::absolute(spvOut).string();
+    std::string slangc = fs::path(SLANGC_PATH).make_preferred().string(); // backslashes for cmd.exe
+    // Wrap the whole thing in an extra pair of quotes so cmd.exe tolerates spaces in the slangc path.
+    std::string cmd = "\"\"" + slangc + "\" \"" + slangSrc + "\""
+                      " -target spirv -profile spirv_1_4 -fvk-use-entrypoint-name -g"
+                      " -I \"" + srcDir + "\" -o \"" + spvAbs + "\" 2>&1\"";
+
+    FILE* pipe = _popen(cmd.c_str(), "r");
+    if (!pipe) {
+        std::cerr << "[shader] failed to launch slangc for " << slangSrc << std::endl;
+        return false;
+    }
+    std::string output;
+    char buf[512];
+    while (fgets(buf, sizeof(buf), pipe)) output += buf;
+    int rc = _pclose(pipe);
+    if (rc != 0) {
+        std::cerr << "[shader] slangc failed for " << slangSrc << " (exit " << rc << "):\n" << output << std::endl;
+        return false;
+    }
+    std::cout << "[shader] recompiled " << slangSrc << std::endl;
+    return true;
 }
 
 static void decomposeTransform(const glm::mat4& matrix, glm::vec3& translation, glm::quat& rotation, glm::vec3& scale) {

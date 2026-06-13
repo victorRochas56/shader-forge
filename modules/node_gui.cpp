@@ -260,6 +260,10 @@ void showNodeLightInfo(Node& node, Scene& scene, BindlessSystem& bindless, uint3
 
         Gizmos::drawSphere(node.getWorldPosition(),light.range, glm::vec4(1,1,0,1));
 
+        if ( ImGui::Button("Remove Light")) {
+            scene.removeLight(bindless, lightBufferIndex, node.lightIndex);
+            node.lightIndex = MAX_LIGHTS;
+        }
 
     } else if (ImGui::Button("Add Light")) {
         Light light = {.type = LightType::Point, .range = 10, .intensity = 1, .color = glm::vec4(1, 1, 1, 1)};

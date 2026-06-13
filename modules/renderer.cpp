@@ -271,6 +271,9 @@ void Renderer::drawFrame() {
     Tracer::startTrace("wait for fences");
     gpu.getDevice().getDevice().waitForFences(*gpu.getInFlightFence(gpu.currentFrame), vk::True, UINT64_MAX);
     Tracer::endTrace("wait for fences");
+
+    // This slot's prior submission has retired — safe to destroy any textures it referenced.
+    bindless.descriptorSet->processDeferredTextureFrees();
     //TODO make all full screen passes have a resolution scale that can be set dirty when changed/ needs to recreate
     //if (features.ssr.resolutionDirty) {
     //    features.ssr.resolutionDirty = false;
@@ -374,7 +377,7 @@ void Renderer::drawFrame() {
     
     gpu.currentFrame = (gpu.currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
     gpu.totalFrames++;
-    //bindless.pipelineManager->checkForShaderUpdates(); // TODO enable this
+    bindless.pipelineManager->checkForShaderUpdates(); // TODO enable this
     Tracer::endTrace("draw frame");
 }
 

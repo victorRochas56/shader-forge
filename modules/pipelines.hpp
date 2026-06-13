@@ -50,7 +50,7 @@ struct PipelineBase {
     PipelineBase() = default;
 
     virtual void pushConstants(vk::raii::CommandBuffer& cmd) = 0;
-    virtual void recreateInternal(PipelineManager& manager) = 0;
+    virtual void recreateInternal(PipelineManager& manager, uint32_t index) = 0;
     virtual ~PipelineBase() = default;
 };
 
@@ -64,7 +64,7 @@ template <typename T> struct Pipeline : public PipelineBase {
         cmd.pushConstants<T>(layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pushConstantData);
     }
 
-    void recreateInternal(PipelineManager& manager) override;
+    void recreateInternal(PipelineManager& manager, uint32_t index) override;
 };
 
 class PipelineManager {
@@ -82,13 +82,28 @@ class PipelineManager {
         return createPipelineInternal<T>(pipelineCategory, topology, cullMode, depthTestEnable, depthWriteEnable, shaderPath, setLayout, descriptorSet, false, 0, colorAttachmentFormat);
     }
 
-    // for hot reloading - TODO implementation of file change detection missing still
+    // Watches each pipeline's .slang source (and the shared modules they import). On change it runs
+    // slangc to regenerate the .spv, and only on a successful compile recreates the affected pipelines.
     void checkForShaderUpdates() {
-        for (const auto& [shaderPath, indices] : shaderPathToIndices) {
-            if (hasFileChanged(shaderPath)) {
-                for (const auto& [category, index] : indices) {
-                    recreatePipelineAtIndex(category, index);
-                }
+        initShaderWatchState();
+
+        // A shared module change invalidates every shader that imports it, so force-recompile all.
+        bool modulesChanged = false;
+        for (auto& [modPath, modTime] : moduleWriteTimes) {
+            if (hasFileChanged(modPath, modTime)) modulesChanged = true;
+        }
+
+        for (auto& [spvPath, entry] : shaderPathToIndices) {
+            std::string slangSrc = slangSourceForSpv(spvPath);
+            bool srcChanged = std::filesystem::exists(slangSrc) && hasFileChanged(slangSrc, entry.first);
+            if (!srcChanged && !modulesChanged) continue;
+
+            if (!compileSlangToSpv(slangSrc, spvPath)) continue; // keep the working pipeline on a compile error
+
+            // in-flight command buffers still reference these pipelines; destroying them mid-use is a device-lost
+            device.getDevice().waitIdle();
+            for (const auto& [category, index] : entry.second) {
+                recreatePipelineAtIndex(category, index);
             }
         }
     }
@@ -110,7 +125,28 @@ class PipelineManager {
     vk::SampleCountFlagBits msaaSamples;
 
     // used for hot reloading shaders / recreating pipelines
-    std::unordered_map<std::string, std::vector<std::pair<PipelineCategory, uint32_t>>> shaderPathToIndices;
+                        //shader file               // last modified           // all pipelines associated (category & index)
+    std::unordered_map<std::string, std::pair<std::filesystem::file_time_type,std::vector<std::pair<PipelineCategory, uint32_t>>>> shaderPathToIndices;
+
+    // shared modules/*.slang imported by the top-level shaders; changing one invalidates every importer
+    std::unordered_map<std::string, std::filesystem::file_time_type> moduleWriteTimes;
+    bool shaderWatchInitialized = false;
+
+    // Maps a runtime .spv path (e.g. "shaders/lit.spv") back to its source (SHADER_SRC_DIR/lit.slang).
+    static std::string slangSourceForSpv(const std::string& spvPath) {
+        return std::string(SHADER_SRC_DIR) + "/" + std::filesystem::path(spvPath).stem().string() + ".slang";
+    }
+
+    // Records baseline mtimes for the shared modules so the first check doesn't see them all as changed.
+    void initShaderWatchState() {
+        if (shaderWatchInitialized) return;
+        shaderWatchInitialized = true;
+        std::filesystem::path modDir = std::filesystem::path(SHADER_SRC_DIR) / "modules";
+        if (!std::filesystem::exists(modDir)) return;
+        for (const auto& e : std::filesystem::directory_iterator(modDir)) {
+            if (e.path().extension() == ".slang") moduleWriteTimes[e.path().string()] = e.last_write_time();
+        }
+    }
 
     std::vector<std::unique_ptr<PipelineBase>> beforeGeometryPipelines;
     std::vector<std::unique_ptr<PipelineBase>> geometryPipelines;
@@ -121,7 +157,7 @@ class PipelineManager {
         if (!targetVector || index >= targetVector->size()) {
             throw std::out_of_range("Invalid pipeline index");
         }
-        (*targetVector)[index]->recreateInternal(*this);
+        (*targetVector)[index]->recreateInternal(*this, index);
     }
 
     template <typename T>
@@ -447,7 +483,12 @@ class PipelineManager {
         } else {
             targetVector->push_back(std::move(pipeline));
             uint32_t newIndex = targetVector->size() - 1;
-            shaderPathToIndices[shaderPath].push_back({pipelineCategory, newIndex});
+            // baseline the .slang source mtime so the first checkForShaderUpdates doesn't see it as "changed"
+            std::string slangSrc = slangSourceForSpv(shaderPath);
+            if (std::filesystem::exists(slangSrc)) {
+                shaderPathToIndices[shaderPath].first = std::filesystem::last_write_time(slangSrc);
+            }
+            shaderPathToIndices[shaderPath].second.push_back({pipelineCategory, newIndex});
             return newIndex;
         }
     }
@@ -479,6 +520,6 @@ class PipelineManager {
     }
 };
 
-template <typename T> void Pipeline<T>::recreateInternal(PipelineManager& manager) {
-    manager.recreatePipelineAtIndexInternal<T>(pipelineCategory, 0, shaderPath, topology, cullMode, depthTestEnable, depthWriteEnable, *descriptorSetLayout, *descriptorSet, colorAttachmentFormat);
+template <typename T> void Pipeline<T>::recreateInternal(PipelineManager& manager, uint32_t index) {
+    manager.recreatePipelineAtIndexInternal<T>(pipelineCategory, index, shaderPath, topology, cullMode, depthTestEnable, depthWriteEnable, *descriptorSetLayout, *descriptorSet, colorAttachmentFormat);
 }

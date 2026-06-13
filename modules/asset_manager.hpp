@@ -359,7 +359,8 @@ class AssetManager {
     // instances and mirror groups that shared one mesh on import share one again here.
     uint32_t loadSceneMesh(const std::string& filePath, uint32_t entryIndex, const std::string& meshName,
                            float importScale = 1.0f) {
-        std::string key = filePath + "#" + std::to_string(entryIndex);
+        // Persists across scene clears so reloads reuse meshes; scale keyed since it bakes geometry.
+        std::string key = filePath + "#" + std::to_string(entryIndex) + "@" + std::to_string(importScale);
         if (auto it = sceneMeshCache.find(key); it != sceneMeshCache.end()) {
             return it->second;
         }
@@ -417,10 +418,9 @@ class AssetManager {
         return meshIdx;
     }
 
-    // Drop the transient caches used by loadSceneMesh; call once a scene finishes loading.
+    // Drop the heavy parsed-file cache after load; sceneMeshCache is kept so reloads reuse meshes.
     void clearSceneMeshLoadCache() {
         rawMeshDataCache.clear();
-        sceneMeshCache.clear();
     }
 
     uint32_t loadTextureFromFile(std::string filePath, vk::Format format = vk::Format::eR8G8B8A8Srgb) {
@@ -469,10 +469,8 @@ class AssetManager {
     std::vector<Mesh>& getMeshes() { return meshes; }
 
   private:
-    // Transient caches for the scene-load fast path (loadSceneMesh): parsed source files and
-    // already-built meshes keyed by "file#entry". Cleared via clearSceneMeshLoadCache() after load.
-    std::map<std::string, MeshData> rawMeshDataCache;
-    std::map<std::string, uint32_t> sceneMeshCache;
+    std::map<std::string, MeshData> rawMeshDataCache;  // transient parsed source files, freed after load
+    std::map<std::string, uint32_t> sceneMeshCache;    // "file#entry@scale" -> meshIdx, persists across loads
 
     ResourceManager* resourceManager = nullptr;
     DescriptorSet* descriptorSet = nullptr;

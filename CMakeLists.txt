@@ -194,6 +194,9 @@ endif()
 target_compile_definitions(shader-forge PRIVATE
     $<$<CONFIG:Debug>:DEBUG=1>
     $<$<CONFIG:Release>:DEBUG=0>
+    # used by the runtime .slang hot-reload to locate the source shaders and the compiler
+    SLANGC_PATH="${SLANGC_EXECUTABLE}"
+    SHADER_SRC_DIR="${CMAKE_CURRENT_SOURCE_DIR}/shaders"
 )
 
 # Link libraries

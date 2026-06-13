@@ -26,8 +26,6 @@ class SceneGraph;
 
 class Node { // need to be able to hide nodes from tree for internal logic
   public:
-    std::string name = "empty";
-
     Node(const Node& node) = default;
 
     Node(uint32_t arrayIndex, bool internal = true, uint32_t parentIndex = 0, glm::vec3 position = glm::vec3(0.0f), glm::quat rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
@@ -79,8 +77,9 @@ class Node { // need to be able to hide nodes from tree for internal logic
 
     void toggleWireframe() { showWireframe = !showWireframe; }
 
-    uint32_t nodeIndex;
+    std::string name = "empty";
 
+    uint32_t nodeIndex;
     // Tree structure (indices into SceneGraph::nodes, 0 = none/invalid)
     uint32_t parentIndex = 0;
     uint32_t firstChild = 0;

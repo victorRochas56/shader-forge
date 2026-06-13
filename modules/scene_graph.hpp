@@ -16,8 +16,6 @@
 class Scene;
 class BindlessSystem;
 
-// NOTE: members are suffixed to dodge <windows.h> macros (DELETE is a winnt.h
-// macro) — this header gets pulled in after windows.h in some translation units.
 enum NodeOpType {
     MUTATE_NODE,
     ADD_NODE,

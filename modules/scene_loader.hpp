@@ -147,6 +147,11 @@ class SceneLoader {
         auto& materials = scene.getMaterials();
         if (materials.size() > 1) {
             Material defaultMaterial = materials[0]; // don't clear the default material
+            // Free preview thumbnail slots; re-parsed materials reallocate them, orphaning these otherwise.
+            for (size_t i = 1; i < materials.size(); i++) {
+                if (materials[i].thumbnailTextureIndex != 0xFFFFFFFF)
+                    bindless.descriptorSet->freeTexture(materials[i].thumbnailTextureIndex);
+            }
             materials.clear();
             materials.push_back(defaultMaterial);
         }
