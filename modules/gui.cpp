@@ -208,6 +208,30 @@ void showMaterialEditor(MaterialEditorState& state, Scene& scene, BindlessSystem
     ImGui::SetNextItemWidth(200);
     ImGui::InputText("Name", state.nameBuffer, sizeof(state.nameBuffer));
 
+    // shader selection — lists all registered lit / lit-derived shaders
+    {
+        const auto& litShaders = scene.getLitShaders();
+        auto shaderLabel = [](const std::string& path) {
+            size_t slash = path.find_last_of("/\\");
+            std::string name = (slash == std::string::npos) ? path : path.substr(slash + 1);
+            size_t dot = name.find_last_of('.');
+            return (dot == std::string::npos) ? name : name.substr(0, dot);
+        };
+        if (state.selectedShaderIndex < 0 || state.selectedShaderIndex >= static_cast<int>(litShaders.size()))
+            state.selectedShaderIndex = 0;
+        std::string preview = litShaders.empty() ? "<none>" : shaderLabel(litShaders[state.selectedShaderIndex].sourceFile);
+        ImGui::SetNextItemWidth(200);
+        if (ImGui::BeginCombo("Shader##mat", preview.c_str())) {
+            for (int i = 0; i < static_cast<int>(litShaders.size()); i++) {
+                bool sel = (state.selectedShaderIndex == i);
+                if (ImGui::Selectable(shaderLabel(litShaders[i].sourceFile).c_str(), sel))
+                    state.selectedShaderIndex = i;
+                if (sel) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+    }
+
     ImGui::Separator();
     ImGui::Text("Properties");
     ImGui::ColorEdit4("Base Color", state.color);
@@ -249,12 +273,16 @@ void showMaterialEditor(MaterialEditorState& state, Scene& scene, BindlessSystem
         const Material& defaultMat = materials[scene.getFallBackMaterial()];
 
         mat.name = state.nameBuffer;
-        mat.shaderSource = scene.getFallBackShader();
+        const auto& litShaders = scene.getLitShaders();
+        if (state.selectedShaderIndex >= 0 && state.selectedShaderIndex < static_cast<int>(litShaders.size()))
+            mat.shaderSource = litShaders[state.selectedShaderIndex];
+        else
+            mat.shaderSource = scene.getFallBackShader();
         mat.color = glm::vec4(state.color[0], state.color[1], state.color[2], state.color[3]);
         mat.metallic = state.metallic;
         mat.roughness = state.roughness;
 
-        uint32_t matFlags;
+        uint32_t matFlags = 0;
 
         // load textures
         if (strlen(state.albedoPath) > 0) {
@@ -306,9 +334,15 @@ void showMaterialEditor(MaterialEditorState& state, Scene& scene, BindlessSystem
         }
         if (hasEnvMap) {
             try {
+                // envMapPaths is in key order [posX, negX, posY, negY, posZ, negZ];
+                // loadCubemapFromFile takes (posX, posY, posZ, negX, negY, negZ).
                 mat.environmentMapIndex = scene.assetManager.loadCubemapFromFile(
-                    state.envMapPaths[0], state.envMapPaths[1], state.envMapPaths[2],
-                    state.envMapPaths[3], state.envMapPaths[4], state.envMapPaths[5]);
+                    state.envMapPaths[0],  // posX
+                    state.envMapPaths[2],  // posY
+                    state.envMapPaths[4],  // posZ
+                    state.envMapPaths[1],  // negX
+                    state.envMapPaths[3],  // negY
+                    state.envMapPaths[5]); // negZ
             } catch (...) { mat.environmentMapIndex = defaultMat.environmentMapIndex; }
         } else {
             mat.environmentMapIndex = defaultMat.environmentMapIndex;
@@ -323,23 +357,27 @@ void showMaterialEditor(MaterialEditorState& state, Scene& scene, BindlessSystem
 
             Material newMat;
             buildMaterial(newMat);
+            newMat.thumbnailTextureIndex = oldMat.thumbnailTextureIndex; // keep preview target; pass re-renders it
+            newMat.materialID = static_cast<uint32_t>(std::hash<Material>{}(newMat));
 
-            // re-register all nodes that use this material with updated material data
-            existingMat = newMat;
-            existingMat.thumbnailTextureIndex = oldMat.thumbnailTextureIndex; // keep preview target; pass re-renders it
-            existingMat.materialID = static_cast<uint32_t>(std::hash<Material>{}(newMat));
-
-            // update shader mappings for all nodes using this material
             auto& nodes = scene.sceneGraph.getNodes();
-            for (uint32_t i = 1; i <= scene.sceneGraph.getLastNode(); i++) {
-                if (!scene.sceneGraph.isNodeValid(i)) continue;
-                auto meshIdx = nodes[i].getMeshIndex();
-                if (meshIdx >= scene.assetManager.meshes.size()) continue;
+            auto usesThisMaterial = [&](uint32_t i) {
+                if (!scene.sceneGraph.isNodeValid(i)) return false;
+                if (nodes[i].getMeshIndex() >= scene.assetManager.meshes.size()) return false;
+                return nodes[i].getMaterialIndex() == static_cast<uint32_t>(state.selectedIndex);
+            };
 
-                if (nodes[i].getMaterialIndex() == static_cast<uint32_t>(state.selectedIndex)) {
-                    scene.removeMeshFromShader(i, oldMat.shaderSource, oldMat);
-                    scene.addMeshToShader(i, existingMat.shaderSource, existingMat);
-                }
+            // Remove the old render entries BEFORE overwriting materials[selectedIndex]: removeMeshFromShader
+            // resolves the material index by value, so it must still match oldMat in the materials vector.
+            for (uint32_t i = 1; i <= scene.sceneGraph.getLastNode(); i++) {
+                if (usesThisMaterial(i)) scene.removeMeshFromShader(i, oldMat.shaderSource, oldMat);
+            }
+
+            existingMat = newMat; // commit the change
+
+            // Re-register the nodes against the (possibly new) shader pipeline.
+            for (uint32_t i = 1; i <= scene.sceneGraph.getLastNode(); i++) {
+                if (usesThisMaterial(i)) scene.addMeshToShader(i, existingMat.shaderSource, existingMat);
             }
 
             state.showEditor = false;

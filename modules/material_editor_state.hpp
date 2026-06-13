@@ -11,6 +11,7 @@ struct MaterialEditorState {
     int selectedIndex = -1; // -1 = creating new, >= 0 = editing existing
 
     // editable fields
+    int selectedShaderIndex = 0; // index into Scene::getLitShaders(); 0 = default lit
     char nameBuffer[128] = "New Material";
     float color[4] = {1.0f, 1.0f, 1.0f, 1.0f};
     float metallic = 0.0f;
@@ -26,6 +27,7 @@ struct MaterialEditorState {
 
     void resetToDefaults() {
         selectedIndex = -1;
+        selectedShaderIndex = 0;
         strncpy(nameBuffer, "New Material", sizeof(nameBuffer));
         color[0] = 1.0f; color[1] = 1.0f; color[2] = 1.0f; color[3] = 1.0f;
         metallic = 0.0f;

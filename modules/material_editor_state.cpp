@@ -9,6 +9,13 @@ void MaterialEditorState::loadFromMaterial(int index, Material& mat, Scene& scen
     metallic = mat.metallic;
     roughness = mat.roughness;
 
+    // match the material's shader against the registered lit shaders so the combobox shows it
+    selectedShaderIndex = 0;
+    const auto& litShaders = scene.getLitShaders();
+    for (int i = 0; i < static_cast<int>(litShaders.size()); i++) {
+        if (litShaders[i].sourceFile == mat.shaderSource.sourceFile) { selectedShaderIndex = i; break; }
+    }
+
     auto copyPath = [](char* dest, size_t destSize, const std::string& src) {
         strncpy(dest, src.c_str(), destSize);
         dest[destSize - 1] = '\0';

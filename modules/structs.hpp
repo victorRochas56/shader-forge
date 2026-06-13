@@ -377,6 +377,11 @@ struct LitPushConstants {
     uint64_t litInstanceDataAddress;
     uint64_t litMeshDrawDataAddress;
     uint64_t litPassDataAddress;
+    // Added to SV_DrawIndex when indexing per-draw data. SV_DrawIndex resets to 0 per indirect call,
+    // so the lit pass (one indirect call per pipeline range) sets this to the range's first command
+    // index; the prepass draws all commands in one call and leaves it 0.
+    uint32_t drawIDOffset = 0;
+    float time = 0.0f;
 };
 
 // Field order matches ThumbnailPush in thumbnail.slang (mat4, then 8-byte address, then uints).

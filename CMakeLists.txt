@@ -52,9 +52,10 @@ function(add_slang_shader_target TARGET EXECUTABLE_TARGET)
     )
    
     # Get compilable .slang files (top-level only, modules/ is excluded by the glob pattern)
-    file(GLOB SLANG_FILES "${SHADERS_DIR}/*.slang")
+    # CONFIGURE_DEPENDS: re-glob on build so newly added shaders are compiled without a manual reconfigure.
+    file(GLOB SLANG_FILES CONFIGURE_DEPENDS "${SHADERS_DIR}/*.slang")
     # Get all module files as dependencies (any .slang in modules/ subfolder)
-    file(GLOB SLANG_MODULES "${SHADERS_DIR}/modules/*.slang")
+    file(GLOB SLANG_MODULES CONFIGURE_DEPENDS "${SHADERS_DIR}/modules/*.slang")
     # Generate output filenames
     set(SLANG_SPV_FILES)
     foreach(SLANG_FILE ${SLANG_FILES})
@@ -78,7 +79,7 @@ function(add_slang_shader_target TARGET EXECUTABLE_TARGET)
     endforeach()
     
     # Get all .slang files and generate corresponding .spv filenames
-    file(GLOB SLANG_FILES "${SHADERS_DIR}/*.slang")
+    file(GLOB SLANG_FILES CONFIGURE_DEPENDS "${SHADERS_DIR}/*.slang")
     set(SLANG_SPV_FILES)
     foreach(SLANG_FILE ${SLANG_FILES})
         get_filename_component(FILENAME ${SLANG_FILE} NAME_WE)

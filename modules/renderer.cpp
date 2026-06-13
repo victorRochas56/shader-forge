@@ -202,13 +202,22 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
                                                                         vk::True,"shaders/depth_prepass.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
                                                                         vk::Format::eUndefined);
 
-    litPipelineIndex = bindless.pipelineManager->createPipeline<LitPushConstants>(PipelineCategory::LIT_GEOMETRY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eBack, vk::True,
-                                                                         vk::True, "shaders/lit.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
-                                                                         vk::Format::eUndefined);
+    // Creates a LIT_GEOMETRY pipeline for a lit / lit-derived shader and registers it so materials
+    // can select it from the material editor. Returns the pipeline index.
+    auto addLitShader = [&](const std::string& spvPath) {
+        uint32_t idx = bindless.pipelineManager->createPipeline<LitPushConstants>(
+            PipelineCategory::LIT_GEOMETRY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eBack, vk::True,
+            vk::True, spvPath, bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
+            vk::Format::eUndefined);
+        scene.registerLitShader(Shader{.sourceFile = spvPath, .pipelineIndex = idx});
+        return idx;
+    };
 
-    /**
-     * lit pipelines created declaratively are added here ?
-     */
+    litPipelineIndex = addLitShader("shaders/lit.spv");
+    litPipelineIndex = addLitShader("shaders/water.spv");
+
+    // lit-derived variants are added declaratively here, e.g.:
+    // addLitShader("shaders/lit_toon.spv");
 
     // Billboards composite onto the swapchain after SSR/SSAO, so use a single-sample alpha-blend
     // pipeline that targets the swapchain format. Depth test is performed in-shader by sampling
@@ -993,12 +1002,16 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
                                           .lightsAddress          = bindless.descriptorSet->getFixedBuffers()[passResources.buffers.lightBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(GPULight),
                                           .litInstanceDataAddress = bindless.descriptorSet->getFixedBuffers()[litInstanceDataBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(LitInstanceData),
                                           .litMeshDrawDataAddress = bindless.descriptorSet->getFixedBuffers()[litMeshDrawDataBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(LitMeshDrawData),
-                                          .litPassDataAddress     = bindless.descriptorSet->getFixedBuffers()[litPassDataBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(LitPassData)
+                                          .litPassDataAddress     = bindless.descriptorSet->getFixedBuffers()[litPassDataBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(LitPassData),
+                                          .time                   = gpu.time
                                         };
 
         for (const auto& range : scene.shaderDrawRanges) {
             auto currentPipeline = &(geoPipelines[range.pipelineIndex]);
             bindPipeline(cmd, **currentPipeline);
+            // SV_DrawIndex restarts at 0 for this range's indirect call, but per-draw data is indexed by
+            // absolute command index, so offset the shader's lookups by the range's first command.
+            pushConstants.drawIDOffset = range.firstCommand;
             cmd.pushConstants<LitPushConstants>((*currentPipeline)->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pushConstants);
             vk::DeviceSize rangeOffset = frameByteOffset + range.firstCommand * sizeof(DrawIndexedIndirectCommand);
             cmd.drawIndexedIndirect(*litIndirectDrawBuffer, rangeOffset, range.commandCount, sizeof(DrawIndexedIndirectCommand));

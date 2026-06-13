@@ -137,6 +137,27 @@ class PipelineManager {
         return std::string(SHADER_SRC_DIR) + "/" + std::filesystem::path(spvPath).stem().string() + ".slang";
     }
 
+    // Recompiles the .spv if it's missing or older than its .slang source. Covers shaders added after
+    // the last CMake configure (whose .spv the build never produced) and any stale build output, so a
+    // fresh launch always loads a pipeline built from current source. No-op in a shipped build (no sources).
+    static void ensureSpvUpToDate(const std::string& spvPath) {
+        std::string slangSrc = slangSourceForSpv(spvPath);
+        if (!std::filesystem::exists(slangSrc)) return;
+        if (!std::filesystem::exists(spvPath)) { compileSlangToSpv(slangSrc, spvPath); return; }
+
+        auto spvTime = std::filesystem::last_write_time(spvPath);
+        // Newest of the source and any shared module it might import (modules aren't tracked per shader,
+        // so a module edit must invalidate every .spv — same reasoning as the hot-reload module check).
+        auto newest = std::filesystem::last_write_time(slangSrc);
+        std::filesystem::path modDir = std::filesystem::path(SHADER_SRC_DIR) / "modules";
+        if (std::filesystem::exists(modDir)) {
+            for (const auto& e : std::filesystem::directory_iterator(modDir)) {
+                if (e.path().extension() == ".slang") newest = std::max(newest, e.last_write_time());
+            }
+        }
+        if (newest > spvTime) compileSlangToSpv(slangSrc, spvPath);
+    }
+
     // Records baseline mtimes for the shared modules so the first check doesn't see them all as changed.
     void initShaderWatchState() {
         if (shaderWatchInitialized) return;
@@ -165,6 +186,7 @@ class PipelineManager {
                                     vk::Bool32 depthWriteEnable, std::string shaderPath, vk::raii::DescriptorSetLayout& setLayout, vk::raii::DescriptorSet& descriptorSet,
                                     bool isRecreation, uint32_t recreateIndex, vk::Format colorAttachmentFormat) {
 
+        ensureSpvUpToDate(shaderPath); // rebuild stale/missing .spv from source before loading it
         vk::raii::ShaderModule shaderModule = createShaderModule(readFile(shaderPath));
         vk::PipelineShaderStageCreateInfo vertShaderStageInfo{.stage = vk::ShaderStageFlagBits::eVertex, .module = shaderModule, .pName = "vertMain"};
         vk::PipelineShaderStageCreateInfo fragShaderStageInfo{.stage = vk::ShaderStageFlagBits::eFragment, .module = shaderModule, .pName = "fragMain"};

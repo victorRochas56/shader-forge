@@ -30,6 +30,10 @@ struct LitPushConstants {
     LitInstanceData*    litInstanceData;
     LitMeshDrawData*    litMeshDrawData;
     LitPass*            litPassData;
+    // Added to SV_DrawIndex for per-draw lookups. SV_DrawIndex restarts at 0 for each indirect call,
+    // so the lit pass sets this to the pipeline range's first command index (0 for the prepass).
+    uint                drawIDOffset;
+    float               time;
 };
 
 struct LitPass {
@@ -282,7 +286,7 @@ float3 getPosFromMM(int index){
 
 VertexOutput litVertMain(uint vertexID, uint instanceID, uint drawID)
 {
-    LitMeshDrawData mesh = pc.litMeshDrawData[drawID];
+    LitMeshDrawData mesh = pc.litMeshDrawData[drawID + pc.drawIDOffset];
     uint absInstance = mesh.firstInstance + instanceID;
     LitInstanceData draw = pc.litInstanceData[absInstance];
 
@@ -312,3 +316,42 @@ float rand(inout uint seed) {
     seed = pcgHash(seed);
     return float(seed) * (1.0 / 4294967296.0);
 }
+
+// 0: cubic
+// 1: quintic
+#define INTERPOLANT 0
+float hash(int2 p)  // this hash is not production ready, please
+{                         // replace this by something better
+    // 2D -> 1D
+    int n = p.x*3 + p.y*113;
+
+    // 1D hash by Hugo Elias
+	n = (n << 13) ^ n;
+    n = n * (n * n * 15731 + 789221) + 1376312589;
+    return -1.0+2.0*float( n & 0x0fffffff)/float(0x0fffffff);
+}
+
+float mix(float x, float y, float a) {
+    return (x*(1.0f - a) + y * a);
+}
+
+float valueNoise(float2 p)
+{
+    int2 i = int2(floor( p ));
+    float2 f = fract( p );
+	
+    #if INTERPOLANT==1
+    // quintic interpolant
+    float2 u = f*f*f*(f*(f*6.0-15.0)+10.0);
+    #else
+    // cubic interpolant
+    float2 u = f*f*(3.0-2.0*f);
+    #endif    
+
+    return mix( mix( hash( i + int2(0,0) ),
+                     hash( i + int2(1,0) ), u.x),
+                mix( hash( i + int2(0,1) ),
+                     hash( i + int2(1,1) ), u.x), u.y);
+}
+
+// -----------------------------------------------

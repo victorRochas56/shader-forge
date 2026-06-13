@@ -103,6 +103,7 @@ class GpuContext {
     // --- public per-frame state ----------------------------------------
     uint32_t currentFrame = 0;
     uint32_t totalFrames  = 0;
+    float    time         = 0;
     bool     vSync        = true;
 
   private:

@@ -231,6 +231,22 @@ class Scene {
         renderListDirty = false;
     }
 
+    // --- lit / lit-derived shaders (selectable per material) -----------
+    // Registered at startup by the renderer. All share the LIT_GEOMETRY pipeline + LitPushConstants
+    // interface, so a material can point shaderSource at any of them interchangeably.
+    std::vector<Shader> litShaders;
+    void registerLitShader(const Shader& shader) { litShaders.push_back(shader); }
+    const std::vector<Shader>& getLitShaders() const { return litShaders; }
+
+    // Resolves a shader source path (as stored in a .scn) back to a registered shader so the
+    // pipelineIndex is correct on reload; falls back to the default lit shader if unknown.
+    Shader resolveLitShader(const std::string& sourceFile) const {
+        for (const auto& s : litShaders) {
+            if (s.sourceFile == sourceFile) return s;
+        }
+        return fallbackLitShader;
+    }
+
     // --- defaults / skybox ---------------------------------------------
     Shader   getFallBackShader() const    { return fallbackLitShader; }
     uint32_t getFallBackMaterial() const  { return fallbackDefaultMaterialIndex; }

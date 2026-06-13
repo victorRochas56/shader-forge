@@ -104,8 +104,11 @@ class App {
     void mainLoop() {
         //basic frame timing
         // main app loop
+        std::chrono::steady_clock::time_point frameStart;
+        std::chrono::duration<double> deltaTime;
         while (!glfwWindowShouldClose(window)) {
             Tracer::startTrace("frame time");
+            frameStart = std::chrono::steady_clock::now();
 
             glfwPollEvents();
             InputManager::tickInputState();
@@ -160,6 +163,8 @@ class App {
 
             InputManager::endFrame();
 
+            deltaTime = std::chrono::steady_clock::now() - frameStart;
+            gpu.time += deltaTime.count();
             Tracer::endTrace("frame time");
         }
         gpu.getDevice().getDevice().waitIdle();

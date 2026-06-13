@@ -218,7 +218,8 @@ class SceneLoader {
             } else if (key == "Name") {
                 material.name = value;
             } else if (key == "Shader") {
-                material.shaderSource.sourceFile = value;
+                // resolve to a registered lit shader so pipelineIndex matches the saved source
+                material.shaderSource = scene.resolveLitShader(value);
             } else if (key == "TextureMask" || key == "MaterialFlags") {
                 material.flags = static_cast<MaterialFlags>(std::stoul(value));
             } else if (key == "Color") {
