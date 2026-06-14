@@ -297,17 +297,16 @@ void Renderer::drawFrame() {
     // This slot's prior submission has retired — safe to destroy any textures it referenced.
     bindless.descriptorSet->processDeferredTextureFrees();
     //TODO make all full screen passes have a resolution scale that can be set dirty when changed/ needs to recreate
-    //if (features.ssr.resolutionDirty) {
-    //    features.ssr.resolutionDirty = false;
-    //    gpu.getDevice().getDevice().waitIdle();
-    //    int w = 0, h = 0;
-    //    glfwGetFramebufferSize(gpu.getWindow(), &w, &h);
-    //    if (w > 0 && h > 0) {
-    //        uint32_t ssrW = std::max(1u, static_cast<uint32_t>(w * features.ssr.resolutionScale));
-    //        uint32_t ssrH = std::max(1u, static_cast<uint32_t>(h * features.ssr.resolutionScale));
-    //        createSSRResources(ssrW, ssrH);
-    //    }
-    //}
+    if (features.ssr.resolutionDirty) {
+        features.ssr.resolutionDirty = false;
+        gpu.getDevice().getDevice().waitIdle();
+        int w = 0, h = 0;
+        glfwGetFramebufferSize(gpu.getWindow(), &w, &h);
+        if (w > 0 && h > 0) {
+            // init() reads features.ssr.resolutionScale and recreates the SSR textures at the new size.
+            passes.at(PassId::SSR)->init(static_cast<uint32_t>(w), static_cast<uint32_t>(h));
+        }
+    }
 
     Tracer::startTrace("acquire next image");
     auto [result, imageIndex] = gpu.getSwapchain().getSwapChain().acquireNextImage(UINT64_MAX, *gpu.getPresentCompleteSemaphore(gpu.currentFrame), nullptr);

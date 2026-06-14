@@ -25,6 +25,7 @@ struct SSRPassData {
     float roughnessThreshold;
     int maxSteps;
     uint frameIndex;
+    uint hiZStopLevel;
 };
 
 [[vk::push_constant]] 
@@ -67,18 +68,22 @@ float2 getCell(float2 ray, float2 cellCount) {
     return floor(ray * cellCount);
 }
 
-// Find the intersection of the ray with the next cell boundary
+// Find the intersection of the ray with the next cell boundary.
+// crossOffset is a fraction of a cell (signed by travel direction) so the nudge past
+// the boundary scales with the level — escapes coarse cells, stays sub-pixel at fine ones.
 float3 intersectCellBoundary(float3 o, float3 d, float2 cellIndex, float2 cellCount, float2 crossStep, float2 crossOffset) {
     float2 cellSize = 1.0 / cellCount;
-    float2 nextBoundary = (cellIndex + crossStep) * cellSize + crossOffset;
+    float2 nextBoundary = (cellIndex + crossStep + crossOffset) * cellSize;
     float2 t = (nextBoundary - o.xy) / d.xy;
     float tMin = min(t.x, t.y);
     return o + d * tMin;
 }
 
-// Get the cell count at a given mip level
+// Get the cell count at a given mip level.
+// Mip dimensions floor at each level (w >> level), so floor here to match
+// the actual Hi-Z texel grid instead of assuming exact power-of-two division.
 float2 getCellCount(float level, float rootLevel) {
-    return float2(SSRpc.passData.resolution) / exp2(level);
+    return floor(float2(SSRpc.passData.resolution) / exp2(level));
 }
 
 // Sample the minimum depth from the Hi-Z buffer at a given mip level
@@ -96,7 +101,8 @@ bool crossedCellBoundary(float2 oldCellIdx, float2 newCellIdx) {
 *   v is screen space ray direction
 */
 #define HIZ_START_LEVEL 2
-#define HIZ_STOP_LEVEL 2
+// Stop level is derived from the SSR resolution scale (CPU side) so one Hi-Z cell at the
+// stop level maps to ~one output pixel — refining finer than that is wasted work.
 
 float3 RayTrace(float3 p, float3 v) {
     const float rootLevel = SSRpc.passData.hiZMipLevels - 1.0f;
@@ -110,7 +116,9 @@ float3 RayTrace(float3 p, float3 v) {
 
     crossStep.x = (v.x >= 0)? 1.f : -1.f;
     crossStep.y = (v.y >= 0)? 1.f : -1.f;
-    crossOffset.xy = crossStep.xy * 0.025;
+    // Small nudge past the boundary, just enough for forward progress (the min-depth fetch
+    // now samples the cell center, so this no longer needs to mask edge-sampling ambiguity).
+    crossOffset.xy = crossStep.xy * 0.25;
     crossStep.xy = saturate(crossStep.xy);
 
     float3 ray = p.xyz;
@@ -119,17 +127,22 @@ float3 RayTrace(float3 p, float3 v) {
 
     float3 o = intersectDepthPlane(p, d, -p.z);
 
-    float2 hiZSize = float2(SSRpc.passData.resolution);
+    // Step off the origin cell at the START level (not full res) to avoid self-intersection.
+    float2 hiZSize = getCellCount(level, rootLevel);
     float2 rayCell = getCell(ray.xy, hiZSize);
     ray = intersectCellBoundary(o, d, rayCell, hiZSize, crossStep.xy, crossOffset.xy);
 
     [loop]
-    while( level >= HIZ_STOP_LEVEL && iterations < SSRpc.passData.maxSteps){
+    while( level >= float(SSRpc.passData.hiZStopLevel) && iterations < SSRpc.passData.maxSteps){
         
-        float minZ = getMinimumDepthPlane(ray.xy,level,rootLevel);
-
         const float2 cellCount = getCellCount(level,rootLevel);
         const float2 oldCellIdx = getCell(ray.xy, cellCount);
+
+        // Fetch min-depth at the cell CENTER, not ray.xy. ray.xy sits on a texel edge after a
+        // boundary step, where nearest sampling is ambiguous and can grab the neighbor cell —
+        // that mismatch with oldCellIdx is what striped long rays.
+        float2 cellCenter = (oldCellIdx + 0.5) / cellCount;
+        float minZ = getMinimumDepthPlane(cellCenter,level,rootLevel);
 
         float3 tmpRay = intersectDepthPlane(o,d,max(ray.z,minZ));
 

@@ -91,7 +91,7 @@ SkyboxOutput fragMain(ScreenVertex input)
     cubemaps[pc.skyboxIndex].GetDimensions(0, width, height, mipLevels);
     //float maxMipLevel = float(mipLevels - 1);
     //float lod = pc.blur * maxMipLevel;
-    output.color = cubemaps[pc.skyboxIndex].Sample(samplers[0], rayDirection);
+    output.color = 5.0 * cubemaps[pc.skyboxIndex].Sample(samplers[0], rayDirection);
     output.roughness_metal = float4(1, 0, 0, 1);
     output.worldNormal = float4(0.5, 0.5, 1.0, 1.0);
     return output;

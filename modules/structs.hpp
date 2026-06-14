@@ -144,10 +144,10 @@ struct VolumetricSettings {
 struct TonemapSettings {
     float ev100 = 6.0f;        // manual exposure; higher = darker (used when autoExposure off)
     uint32_t op = 1;           // 0 = Reinhard, 1 = ACES, 2 = none (clamp)
-    bool autoExposure = false; // meter scene average luminance and expose automatically
+    bool autoExposure = true; // meter scene average luminance and expose automatically
     float exposureComp = 0.0f; // EV bias on auto exposure; + = brighter
-    float minEV = -2.0f;       // clamp the auto-metered EV100
-    float maxEV = 16.0f;
+    float minEV = -1.5f;       // clamp the auto-metered EV100
+    float maxEV = 3.0f;
     float adaptationSpeed = 2.5f; // eye-adaptation rate (1/s); higher = snappier
 };
 
@@ -261,6 +261,7 @@ struct SSRPassData {
     float roughnessThreshold; // skip SSR for fragments above this roughness
     int maxSteps;             // max ray march iterations
     uint32_t frameIndex;
+    uint32_t hiZStopLevel;    // finest Hi-Z mip to refine to (derived from resolution scale)
 };
 
 struct HiZPushConstants {

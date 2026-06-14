@@ -5,6 +5,7 @@
 #include "structs.hpp"
 #include <random>
 #include <algorithm>
+#include <cmath>
 
 
 class SSRPass : public RenderPass {
@@ -31,9 +32,10 @@ public:
     void init(uint32_t width, uint32_t height) {
         uint32_t ssrW = std::max(1u, static_cast<uint32_t>(width * features.ssr.resolutionScale));
         uint32_t ssrH = std::max(1u, static_cast<uint32_t>(height * features.ssr.resolutionScale));
-        resize(currentTextureIndex, width, height, gpu.getSwapchain().getHDRColorFormat(), "internal/ssr_current");
-        resize(historyTextureIndices[0], width, height, gpu.getSwapchain().getHDRColorFormat(), "internal/ssr_history0");
-        resize(historyTextureIndices[1], width, height, gpu.getSwapchain().getHDRColorFormat(), "internal/ssr_history1");
+        // SSR runs at a reduced resolution; the Hi-Z trace still indexes the full-res pyramid.
+        resize(currentTextureIndex, ssrW, ssrH, gpu.getSwapchain().getHDRColorFormat(), "internal/ssr_current");
+        resize(historyTextureIndices[0], ssrW, ssrH, gpu.getSwapchain().getHDRColorFormat(), "internal/ssr_history0");
+        resize(historyTextureIndices[1], ssrW, ssrH, gpu.getSwapchain().getHDRColorFormat(), "internal/ssr_history1");
 
         historyInvalid = true;
 
@@ -72,6 +74,11 @@ public:
         auto swapExtent = gpu.getSwapchain().getSwapChainExtent();
         auto& ssrCurrent = bindless.descriptorSet->getTextureResource(currentTextureIndex);
         vk::Extent2D ssrExtent{ssrCurrent.width, ssrCurrent.height};
+
+        // Trace down to mip 0: at one texel per cell, minZ is the exact depth under the ray,
+        // so sloped/grazing surfaces don't band. Stopping coarser biases minZ to the cell's
+        // nearest texel and stripes the floor.
+        uint32_t hiZStopLevel = 0;
 
         uint32_t readHistory = historyTextureIndices[historyFlip];
         uint32_t writeHistory = historyTextureIndices[1 - historyFlip];
@@ -134,13 +141,16 @@ public:
                                             .roughnessMetalSamplerIndex = shared.defaultSamplerIndex,
                                             .normalIndex = shared.normalTextureIndex,
                                             .normalSamplerIndex = shared.defaultSamplerIndex,
-                                            .resolution = glm::uvec2(ssrExtent.width, ssrExtent.height),
+                                            // Full-res base: drives the Hi-Z cell grid and color-mip selection.
+                                            // The half-res output is handled by the ssrExtent viewport below.
+                                            .resolution = glm::uvec2(swapExtent.width, swapExtent.height),
                                             .hiZIndex = shared.hiZTextureIndex,
                                             .hiZMipLevels = shared.hiZMipLevels,
                                             .thickness = features.ssr.thickness,
                                             .roughnessThreshold = features.ssr.roughnessThreshold,
                                             .maxSteps = features.ssr.maxSteps,
                                             .frameIndex = gpu.totalFrames,
+                                            .hiZStopLevel = hiZStopLevel,
                                         }, gpu.currentFrame);
 
         drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[pipelineIndex], *ssrCurrent.imageView, ssrExtent,

@@ -37,20 +37,31 @@ float4 fragMain(VSOutput input) : SV_Target {
             samplers[hizPC.samplerIndex], uv).r;
         return float4(depth, 0, 0, 1);
     } else {
-        // 2x2 min reduction: sample 4 texel centers from previous mip
-        float2 texelSize = 1.0 / float2(hizPC.inputResolution);
-        float2 offset = texelSize * 0.5;
+        // 2x2 min reduction via integer Load (exact texels, no UV drift on odd-sized mips).
+        int2 inSize = int2(hizPC.inputResolution);
+        int mip = int(hizPC.inputMipLevel);
+        int2 base = int2(input.position.xy) * 2;   // this output texel maps to a 2x2 input block
 
-        float d0 = textures[hizPC.inputTextureIndex].SampleLevel(
-            samplers[hizPC.samplerIndex], uv + float2(-offset.x, -offset.y), hizPC.inputMipLevel).r;
-        float d1 = textures[hizPC.inputTextureIndex].SampleLevel(
-            samplers[hizPC.samplerIndex], uv + float2( offset.x, -offset.y), hizPC.inputMipLevel).r;
-        float d2 = textures[hizPC.inputTextureIndex].SampleLevel(
-            samplers[hizPC.samplerIndex], uv + float2(-offset.x,  offset.y), hizPC.inputMipLevel).r;
-        float d3 = textures[hizPC.inputTextureIndex].SampleLevel(
-            samplers[hizPC.samplerIndex], uv + float2( offset.x,  offset.y), hizPC.inputMipLevel).r;
+        float minDepth = textures[hizPC.inputTextureIndex].Load(int3(min(base + int2(0,0), inSize - 1), mip)).r;
+        minDepth = min(minDepth, textures[hizPC.inputTextureIndex].Load(int3(min(base + int2(1,0), inSize - 1), mip)).r);
+        minDepth = min(minDepth, textures[hizPC.inputTextureIndex].Load(int3(min(base + int2(0,1), inSize - 1), mip)).r);
+        minDepth = min(minDepth, textures[hizPC.inputTextureIndex].Load(int3(min(base + int2(1,1), inSize - 1), mip)).r);
 
-        float minDepth = min(min(d0, d1), min(d2, d3));
+        // Odd input dimensions drop a column/row from the 2x2 grid; fold those texels back
+        // in so the reduced min stays conservative (otherwise the trace skips them -> stripes).
+        bool oddX = (inSize.x & 1) != 0;
+        bool oddY = (inSize.y & 1) != 0;
+        if (oddX) {
+            minDepth = min(minDepth, textures[hizPC.inputTextureIndex].Load(int3(min(base + int2(2,0), inSize - 1), mip)).r);
+            minDepth = min(minDepth, textures[hizPC.inputTextureIndex].Load(int3(min(base + int2(2,1), inSize - 1), mip)).r);
+        }
+        if (oddY) {
+            minDepth = min(minDepth, textures[hizPC.inputTextureIndex].Load(int3(min(base + int2(0,2), inSize - 1), mip)).r);
+            minDepth = min(minDepth, textures[hizPC.inputTextureIndex].Load(int3(min(base + int2(1,2), inSize - 1), mip)).r);
+        }
+        if (oddX && oddY) {
+            minDepth = min(minDepth, textures[hizPC.inputTextureIndex].Load(int3(min(base + int2(2,2), inSize - 1), mip)).r);
+        }
         return float4(minDepth, 0, 0, 1);
     }
 }
