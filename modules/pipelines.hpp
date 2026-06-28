@@ -67,6 +67,24 @@ template <typename T> struct Pipeline : public PipelineBase {
     void recreateInternal(PipelineManager& manager, uint32_t index) override;
 };
 
+struct ComputePipelineBase {
+    ComputePipelineBase() = default;
+    virtual ~ComputePipelineBase() = default;
+};
+
+template <typename T> struct ComputePipeline : public ComputePipelineBase {
+    vk::raii::Pipeline pipeline = nullptr;
+    vk::raii::PipelineLayout layout = nullptr;
+    vk::raii::DescriptorSet* descriptorSet = nullptr;
+    vk::raii::DescriptorSetLayout* descriptorSetLayout = nullptr;
+    std::string shaderPath;
+    T pushConstantData;
+
+    void pushConstants(vk::raii::CommandBuffer& cmd) {
+        cmd.pushConstants<T>(layout, vk::ShaderStageFlagBits::eCompute, 0, pushConstantData);
+    } 
+};
+
 class PipelineManager {
   public:
     PipelineManager(Device& device, Swapchain& swapchain, vk::SampleCountFlagBits msaaSamples) : device(device), swapchain(swapchain), msaaSamples(msaaSamples) {}
@@ -172,6 +190,7 @@ class PipelineManager {
     std::vector<std::unique_ptr<PipelineBase>> beforeGeometryPipelines;
     std::vector<std::unique_ptr<PipelineBase>> geometryPipelines;
     std::vector<std::unique_ptr<PipelineBase>> postProcessPipelines;
+    std::vector<std::unique_ptr<ComputePipelineBase>> computePipelines;
 
     void recreatePipelineAtIndex(PipelineCategory pipelineCategory, uint32_t index) {
         std::vector<std::unique_ptr<PipelineBase>>* targetVector = getTargetVector(pipelineCategory);
@@ -539,6 +558,27 @@ class PipelineManager {
         default:
             return nullptr;
         }
+    }
+
+    template <typename T>
+    uint32_t createComputePipeline(std::string shaderPath, vk::raii::DescriptorSetLayout& setLayout, vk::raii::DescriptorSet& descriptorSet) {
+        ensureSpvUpToDate(shaderPath); // build .spv from .slang like the graphics path (pipelines.hpp:189)
+        vk::raii::ShaderModule module = createShaderModule(readFile(shaderPath));
+        vk::PipelineShaderStageCreateInfo stage{.stage = vk::ShaderStageFlagBits::eCompute, .module = module, .pName = "computeMain"};
+        vk::PushConstantRange pc{vk::ShaderStageFlagBits::eCompute, 0, sizeof(T)};
+        vk::PipelineLayoutCreateInfo layoutInfo{
+            .setLayoutCount = 1, .pSetLayouts = &*setLayout, .pushConstantRangeCount = 1, .pPushConstantRanges = &pc};
+        vk::PipelineLayout layout = vk::raii::PipelineLayout(device.getDevice(), layoutInfo);
+        vk::ComputePipelineCreateInfo info{.stage = stage, .layout = *layout};
+
+        std::unique_ptr<ComputePipeline<T>> pipeline = std::make_unique<ComputePipeline<T>>();
+        pipeline->pipeline = vk::raii::Pipeline(device.getDevice(), nullptr, info);
+        pipeline->layout = layout;
+        pipeline->descriptorSet = descriptorSet;
+        pipeline->descriptorSetLayout = setLayout;
+
+        computePipelines.push_back(std::move(pipeline));
+        return computePipelines.size();
     }
 };
 
