@@ -15,6 +15,8 @@
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_raii.hpp>
 
+#include <tracy/TracyVulkan.hpp> // GPU (Vulkan) profiling zones; TracyVkCtx is void* when disabled
+
 #define GLM_FORCE_RADIANS
 #define GLM_DEPTH_ZERO_TO_ONE
 #include <glm/glm.hpp>
@@ -57,6 +59,9 @@ class Renderer {
     bool                                framebufferResized = false;
     BindlessSystem&                     bindless;
     RenderPassResources                 passResources;
+
+    // Tracy GPU profiling context (per graphics queue). void* / no-op when TRACY_ENABLE is off.
+    TracyVkCtx                          tracyCtx = nullptr;
 
     std::map<PassId,std::unique_ptr<RenderPass>>   passes;
     //pipelines

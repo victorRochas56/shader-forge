@@ -171,6 +171,13 @@ find_package(Stb REQUIRED) #no config
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(Ktx CONFIG REQUIRED) # !upper case K
 
+# --- Tracy profiler client (repo/tracy is a sibling of this project) ---
+# Set Tracy options before add_subdirectory; option() honors these normal vars (CMP0077).
+set(TRACY_ENABLE ON CACHE BOOL "Enable Tracy profiling" FORCE)
+# On-demand: only collect data while the Tracy server UI is connected (no unbounded buffering).
+set(TRACY_ON_DEMAND ON CACHE BOOL "Tracy profiles only when a server is connected" FORCE)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../tracy ${CMAKE_BINARY_DIR}/tracy)
+
 add_executable(shader-forge
     main.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/modules/renderer.cpp
@@ -208,6 +215,7 @@ target_link_libraries(shader-forge PRIVATE
     tinyobjloader::tinyobjloader
     nlohmann_json::nlohmann_json
     KTX::ktx
+    TracyClient
 )
 
 target_include_directories(shader-forge PRIVATE ${Stb_INCLUDE_DIR})

@@ -48,7 +48,10 @@ void calculateCascadedLightSpaceMatrices(Light& light, Camera& camera, Renderer*
 
 Renderer::Renderer(GpuContext& gpu, BindlessSystem& bindless, Scene& scene)
     : scene(scene), gpu(gpu), bindless(bindless), passResources{.buffers = buffers} {}
-Renderer::~Renderer() = default;
+Renderer::~Renderer() {
+    // Device is idle here (App waits before teardown). No-op when Tracy is disabled.
+    TracyVkDestroy(tracyCtx);
+}
 
 /////=================================================INIT=================================================/////
 
@@ -57,6 +60,11 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     bindless.initResources(gpu);
     gpu.initSwapchain(*bindless.resourceManager, *bindless.descriptorSet);
     bindless.initPipelineManager(gpu);
+
+    // Tracy GPU profiling context: calibrates timestamps via a transient submit on the graphics
+    // queue (safe here — the queue is idle during init). No-op when TRACY_ENABLE is off.
+    tracyCtx = TracyVkContext(*gpu.getDevice().getPhysicalDevice(), *gpu.getDevice().getDevice(),
+                              *gpu.getDevice().getGraphicsQueue(), *gpu.getCommandBuffer(0));
 
     // initializing default camera
     scene.activeCamera = Camera{.position = glm::vec3(1, 1, 1),
@@ -289,6 +297,7 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
 /////=================================================DRAW FRAME=================================================/////
 
 void Renderer::drawFrame() {
+    ZoneScoped; // Tracy CPU zone for the whole frame
     Tracer::startTrace("draw frame");
     Tracer::startTrace("wait for fences");
     gpu.getDevice().getDevice().waitForFences(*gpu.getInFlightFence(gpu.currentFrame), vk::True, UINT64_MAX);
@@ -400,6 +409,7 @@ void Renderer::drawFrame() {
     gpu.totalFrames++;
     bindless.pipelineManager->checkForShaderUpdates(); // TODO enable this
     Tracer::endTrace("draw frame");
+    FrameMark; // Tracy frame boundary
 }
 
 /////=================================================GET/SET=================================================/////
