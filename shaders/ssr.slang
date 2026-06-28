@@ -45,7 +45,7 @@ VSOutput vertMain(uint vertexID : SV_VertexID) {
     return output;
 }
 
-// Project world position to screen-space UV (.xy) + projected depth (.z)
+// Project world position to screen-space UV (.xy) + projected reverse-Z depth (.z).
 float3 worldToScreen(float3 worldPos) {
     float4 clip = mul(SSRpc.passData.viewProj, float4(worldPos, 1.0));
     clip.xyz /= clip.w;
@@ -75,7 +75,9 @@ float3 intersectCellBoundary(float3 o, float3 d, float2 cellIndex, float2 cellCo
     float2 cellSize = 1.0 / cellCount;
     float2 nextBoundary = (cellIndex + crossStep + crossOffset) * cellSize;
     float2 t = (nextBoundary - o.xy) / d.xy;
-    float tMin = min(t.x, t.y);
+    // Reverse-Z: the ray marches with DECREASING depth (t), so the first boundary crossed is the
+    // largest t below the current position -> max, not min.
+    float tMin = max(t.x, t.y);
     return o + d * tMin;
 }
 
@@ -86,8 +88,9 @@ float2 getCellCount(float level, float rootLevel) {
     return floor(float2(SSRpc.passData.resolution) / exp2(level));
 }
 
-// Sample the minimum depth from the Hi-Z buffer at a given mip level
-float getMinimumDepthPlane(float2 ray, float level, float rootLevel) {
+// Sample the nearest depth plane from the Hi-Z buffer at a given mip level.
+// Reverse-Z: Hi-Z stores raw reverse depth max-reduced, so nearest occluder = maximum.
+float getNearestDepthPlane(float2 ray, float level, float rootLevel) {
     return textures[SSRpc.passData.hiZIndex].SampleLevel(samplers[SSRpc.passData.depthSamplerIndex], ray, level).r;
 }
 
@@ -142,9 +145,11 @@ float3 RayTrace(float3 p, float3 v) {
         // boundary step, where nearest sampling is ambiguous and can grab the neighbor cell —
         // that mismatch with oldCellIdx is what striped long rays.
         float2 cellCenter = (oldCellIdx + 0.5) / cellCount;
-        float minZ = getMinimumDepthPlane(cellCenter,level,rootLevel);
+        // Reverse-Z: nearest surface = max depth; clamp the ray no nearer than it (min, since
+        // depth decreases away from the camera).
+        float nearestZ = getNearestDepthPlane(cellCenter,level,rootLevel);
 
-        float3 tmpRay = intersectDepthPlane(o,d,max(ray.z,minZ));
+        float3 tmpRay = intersectDepthPlane(o,d,min(ray.z,nearestZ));
 
         const float2 newCellIdx = getCell(tmpRay.xy,cellCount);
 
@@ -233,7 +238,7 @@ float4 fragMain(VSOutput input) : SV_Target {
 
     float initDepth = textures[SSRpc.passData.depthIndex].SampleLevel(samplers[SSRpc.passData.depthSamplerIndex], uv, 0).r;
 
-    if (initDepth >= 1.0)
+    if (initDepth <= 0.0) // reverse-Z: skybox/far = 0
         return float4(0, 0, 0, 0);
 
     // Reconstruct world position
@@ -250,7 +255,7 @@ float4 fragMain(VSOutput input) : SV_Target {
     if (dot(reflectDir, viewDir) < 0.0)
         return float4(0, 0, 0, 0);
 
-    // P: screen-space origin
+    // P: screen-space origin (native reverse-Z depth)
     float3 p = float3(uv, initDepth);
 
     // P': project reflected point into screen space
@@ -259,8 +264,8 @@ float4 fragMain(VSOutput input) : SV_Target {
     // Screen-space ray direction for tracing
     float3 v = pPrime - p;
 
-    // Reject rays going toward the camera in screen-space depth
-    if (v.z < 0.0)
+    // Reject rays going toward the camera in screen-space depth (reverse-Z: nearer = larger z)
+    if (v.z > 0.0)
         return float4(0, 0, 0, 0);
 
     float3 ray = RayTrace(p,v);

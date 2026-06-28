@@ -196,7 +196,10 @@ struct Camera {
         glm::vec3 upVector = glm::vec3(0.0f, 1.0f, 0.0f); // World up direction
         // Create view matrix using lookAt
         viewMatrix = glm::lookAt(position, target, upVector);
-        projectionMatrix = glm::perspective(glm::radians(fov), aspectRatio, nearPlane, farPlane);
+        // Reverse-Z: swap near/far so near maps to NDC 1 and far to 0 (better depth precision).
+        // Use the explicit _ZO variant so the [0,1] clip convention holds regardless of
+        // GLM_DEPTH_ZERO_TO_ONE include ordering in this translation unit.
+        projectionMatrix = glm::perspectiveRH_ZO(glm::radians(fov), aspectRatio, farPlane, nearPlane);
         projectionMatrix[1][1] *= -1.0f; // Flip Y axis for vulkan
         viewProjection = projectionMatrix * viewMatrix;
     }

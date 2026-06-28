@@ -77,7 +77,8 @@ float4 fragMain(VertexOutput input) : SV_Target0
 
     if(pc.flags & 1<<2) { // LINEARIZE_DEPTH
         float z = color.r;
-        float linearDepth = pc.nearPlane * pc.farPlane / (pc.farPlane + z * (pc.nearPlane - pc.farPlane));
+        // Reverse-Z: near maps to z=1, far to z=0
+        float linearDepth = pc.nearPlane * pc.farPlane / (pc.nearPlane + z * (pc.farPlane - pc.nearPlane));
         float normalized = (linearDepth - pc.nearPlane) / (pc.farPlane - pc.nearPlane);
         return float4(linearDepth,linearDepth,linearDepth, 1.0);
     }

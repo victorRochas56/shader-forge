@@ -153,8 +153,9 @@ FragmentOutput fragMain(VSOutput input) {
 
     // Reconstruct world-space ray from screen UV
     float2 ndc = input.texCoord * 2.0 - 1.0;
-    float4 nearWorld = mul(sdfPC.invViewProjection, float4(ndc, 0.0, 1.0));
-    float4 farWorld  = mul(sdfPC.invViewProjection, float4(ndc, 1.0, 1.0));
+    // reverse-Z: near = 1, far = 0
+    float4 nearWorld = mul(sdfPC.invViewProjection, float4(ndc, 1.0, 1.0));
+    float4 farWorld  = mul(sdfPC.invViewProjection, float4(ndc, 0.0, 1.0));
     nearWorld.xyz /= nearWorld.w;
     farWorld.xyz  /= farWorld.w;
 

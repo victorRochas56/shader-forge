@@ -59,7 +59,7 @@ FragmentOutput fragMain(VertexOutput input)
     float sceneDepth = textures[pc.depthTextureIndex].Sample(samplers[pc.depthSamplerIndex], screenUV).r;
     float lineDepth = input.position.z;
 
-    float occluded = lineDepth > sceneDepth ? 1.0 : 0.0;
+    float occluded = lineDepth < sceneDepth ? 1.0 : 0.0; // reverse-Z: behind scene = smaller z
     output.color = float4(input.color.rgb * lerp(1.0, 0.25, occluded), input.color.a);
 
     return output;

@@ -108,9 +108,9 @@ FragmentOutput fragMain(VSOutput input) {
 
     float2 ndc = input.texCoord * 2.0 - 1.0;
 
-    // Unproject near and far to recover a world-space ray.
-    float4 nearW = mul(volPc.invViewProjection, float4(ndc, 0.0, 1.0));
-    float4 farW  = mul(volPc.invViewProjection, float4(ndc, 1.0, 1.0));
+    // Unproject near and far to recover a world-space ray (reverse-Z: near=1, far=0).
+    float4 nearW = mul(volPc.invViewProjection, float4(ndc, 1.0, 1.0));
+    float4 farW  = mul(volPc.invViewProjection, float4(ndc, 0.0, 1.0));
     nearW.xyz /= nearW.w;
     farW.xyz  /= farW.w;
     float3 pixelRayDir = normalize(farW.xyz - nearW.xyz);

@@ -67,7 +67,7 @@ float4 fragMain(VSOutput input) : SV_Target {
         textures[BBpc.depthTextureIndex].GetDimensions(depthW, depthH);
         float2 screenUV = input.position.xy / float2(depthW, depthH);
         float sceneDepth = textures[BBpc.depthTextureIndex].Sample(samplers[BBpc.depthSamplerIndex], screenUV).r;
-        if (input.position.z > sceneDepth) discard;
+        if (input.position.z < sceneDepth) discard; // reverse-Z: behind scene = smaller z
     }
     return textures[BBpc.billboardBufferAddress[input.instanceID].textureIndex].Sample(samplers[BBpc.samplerIndex],input.texCoord);
 }

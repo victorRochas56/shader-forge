@@ -324,7 +324,7 @@ class PipelineManager {
             multisampling = {.rasterizationSamples = msaaSamples, .sampleShadingEnable = vk::False, .minSampleShading = 0.2f};
             depthStencil = {.depthTestEnable = depthTestEnable,
                             .depthWriteEnable = depthWriteEnable,
-                            .depthCompareOp = vk::CompareOp::eLessOrEqual,
+                            .depthCompareOp = vk::CompareOp::eGreaterOrEqual, // reverse-Z
                             .depthBoundsTestEnable = vk::False,
                             .stencilTestEnable = vk::False};
             colorBlending = {.logicOpEnable = vk::False, .attachmentCount = 0, .pAttachments = nullptr};
@@ -376,7 +376,7 @@ class PipelineManager {
             multisampling = {.rasterizationSamples = msaaSamples, .sampleShadingEnable = vk::False, .minSampleShading = 0.2f};
             depthStencil = {.depthTestEnable = depthTestEnable,
                             .depthWriteEnable = depthWriteEnable,
-                            .depthCompareOp = vk::CompareOp::eLessOrEqual,
+                            .depthCompareOp = vk::CompareOp::eGreaterOrEqual, // reverse-Z
                             .depthBoundsTestEnable = vk::False,
                             .stencilTestEnable = vk::False};
             colorBlending = {.logicOpEnable = vk::False, .logicOp = vk::LogicOp::eCopy, .attachmentCount = 3, .pAttachments = mrtBlendAttachments};
@@ -425,7 +425,7 @@ class PipelineManager {
             multisampling = {.rasterizationSamples = msaaSamples, .sampleShadingEnable = vk::False};
             depthStencil = {.depthTestEnable = depthTestEnable,
                             .depthWriteEnable = depthWriteEnable,
-                            .depthCompareOp = vk::CompareOp::eLessOrEqual,
+                            .depthCompareOp = vk::CompareOp::eGreaterOrEqual, // reverse-Z
                             .depthBoundsTestEnable = vk::False,
                             .stencilTestEnable = vk::False};
             colorBlendAttachment = {.blendEnable = vk::True,

@@ -51,7 +51,7 @@ ScreenVertex vertMain(uint vertexID : SV_VertexID)
     
     // Generate fullscreen triangle
     output.uv = float2((vertexID << 1) & 2, vertexID & 2);
-    output.position = float4(output.uv * 2.0 - 1.0, 1.0, 1.0);
+    output.position = float4(output.uv * 2.0 - 1.0, 0.0, 1.0); // reverse-Z: far plane = 0
     //output.uv.y = 1.0 - output.uv.y; no need to flip Y
     
     return output;
@@ -71,9 +71,9 @@ SkyboxOutput fragMain(ScreenVertex input)
     // Convert UV to NDC (clip space)
     float2 ndc = input.uv * 2.0 - 1.0;
     
-    // Create points at near and far plane
-    float4 nearPoint = float4(ndc, 0.0, 1.0); // Near plane (z=0 in NDC)
-    float4 farPoint = float4(ndc, 1.0, 1.0);  // Far plane (z=1 in NDC)
+    // Create points at near and far plane (reverse-Z: near=1, far=0 in NDC)
+    float4 nearPoint = float4(ndc, 1.0, 1.0); // Near plane
+    float4 farPoint = float4(ndc, 0.0, 1.0);  // Far plane
     
     // Transform to world space
     float4 nearWorld = mul(pc.invViewProjMatrix, nearPoint);

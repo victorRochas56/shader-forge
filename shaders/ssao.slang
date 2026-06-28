@@ -76,7 +76,7 @@ float4 fragMain(VSOutput input) : SV_Target {
 
     // Sample depth and reconstruct view-space position
     float depth = textures[SSAOpc.depthIndex].Sample(samplers[SSAOpc.depthSamplerIndex], uv).r;
-    if (depth >= 1.0) return float4(1.0); // skip skybox
+    if (depth <= 0.0) return float4(1.0); // skip skybox (reverse-Z: far = 0)
 
     float3 fragPos = reconstructViewPos(uv,depth,SSAOpc.invProjection);
     float3 normal = calculateViewSpaceNormal(SSAOpc.depthIndex,SSAOpc.depthSamplerIndex,SSAOpc.invProjection,texelSize,uv,fragPos);

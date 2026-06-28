@@ -218,7 +218,7 @@ class DescriptorSet {
                                                                 .descriptorCount = MAX_TEXTURES,
                                                                 .stageFlags = vk::ShaderStageFlagBits::eFragment | vk::ShaderStageFlagBits::eVertex});
         poolSizes.push_back(vk::DescriptorPoolSize(vk::DescriptorType::eSampledImage, MAX_TEXTURES));
-        bindingFlags.push_back(vk::DescriptorBindingFlagBits::ePartiallyBound);
+        bindingFlags.push_back(vk::DescriptorBindingFlagBits::ePartiallyBound | vk::DescriptorBindingFlagBits::eUpdateAfterBind);
         // variableCounts.push_back(MAX_TEXTURES);
         textureBindingIndex = bindingIndex;
         bindingIndex++;
@@ -229,7 +229,7 @@ class DescriptorSet {
                                                                 .descriptorCount = MAX_CUBEMAPS,
                                                                 .stageFlags = vk::ShaderStageFlagBits::eFragment | vk::ShaderStageFlagBits::eVertex});
         poolSizes.push_back(vk::DescriptorPoolSize(vk::DescriptorType::eSampledImage, MAX_CUBEMAPS));
-        bindingFlags.push_back(vk::DescriptorBindingFlagBits::ePartiallyBound);
+        bindingFlags.push_back(vk::DescriptorBindingFlagBits::ePartiallyBound | vk::DescriptorBindingFlagBits::eUpdateAfterBind);
         // variableCounts.push_back(MAX_CUBEMAPS);
         cubemapBindingIndex = bindingIndex;
         bindingIndex++;
@@ -240,7 +240,7 @@ class DescriptorSet {
                                                                 .descriptorCount = MAX_SAMPLERS,
                                                                 .stageFlags = vk::ShaderStageFlagBits::eFragment | vk::ShaderStageFlagBits::eVertex});
         poolSizes.push_back(vk::DescriptorPoolSize(vk::DescriptorType::eSampler, MAX_SAMPLERS));
-        bindingFlags.push_back(vk::DescriptorBindingFlagBits::ePartiallyBound);
+        bindingFlags.push_back(vk::DescriptorBindingFlagBits::ePartiallyBound | vk::DescriptorBindingFlagBits::eUpdateAfterBind);
         // variableCounts.push_back(MAX_SAMPLERS);
         samplerBindingIndex = bindingIndex;
         bindingIndex++;
@@ -260,14 +260,14 @@ class DescriptorSet {
         // Storage buffers are now accessed via Buffer Device Address (BDA) — no descriptor bindings needed
 
         vk::DescriptorPoolCreateInfo poolInfo{};
-        poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
+        poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet | vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind;
         poolInfo.maxSets = 1;
         poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
         poolInfo.pPoolSizes = poolSizes.data();
         descriptorPool = vk::raii::DescriptorPool(device.getDevice(), poolInfo);
 
         vk::DescriptorSetLayoutBindingFlagsCreateInfo flagsInfo{.bindingCount = static_cast<uint32_t>(bindingFlags.size()), .pBindingFlags = bindingFlags.data()};
-        vk::DescriptorSetLayoutCreateInfo layoutInfo{.pNext = &flagsInfo, .bindingCount = static_cast<uint32_t>(layoutBindings.size()), .pBindings = layoutBindings.data()};
+        vk::DescriptorSetLayoutCreateInfo layoutInfo{.pNext = &flagsInfo, .flags = vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool, .bindingCount = static_cast<uint32_t>(layoutBindings.size()), .pBindings = layoutBindings.data()};
         descriptorSetLayout = vk::raii::DescriptorSetLayout(device.getDevice(), layoutInfo);
 
         vk::DescriptorSetAllocateInfo allocInfo{.descriptorPool = *descriptorPool, .descriptorSetCount = 1, .pSetLayouts = &**descriptorSetLayout};

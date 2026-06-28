@@ -865,7 +865,7 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
     });
 
     vk::ClearValue clearColor{.color = vk::ClearColorValue(std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f})};
-    vk::ClearValue clearDepth{.depthStencil = vk::ClearDepthStencilValue{1.0f, 0}};
+    vk::ClearValue clearDepth{.depthStencil = vk::ClearDepthStencilValue{0.0f, 0}}; // reverse-Z: far = 0
 
     // Frustum cull and build draw commands + lit draw data
     Camera fakeCam = scene.activeCamera;
@@ -934,7 +934,7 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
         // --- Depth prepass (depth-only, no color attachment) ---
         vk::RenderingAttachmentInfo depthPrepassAttachment = {.imageView = gpu.getSwapchain().getDepthImageView(),
                                                               .imageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
-                                                              .resolveMode = vk::ResolveModeFlagBits::eMin,
+                                                              .resolveMode = vk::ResolveModeFlagBits::eMax, // reverse-Z: nearest sample = max depth
                                                               .resolveImageView = gpu.getSwapchain().getDepthResolveImageView(),
                                                               .resolveImageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
                                                               .loadOp = vk::AttachmentLoadOp::eClear,
@@ -1011,7 +1011,7 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
 
     vk::RenderingAttachmentInfo depthAttachmentInfo = {.imageView = gpu.getSwapchain().getDepthImageView(),
                                                        .imageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
-                                                       .resolveMode = vk::ResolveModeFlagBits::eMin,
+                                                       .resolveMode = vk::ResolveModeFlagBits::eMax, // reverse-Z: nearest sample = max depth
                                                        .resolveImageView = gpu.getSwapchain().getDepthResolveImageView(),
                                                        .resolveImageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
                                                        .loadOp = vk::AttachmentLoadOp::eLoad,
@@ -1588,14 +1588,14 @@ void calculateCascadedLightSpaceMatrices(Light& light, Camera& camera, Renderer*
         up = glm::vec3(1.0f, 0.0f, 0.0f);
     }
     // Unproject the full camera frustum to world space (Vulkan NDC: z in [0,1])
-    // z-outermost so indices 0-3 = near plane, 4-7 = far plane
+    // Reverse-Z: near is at NDC z=1, far at z=0. Use (1-z) so indices 0-3 = near plane, 4-7 = far plane.
     glm::mat4 invCamVP = glm::inverse(camera.viewProjection);
     glm::vec3 fullCorners[8];
     int idx = 0;
     for (int z = 0; z < 2; ++z)
         for (int y = 0; y < 2; ++y)
             for (int x = 0; x < 2; ++x) {
-                glm::vec4 c = invCamVP * glm::vec4(2.f * x - 1.f, 2.f * y - 1.f, static_cast<float>(z), 1.f);
+                glm::vec4 c = invCamVP * glm::vec4(2.f * x - 1.f, 2.f * y - 1.f, static_cast<float>(1 - z), 1.f);
                 fullCorners[idx++] = glm::vec3(c / c.w);
             }
 
