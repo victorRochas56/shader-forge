@@ -22,7 +22,9 @@
 #include <glm/gtc/quaternion.hpp>
 
 // Tracy CPU profiling macros (ZoneScoped, FrameMark). No-ops when TRACY_ENABLE is off.
+#if TRACY_ENABLE
 #include <tracy/Tracy.hpp>
+#endif
 
 // STL headers used broadly
 #include <algorithm>

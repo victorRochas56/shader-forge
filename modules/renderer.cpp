@@ -50,7 +50,9 @@ Renderer::Renderer(GpuContext& gpu, BindlessSystem& bindless, Scene& scene)
     : scene(scene), gpu(gpu), bindless(bindless), passResources{.buffers = buffers} {}
 Renderer::~Renderer() {
     // Device is idle here (App waits before teardown). No-op when Tracy is disabled.
+    #if TRACY_ENABLE
     TracyVkDestroy(tracyCtx);
+    #endif
 }
 
 /////=================================================INIT=================================================/////
@@ -63,8 +65,10 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
 
     // Tracy GPU profiling context: calibrates timestamps via a transient submit on the graphics
     // queue (safe here — the queue is idle during init). No-op when TRACY_ENABLE is off.
+    #if TRACY_ENABLE
     tracyCtx = TracyVkContext(*gpu.getDevice().getPhysicalDevice(), *gpu.getDevice().getDevice(),
                               *gpu.getDevice().getGraphicsQueue(), *gpu.getCommandBuffer(0));
+    #endif
 
     // initializing default camera
     scene.activeCamera = Camera{.position = glm::vec3(1, 1, 1),
@@ -297,7 +301,9 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
 /////=================================================DRAW FRAME=================================================/////
 
 void Renderer::drawFrame() {
+    #if TRACY_ENABLE
     ZoneScoped; // Tracy CPU zone for the whole frame
+    #endif
     Tracer::startTrace("draw frame");
     Tracer::startTrace("wait for fences");
     gpu.getDevice().getDevice().waitForFences(*gpu.getInFlightFence(gpu.currentFrame), vk::True, UINT64_MAX);
@@ -409,7 +415,9 @@ void Renderer::drawFrame() {
     gpu.totalFrames++;
     bindless.pipelineManager->checkForShaderUpdates(); // TODO enable this
     Tracer::endTrace("draw frame");
+    #if TRACY_ENABLE
     FrameMark; // Tracy frame boundary
+    #endif
 }
 
 /////=================================================GET/SET=================================================/////
