@@ -68,6 +68,7 @@ public:
     }
 
     void record(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
+        tracing::startTrace("ssr pass");
         if(!features.ssr.enabled)
             return;
 
@@ -189,6 +190,6 @@ public:
 
         historyFlip = 1 - historyFlip;
         historyInvalid = false;
-
+        tracing::endTrace("ssr pass");
     }
 };

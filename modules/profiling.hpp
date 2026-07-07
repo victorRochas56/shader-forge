@@ -1,10 +1,12 @@
 #pragma once
 
 #include <unordered_map>
+#include <vector>
 #include <chrono>
 
 struct Trace {
     std::string name;
+    uint32_t scope = 0;
     std::chrono::steady_clock::time_point start;
     std::chrono::steady_clock::time_point end;
     std::chrono::duration<double> duration;
@@ -24,48 +26,48 @@ struct Trace {
     }
 };
 
-class Tracer {
+namespace tracing {
 
-public:
-    static void startTrace(std::string name) {
-        if(instance().traces.contains(name)){
-            instance().traces[name].start = std::chrono::high_resolution_clock::now();
-        }
-        else {
-            instance().traces[name] = {.name = name, .start = std::chrono::high_resolution_clock::now()};
-        }
+inline int samples = 60;
+inline std::unordered_map<std::string,Trace> traces;
+inline std::vector<std::string> order;
+inline uint32_t scope = 0;
+inline uint32_t maxScope = 0;
+
+inline void startTrace(std::string name) {
+    if(traces.contains(name)){
+        traces[name].start = std::chrono::high_resolution_clock::now();
     }
-
-    static void endTrace(std::string name) {
-        if(!instance().traces.contains(name)) {
-            std::printf("! trying to end non existent trace : ", name);
-            return;
-        }
-        instance().traces[name].end = std::chrono::high_resolution_clock::now();
-        instance().traces[name].updateDuration(instance().samples);
+    else {
+        traces[name] = {.name = name, .scope = scope, .start = std::chrono::high_resolution_clock::now()};
+        order.push_back(name);
     }
+    scope++;
+    if(scope > maxScope) maxScope = scope;
+}
 
-    static auto& getTraces() { return instance().traces; }
-
-    static Trace& getTrace(std::string name) { 
-        if(instance().traces.contains(name)){
-            return instance().traces[name]; 
-        }
-        throw std::runtime_error("trace does not exist!");
+inline void endTrace(std::string name) {
+    if(!traces.contains(name)) {
+        std::printf("! trying to end non existent trace : %s\n ", name.c_str());
+        return;
     }
+    traces[name].end = std::chrono::high_resolution_clock::now();
+    traces[name].updateDuration(samples);
+    scope--;
+}
 
-    static void setSamples(int s) { instance().samples = s; }
-    static int getSamples() { return instance().samples; }
+inline auto& getTraces() { return traces; }
 
-private:
-    Tracer() = default;
+inline const std::vector<std::string>& getOrder() { return order; }
 
-    int samples = 60;
-    std::unordered_map<std::string,Trace> traces;
-
-    static Tracer& instance() {
-        static Tracer t;
-        return t;
+inline Trace& getTrace(std::string name) { 
+    if(traces.contains(name)){
+        return traces[name]; 
     }
+    throw std::runtime_error("trace does not exist!");
+}
 
-};
+inline void setSamples(int s) { samples = s; }
+inline int getSamples() { return samples; }
+
+}

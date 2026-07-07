@@ -82,6 +82,7 @@ public:
     }
 
     void record(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
+        tracing::startTrace("ssao pass");
         if(!features.ssao.enabled)
             return;
 
@@ -121,6 +122,6 @@ public:
 
         // Transition resolved depth back
         bindless.resourceManager->transitionImageLayout(&cmd, *depthResolveTex.image, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
-
+        tracing::endTrace("ssao pass");
     }
 };

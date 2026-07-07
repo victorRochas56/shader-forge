@@ -40,6 +40,7 @@
 // Forward declarations — full definitions only needed in renderer.cpp
 struct GLFWwindow;
 struct PipelineBase;
+struct ComputePipelineBase;
 
 /*
 main rendering engine holds the state of the scene, nodes, meshes, lights, materials etc...
@@ -77,6 +78,8 @@ class Renderer {
     uint32_t                            depthPipelineIndex;
     uint32_t                            billboardPipelineIndex;
     uint32_t                            tonemapPipelineIndex = 0xFFFFFFFF;
+
+    uint32_t                            testComputePipelineIndex = 0xFFFFFFFF;
 
     // Auto-exposure (metering + eye adaptation)
     uint32_t                            lumExtractPipelineIndex = 0xFFFFFFFF;
@@ -222,6 +225,7 @@ class Renderer {
 
     void setFullscreenViewport(vk::raii::CommandBuffer& cmd, vk::Extent2D extent);
     void bindPipeline(vk::raii::CommandBuffer& cmd, PipelineBase& pipeline);
+    void bindComputePipeline(vk::raii::CommandBuffer& cmd, ComputePipelineBase& pipeline);
 
     template <typename T>
     void drawFullscreenPass(vk::raii::CommandBuffer& cmd, PipelineBase& pipeline,

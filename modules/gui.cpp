@@ -784,9 +784,18 @@ void showDebugWindow(uint32_t culledCount, float& cullFovScale){
 
 void showTraces() {
     ImGui::Begin("CPU Timing");
-    auto& traces = Tracer::getTraces();
-    for(auto& trace : traces){
-        ImGui::Text((trace.first+" : "+std::to_string(trace.second.averageDuration.count() * 1000.0)+" ms").c_str());
+    auto& traces = tracing::getTraces();
+    for(auto& name : tracing::getOrder()){
+        auto& trace = traces[name];
+    // color each scope with a distinct hue via the golden-ratio sequence
+        float hue = fmodf(static_cast<float>(trace.scope) * 0.61803398875f, 1.0f);
+        float r, g, b;
+        ImGui::ColorConvertHSVtoRGB(hue, 0.6f, 0.95f, r, g, b);
+        ImGui::PushStyleColor(ImGuiCol_Text,{r,g,b,1});
+    // indent 2 spaces per scope level
+        std::string indent(trace.scope * 2, ' ');  
+        ImGui::Text((indent + name + " : " + std::to_string(trace.averageDuration.count() * 1000.0) + " ms").c_str());
+        ImGui::PopStyleColor();
     }
     ImGui::End();
 };

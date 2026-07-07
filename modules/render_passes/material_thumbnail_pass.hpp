@@ -70,6 +70,8 @@ public:
     }
 
     void record(vk::raii::CommandBuffer& cmd, uint32_t) override {
+
+        tracing::startTrace("material thumb pass");
         auto& materials = scene.getMaterials();
         if (materials.empty()) return;
         uint32_t count = std::min<uint32_t>(static_cast<uint32_t>(materials.size()), MAX_MATS);
@@ -195,6 +197,7 @@ public:
             cmd.endRendering();
 
             bindless.resourceManager->transitionImageLayout(&cmd, targetImage, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+            tracing::endTrace("material thumb pass");
         }
     }
 

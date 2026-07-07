@@ -42,6 +42,7 @@ public:
     }
 
     void record(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
+        tracing::startTrace("volumetric pass");
         if(!features.volumetrics.enabled)
             return;
 
@@ -74,5 +75,7 @@ public:
                                 .volumetricTextureIndex = textureIndex,
                                 .samplerIndex = shared.defaultSamplerIndex
                         }, vk::AttachmentLoadOp::eLoad);
+
+        tracing::endTrace("volumetric pass");
     }
 };

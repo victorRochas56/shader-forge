@@ -43,6 +43,7 @@ public:
     }
 
     void record(vk::raii::CommandBuffer& cmd, uint32_t /*imageIndex*/) override {
+        tracing::startTrace("mesh thumb pass");
         uint32_t budget = MAX_PER_FRAME;
         for (Mesh& mesh : scene.assetManager.meshes) {
             if (mesh.freed || !mesh.thumbnailDirty) continue;
@@ -55,6 +56,7 @@ public:
             mesh.thumbnailDirty = false;
             if (--budget == 0) break;
         }
+        tracing::endTrace("mesh thumb pass");
     }
 
 private:

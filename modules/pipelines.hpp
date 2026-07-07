@@ -68,16 +68,16 @@ template <typename T> struct Pipeline : public PipelineBase {
 };
 
 struct ComputePipelineBase {
-    ComputePipelineBase() = default;
-    virtual ~ComputePipelineBase() = default;
-};
-
-template <typename T> struct ComputePipeline : public ComputePipelineBase {
     vk::raii::Pipeline pipeline = nullptr;
     vk::raii::PipelineLayout layout = nullptr;
     vk::raii::DescriptorSet* descriptorSet = nullptr;
     vk::raii::DescriptorSetLayout* descriptorSetLayout = nullptr;
     std::string shaderPath;
+    ComputePipelineBase() = default;
+    virtual ~ComputePipelineBase() = default;
+};
+
+template <typename T> struct ComputePipeline : public ComputePipelineBase {
     T pushConstantData;
 
     void pushConstants(vk::raii::CommandBuffer& cmd) {
@@ -136,6 +136,7 @@ class PipelineManager {
     std::vector<std::unique_ptr<PipelineBase>>& getBeforeGeoPipelines() { return beforeGeometryPipelines; }
     std::vector<std::unique_ptr<PipelineBase>>& getGeoPipelines() { return geometryPipelines; }
     std::vector<std::unique_ptr<PipelineBase>>& getPostProcessPipelines() { return postProcessPipelines; }
+    std::vector<std::unique_ptr<ComputePipelineBase>>& getComputePipelines() { return computePipelines; }
 
   private:
     Device& device;
@@ -560,6 +561,7 @@ class PipelineManager {
         }
     }
 
+public:
     template <typename T>
     uint32_t createComputePipeline(std::string shaderPath, vk::raii::DescriptorSetLayout& setLayout, vk::raii::DescriptorSet& descriptorSet) {
         ensureSpvUpToDate(shaderPath); // build .spv from .slang like the graphics path (pipelines.hpp:189)
@@ -568,14 +570,13 @@ class PipelineManager {
         vk::PushConstantRange pc{vk::ShaderStageFlagBits::eCompute, 0, sizeof(T)};
         vk::PipelineLayoutCreateInfo layoutInfo{
             .setLayoutCount = 1, .pSetLayouts = &*setLayout, .pushConstantRangeCount = 1, .pPushConstantRanges = &pc};
-        vk::PipelineLayout layout = vk::raii::PipelineLayout(device.getDevice(), layoutInfo);
-        vk::ComputePipelineCreateInfo info{.stage = stage, .layout = *layout};
 
         std::unique_ptr<ComputePipeline<T>> pipeline = std::make_unique<ComputePipeline<T>>();
+        pipeline->layout = vk::raii::PipelineLayout(device.getDevice(), layoutInfo);
+        pipeline->descriptorSet = &descriptorSet;
+        pipeline->descriptorSetLayout = &setLayout;
+        vk::ComputePipelineCreateInfo info{.stage = stage, .layout = pipeline->layout};
         pipeline->pipeline = vk::raii::Pipeline(device.getDevice(), nullptr, info);
-        pipeline->layout = layout;
-        pipeline->descriptorSet = descriptorSet;
-        pipeline->descriptorSetLayout = setLayout;
 
         computePipelines.push_back(std::move(pipeline));
         return computePipelines.size();

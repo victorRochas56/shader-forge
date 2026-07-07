@@ -196,6 +196,12 @@ struct ExposureAdaptPushConstants {
     uint32_t padding;
 };
 
+struct ComputeTestPushConstants {
+    uint32_t pc;
+    float dt;
+    uint32_t padding[2];
+};
+
 struct ShadowPushConstants {
     uint64_t positionBufferAddress;         // 8
     uint64_t shadowInstanceDataAddress;     // 8  (pre-offset to current face's block)

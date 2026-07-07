@@ -226,7 +226,7 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     };
 
     litPipelineIndex = addLitShader("shaders/lit.spv");
-    litPipelineIndex = addLitShader("shaders/water.spv");
+    addLitShader("shaders/water.spv");
 
     // lit-derived variants are added declaratively here, e.g.:
     // addLitShader("shaders/lit_toon.spv");
@@ -258,6 +258,9 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
         bindless.pipelineManager->createPipeline<ExposureAdaptPushConstants>(PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
                                                                vk::False, "shaders/exposure_adapt.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
                                                                vk::Format::eR16Sfloat);
+
+                                                               
+    testComputePipelineIndex = bindless.pipelineManager->createComputePipeline<ComputeTestPushConstants>("shaders/compute.spv",bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet());
 
     /**
      * post process pipelines added declaratively are added here?
@@ -304,10 +307,10 @@ void Renderer::drawFrame() {
     #if TRACY_ENABLE
     ZoneScoped; // Tracy CPU zone for the whole frame
     #endif
-    Tracer::startTrace("draw frame");
-    Tracer::startTrace("wait for fences");
+    tracing::startTrace("draw frame");
+    tracing::startTrace("wait for fences");
     gpu.getDevice().getDevice().waitForFences(*gpu.getInFlightFence(gpu.currentFrame), vk::True, UINT64_MAX);
-    Tracer::endTrace("wait for fences");
+    tracing::endTrace("wait for fences");
 
     // This slot's prior submission has retired — safe to destroy any textures it referenced.
     bindless.descriptorSet->processDeferredTextureFrees();
@@ -323,9 +326,9 @@ void Renderer::drawFrame() {
         }
     }
 
-    Tracer::startTrace("acquire next image");
+    tracing::startTrace("acquire next image");
     auto [result, imageIndex] = gpu.getSwapchain().getSwapChain().acquireNextImage(UINT64_MAX, *gpu.getPresentCompleteSemaphore(gpu.currentFrame), nullptr);
-    Tracer::endTrace("acquire next image");
+    tracing::endTrace("acquire next image");
 
     if (result == vk::Result::eErrorOutOfDateKHR) {
         gpu.recreateSwapchain();
@@ -335,19 +338,19 @@ void Renderer::drawFrame() {
     if (result != vk::Result::eSuccess && result != vk::Result::eSuboptimalKHR) {
         throw std::runtime_error("failed to acquire swap chain image!");
     }
-    Tracer::startTrace("wait image in flight");
+    tracing::startTrace("wait image in flight");
     if (gpu.getImagesInFlight()[imageIndex] != VK_NULL_HANDLE) {
         vk::Result waitResult = gpu.getDevice().getDevice().waitForFences(gpu.getImagesInFlight()[imageIndex], vk::True, UINT64_MAX);
         if (waitResult != vk::Result::eSuccess) {
             throw std::runtime_error("failed to wait for image fence!");
         }
     }
-    Tracer::endTrace("wait image in flight");
+    tracing::endTrace("wait image in flight");
 
-    Tracer::startTrace("reset fences");
+    tracing::startTrace("reset fences");
     gpu.getImagesInFlight()[imageIndex] = *gpu.getInFlightFence(gpu.currentFrame);
     gpu.getDevice().getDevice().resetFences(*gpu.getInFlightFence(gpu.currentFrame));
-    Tracer::endTrace("reset fences");
+    tracing::endTrace("reset fences");
 
     for (auto& [id, light] : scene.lights) {
         glm::vec3 lightDir = scene.sceneGraph.getNode(light.nodeIndex).forward();
@@ -373,12 +376,12 @@ void Renderer::drawFrame() {
             light.gpuDirtyFrames--;
         }
     }
-    Tracer::startTrace("record command buffer");
+    tracing::startTrace("record command buffer");
     gpu.getCommandBuffer(gpu.currentFrame).reset();
     recordCommandBuffer(imageIndex);
-    Tracer::endTrace("record command buffer");
+    tracing::endTrace("record command buffer");
 
-    Tracer::startTrace("submit & present");
+    tracing::startTrace("submit & present");
     vk::PipelineStageFlags waitDestinationStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput);
     const vk::SubmitInfo submitInfo{.waitSemaphoreCount = 1,
                                     .pWaitSemaphores = &*gpu.getPresentCompleteSemaphore(gpu.currentFrame),
@@ -409,12 +412,12 @@ void Renderer::drawFrame() {
     } else if (result != vk::Result::eSuccess) {
         throw std::runtime_error("failed to present swap chain image!");
     }
-    Tracer::endTrace("submit & present");
+    tracing::endTrace("submit & present");
     
     gpu.currentFrame = (gpu.currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
     gpu.totalFrames++;
     bindless.pipelineManager->checkForShaderUpdates(); // TODO enable this
-    Tracer::endTrace("draw frame");
+    tracing::endTrace("draw frame");
     #if TRACY_ENABLE
     FrameMark; // Tracy frame boundary
     #endif
@@ -675,7 +678,7 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
     auto& cmd = gpu.getCommandBuffer(gpu.currentFrame);
     cmd.begin({});
 
-    Tracer::startTrace("record shadow pass");
+    tracing::startTrace("record shadow pass");
     
     bindless.resourceManager->transitionImageLayout(&cmd, *bindless.descriptorSet->getTextureResource(scene.shadowAtlas.textureIndex).image, vk::ImageLayout::eDepthReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
     uint32_t shadowSlot = 0;
@@ -693,34 +696,36 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
     }
     bindless.resourceManager->transitionImageLayout(&cmd, *bindless.descriptorSet->getTextureResource(scene.shadowAtlas.textureIndex).image, vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eDepthReadOnlyOptimal);
 
-    Tracer::endTrace("record shadow pass");
+    tracing::endTrace("record shadow pass");
 
-    Tracer::startTrace("record geo pass");
+    //bindPipeline(&cmd,)
+
+    tracing::startTrace("record geo pass");
     recordGeometryPass(cmd, imageIndex);
-    Tracer::endTrace("record geo pass");
+    tracing::endTrace("record geo pass");
 
     recordResolveToCompositeCopy(cmd);
 
-    Tracer::startTrace("record passes");
+    tracing::startTrace("record passes");
     for(auto& pass : passes) {
         pass.second->record(cmd, imageIndex);
     }
-    Tracer::endTrace("record passes");
+    tracing::endTrace("record passes");
 
     recordBillboardBlendPass(cmd, imageIndex);
 
-    Tracer::startTrace("record SDF pass");
+    tracing::startTrace("record SDF pass");
     if(sdfPipelineIndex != 0xFFFFFFFF)
         recordSDFPass(cmd, imageIndex);
-    Tracer::endTrace("record SDF pass");
+    tracing::endTrace("record SDF pass");
 
     // Tonemap HDR composite -> swapchain. Scene passes above run in HDR; UI passes below run in LDR.
     recordTonemapPass(cmd, imageIndex);
 
-    Tracer::startTrace("record image vis pass");
+    tracing::startTrace("record image vis pass");
     if (features.imageVis.imageIndex != 0xFFFFFFFF)
         recordImageVisPass(cmd, imageIndex);
-    Tracer::endTrace("record image vis pass");
+    tracing::endTrace("record image vis pass");
 
     recordOverlayPass(cmd, imageIndex);
 
@@ -1537,6 +1542,11 @@ void Renderer::setFullscreenViewport(vk::raii::CommandBuffer& cmd, vk::Extent2D 
 void Renderer::bindPipeline(vk::raii::CommandBuffer& cmd, PipelineBase& pipeline) {
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline.pipeline);
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipeline.layout, 0, {**pipeline.descriptorSet}, {});
+}
+
+void Renderer::bindComputePipeline(vk::raii::CommandBuffer& cmd, ComputePipelineBase& pipeline) {
+    cmd.bindPipeline(vk::PipelineBindPoint::eCompute, pipeline.pipeline);
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, pipeline.layout, 0, {**pipeline.descriptorSet}, {});
 }
 
 template <typename T>
