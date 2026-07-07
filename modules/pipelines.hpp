@@ -579,7 +579,7 @@ public:
         pipeline->pipeline = vk::raii::Pipeline(device.getDevice(), nullptr, info);
 
         computePipelines.push_back(std::move(pipeline));
-        return computePipelines.size();
+        return computePipelines.size() - 1; // 0-based index, matching the graphics path
     }
 };
 

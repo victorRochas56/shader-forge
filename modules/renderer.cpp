@@ -416,7 +416,9 @@ void Renderer::drawFrame() {
     
     gpu.currentFrame = (gpu.currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
     gpu.totalFrames++;
-    bindless.pipelineManager->checkForShaderUpdates(); // TODO enable this
+    if(gpu.totalFrames % 60 == 0) {
+        bindless.pipelineManager->checkForShaderUpdates();
+    }
     tracing::endTrace("draw frame");
     #if TRACY_ENABLE
     FrameMark; // Tracy frame boundary
@@ -698,7 +700,16 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
 
     tracing::endTrace("record shadow pass");
 
-    //bindPipeline(&cmd,)
+    tracing::startTrace("record compute test");
+    {
+        auto& computePipeline = static_cast<ComputePipeline<ComputeTestPushConstants>&>(
+            *bindless.pipelineManager->getComputePipelines()[testComputePipelineIndex]);
+        computePipeline.pushConstantData = {.pc = imageIndex, .dt = 0.0f};
+        bindComputePipeline(cmd, computePipeline);
+        computePipeline.pushConstants(cmd);
+        cmd.dispatch(1, 1, 1);
+    }
+    tracing::endTrace("record compute test");
 
     tracing::startTrace("record geo pass");
     recordGeometryPass(cmd, imageIndex);
