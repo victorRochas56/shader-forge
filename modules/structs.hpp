@@ -197,9 +197,15 @@ struct ExposureAdaptPushConstants {
 };
 
 struct ComputeTestPushConstants {
-    uint32_t pc;
-    float dt;
-    uint32_t padding[2];
+    uint32_t outputImageIndex;  // storage-image descriptor index the compute shader writes to
+    uint32_t width;
+    uint32_t height;
+    float time;
+};
+
+struct ComputePresentPushConstants {
+    uint32_t textureIndex;      // sampled view of the compute output
+    uint32_t samplerIndex;
 };
 
 struct ShadowPushConstants {

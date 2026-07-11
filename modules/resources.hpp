@@ -549,6 +549,24 @@ class ResourceManager {
             barrier.dstStageMask = vk::PipelineStageFlagBits2::eTransfer;
         }
 
+        // Sampled read (last frame's present) -> compute storage write. Used for compute output images.
+        else if (oldLayout == vk::ImageLayout::eShaderReadOnlyOptimal && newLayout == vk::ImageLayout::eGeneral) {
+            barrier.srcAccessMask = vk::AccessFlagBits2::eShaderRead;
+            barrier.dstAccessMask = vk::AccessFlagBits2::eShaderStorageWrite;
+            barrier.srcStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+            barrier.dstStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+            barrier.subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1};
+        }
+
+        // Compute storage write -> fragment sampled read. Used after a compute output dispatch.
+        else if (oldLayout == vk::ImageLayout::eGeneral && newLayout == vk::ImageLayout::eShaderReadOnlyOptimal) {
+            barrier.srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite;
+            barrier.dstAccessMask = vk::AccessFlagBits2::eShaderRead;
+            barrier.srcStageMask = vk::PipelineStageFlagBits2::eComputeShader;
+            barrier.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+            barrier.subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1};
+        }
+
         else {
             throw std::invalid_argument("unsupported layout transition!");
         }

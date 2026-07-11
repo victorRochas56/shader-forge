@@ -80,6 +80,11 @@ class Renderer {
     uint32_t                            tonemapPipelineIndex = 0xFFFFFFFF;
 
     uint32_t                            testComputePipelineIndex = 0xFFFFFFFF;
+    uint32_t                            computePresentPipelineIndex = 0xFFFFFFFF; // blits compute output to swapchain
+    uint32_t                            computeOutputTextureIndex = 0xFFFFFFFF;   // sampled slot (present reads)
+    uint32_t                            computeOutputStorageIndex = 0xFFFFFFFF;   // storage slot (compute writes)
+    uint32_t                            computeOutputWidth = 0;
+    uint32_t                            computeOutputHeight = 0;
 
     // Auto-exposure (metering + eye adaptation)
     uint32_t                            lumExtractPipelineIndex = 0xFFFFFFFF;
@@ -195,6 +200,7 @@ class Renderer {
     void createMotionVectorResources(uint32_t width, uint32_t height);
     void createHiZResources(uint32_t width, uint32_t height);
     void createSDFResources(uint32_t width, uint32_t height);
+    void createComputeOutputResources(uint32_t width, uint32_t height);
 #pragma endregion
 
 
@@ -217,6 +223,7 @@ class Renderer {
     void recordImageVisPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex);
     void recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light, uint32_t shadowSlot);
     void recordSDFPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex);
+    void recordComputePresentPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex);
 
     void createOrResizeRenderTarget(uint32_t& index, uint32_t width, uint32_t height,
                                      vk::Format format, const char* debugName,

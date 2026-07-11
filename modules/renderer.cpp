@@ -142,6 +142,7 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     createColorResolveResources(startWidth, startHeight);
     createHiZResources(startWidth, startHeight);
     createSDFResources(startWidth,startHeight);
+    createComputeOutputResources(startWidth, startHeight);
 
     for(auto& pass : passes) {
         pass.second->init(startWidth, startHeight);
@@ -261,6 +262,12 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
 
                                                                
     testComputePipelineIndex = bindless.pipelineManager->createComputePipeline<ComputeTestPushConstants>("shaders/compute.spv",bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet());
+
+    // Blits the compute output image onto the swapchain (Option B present stage).
+    computePresentPipelineIndex =
+        bindless.pipelineManager->createPipeline<ComputePresentPushConstants>(PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
+                                                               vk::False, "shaders/compute_present.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
+                                                               gpu.getSwapchain().getSwapChainImageFormat());
 
     /**
      * post process pipelines added declaratively are added here?
@@ -451,6 +458,7 @@ void Renderer::handleSwapchainResize() {
         createColorResolveResources(width, height);
         createHiZResources(width, height);
         createSDFResources(width, height);
+        createComputeOutputResources(width, height);
 
         for(auto& pass : passes) {
             pass.second->init(width,height);
@@ -674,6 +682,26 @@ void Renderer::createSDFResources(uint32_t width, uint32_t height) {
     }
 }
 
+// Compute output image for the Option-B test: the compute shader writes it as a storage image (binding 4),
+// then recordComputePresentPass samples it (binding 0) onto the swapchain. Registered under both bindings.
+// UNORM (not SRGB) because storage images bypass sRGB encode — the shader writes plain [0,1] values.
+void Renderer::createComputeOutputResources(uint32_t width, uint32_t height) {
+    // Recycle the old storage slot (device is idle here — resize/init only).
+    bindless.descriptorSet->freeStorageImage(computeOutputStorageIndex);
+
+    // createOrResizeRenderTarget makes the image Storage+Sampled and registers the sampled slot,
+    // leaving it in eShaderReadOnlyOptimal. It owns the image/memory/view.
+    createOrResizeRenderTarget(computeOutputTextureIndex, width, height, vk::Format::eR8G8B8A8Unorm,
+                               "internal/compute_output", vk::ImageUsageFlagBits::eStorage);
+
+    // Register the same view as a storage-image descriptor for the compute shader to write.
+    vk::ImageView view = *bindless.descriptorSet->getTextureResource(computeOutputTextureIndex).imageView.value();
+    computeOutputStorageIndex = bindless.descriptorSet->allocateStorageImage(view);
+
+    computeOutputWidth = width;
+    computeOutputHeight = height;
+}
+
 /////=================================================RENDERING=================================================/////
 
 void Renderer::recordCommandBuffer(uint32_t imageIndex) {
@@ -701,13 +729,26 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
     tracing::endTrace("record shadow pass");
 
     tracing::startTrace("record compute test");
-    {
+    if (testComputePipelineIndex != 0xFFFFFFFF && computeOutputStorageIndex != 0xFFFFFFFF) {
+        auto& outputImage = *bindless.descriptorSet->getTextureResource(computeOutputTextureIndex).image;
+
+        // Storage writes require eGeneral; the image is left in eShaderReadOnlyOptimal by the present pass / creation.
+        bindless.resourceManager->transitionImageLayout(&cmd, outputImage,
+            vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eGeneral);
+
         auto& computePipeline = static_cast<ComputePipeline<ComputeTestPushConstants>&>(
             *bindless.pipelineManager->getComputePipelines()[testComputePipelineIndex]);
-        computePipeline.pushConstantData = {.pc = imageIndex, .dt = 0.0f};
+        computePipeline.pushConstantData = {.outputImageIndex = computeOutputStorageIndex,
+                                            .width = computeOutputWidth,
+                                            .height = computeOutputHeight,
+                                            .time = gpu.time};
         bindComputePipeline(cmd, computePipeline);
         computePipeline.pushConstants(cmd);
-        cmd.dispatch(1, 1, 1);
+        cmd.dispatch((computeOutputWidth + 7) / 8, (computeOutputHeight + 7) / 8, 1);
+
+        // Make the result sampleable for the present pass.
+        bindless.resourceManager->transitionImageLayout(&cmd, outputImage,
+            vk::ImageLayout::eGeneral, vk::ImageLayout::eShaderReadOnlyOptimal);
     }
     tracing::endTrace("record compute test");
 
@@ -732,6 +773,12 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
 
     // Tonemap HDR composite -> swapchain. Scene passes above run in HDR; UI passes below run in LDR.
     recordTonemapPass(cmd, imageIndex);
+
+    // Option-B compute test: blit the compute output over the swapchain. This overwrites the tonemapped
+    // scene (it's a full-screen test); GUI/overlay below still draws on top. Remove this call to hide it.
+    tracing::startTrace("record compute present");
+    recordComputePresentPass(cmd, imageIndex);
+    tracing::endTrace("record compute present");
 
     tracing::startTrace("record image vis pass");
     if (features.imageVis.imageIndex != 0xFFFFFFFF)
@@ -1295,6 +1342,19 @@ void Renderer::recordTonemapPass(vk::raii::CommandBuffer& cmd, uint32_t imageInd
             .minEV = features.tonemap.minEV,
             .maxEV = features.tonemap.maxEV,
         });
+}
+
+void Renderer::recordComputePresentPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
+    if (computePresentPipelineIndex == 0xFFFFFFFF || computeOutputTextureIndex == 0xFFFFFFFF)
+        return;
+
+    auto extent = gpu.getSwapchain().getSwapChainExtent();
+    // Compute output is already in eShaderReadOnlyOptimal from the dispatch's trailing transition.
+    drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[computePresentPipelineIndex],
+        *gpu.getSwapchain().getSwapChainImageViews()[imageIndex], extent,
+        ComputePresentPushConstants{.textureIndex = computeOutputTextureIndex,
+                                    .samplerIndex = passResources.defaultSamplerIndex},
+        vk::AttachmentLoadOp::eLoad);
 }
 
 void Renderer::recordOverlayPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {

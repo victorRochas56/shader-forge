@@ -17,6 +17,7 @@ constexpr uint32_t MAX_GIZMO_LINES = 1024 * 1024; //100mb of gizmo buffer
 constexpr uint32_t MAX_TEXTURES = 2048;
 constexpr uint32_t MAX_CUBEMAPS = 2048;
 constexpr uint32_t MAX_SAMPLERS = 2048;
+constexpr uint32_t MAX_STORAGE_IMAGES = 256; // compute-writable images (RWTexture2D)
 
 constexpr uint32_t MAX_FIXED_BUFFER = 2048;
 constexpr uint32_t MAX_VARIABLE_BUFFER = 2048;

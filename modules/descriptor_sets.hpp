@@ -257,6 +257,18 @@ class DescriptorSet {
         shadowCompareSamplerBindingIndex = bindingIndex;
         bindingIndex++;
 
+        // storage images (compute-writable RWTexture2D). No UpdateAfterBind flag: the device doesn't
+        // enable descriptorBindingStorageImageUpdateAfterBind, so these are only written while the set
+        // isn't bound to a pending command buffer (i.e. at resource-create/resize time, device idle).
+        layoutBindings.push_back(vk::DescriptorSetLayoutBinding{.binding = bindingIndex,
+                                                                .descriptorType = vk::DescriptorType::eStorageImage,
+                                                                .descriptorCount = MAX_STORAGE_IMAGES,
+                                                                .stageFlags = vk::ShaderStageFlagBits::eCompute});
+        poolSizes.push_back(vk::DescriptorPoolSize(vk::DescriptorType::eStorageImage, MAX_STORAGE_IMAGES));
+        bindingFlags.push_back(vk::DescriptorBindingFlagBits::ePartiallyBound);
+        storageImageBindingIndex = bindingIndex;
+        bindingIndex++;
+
         // Storage buffers are now accessed via Buffer Device Address (BDA) — no descriptor bindings needed
 
         vk::DescriptorPoolCreateInfo poolInfo{};
@@ -356,6 +368,36 @@ class DescriptorSet {
     }
 
     uint32_t getTextureMipLevels(uint32_t index) const { return textureResources[index].mipLevels; }
+
+    // Registers an existing image view as a compute-writable storage image, returns its binding index.
+    // The view/image lifetime is owned elsewhere (e.g. a texture slot) — this only writes the descriptor.
+    // The image must be in vk::ImageLayout::eGeneral when accessed by the shader.
+    uint32_t allocateStorageImage(vk::ImageView view) {
+        uint32_t index;
+        if (!freeStorageImageSlots.empty()) {
+            index = freeStorageImageSlots.front();
+            freeStorageImageSlots.pop();
+        } else {
+            if (storageImageCount >= MAX_STORAGE_IMAGES) {
+                throw std::runtime_error("Maximum storage images exceeded");
+            }
+            index = storageImageCount++;
+        }
+        vk::DescriptorImageInfo imageInfo{.imageView = view, .imageLayout = vk::ImageLayout::eGeneral};
+        vk::WriteDescriptorSet write{.dstSet = *descriptorSet,
+                                     .dstBinding = storageImageBindingIndex,
+                                     .dstArrayElement = index,
+                                     .descriptorCount = 1,
+                                     .descriptorType = vk::DescriptorType::eStorageImage,
+                                     .pImageInfo = &imageInfo};
+        device.getDevice().updateDescriptorSets(write, {});
+        return index;
+    }
+
+    // Recycle a storage-image slot. Only safe when no in-flight frame references it (call at device idle).
+    void freeStorageImage(uint32_t index) {
+        if (index != 0xFFFFFFFF) freeStorageImageSlots.push(index);
+    }
 
     //ensure no in-flight command buffers are using this texture when calling this
     // Defer destruction: the slot may still be read by frames in flight (e.g. an ImGui thumbnail
@@ -706,6 +748,9 @@ class DescriptorSet {
     std::vector<TextureResource> textureResources;
     uint32_t textureBindingIndex;
     uint32_t cubemapBindingIndex;
+    uint32_t storageImageBindingIndex;
+    uint32_t storageImageCount = 0;
+    std::queue<uint32_t> freeStorageImageSlots;
     std::queue<uint32_t> freeTextureSlots;
     struct PendingTextureFree { uint32_t index; uint32_t framesRemaining; };
     std::vector<PendingTextureFree> pendingTextureFrees;  // slots awaiting safe destruction
