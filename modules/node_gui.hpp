@@ -19,10 +19,11 @@ struct NodeGuiState {
 
 NodeGuiState& getNodeGuiState(uint32_t nodeIndex);
 
-void showNodeInfo(Node& node, Scene& scene, BindlessSystem& bindless, uint32_t lightBufferIndex, uint32_t volumeBufferIndex);
+void showNodeInfo(Node& node, Scene& scene, BindlessSystem& bindless, uint32_t lightBufferIndex, uint32_t particleBufferIndex);
 void showNodeMeshInfo(Node& node, Scene& scene);
 void showNodeMaterialDialog(Node& node, Scene& scene);
 void showNodeLightInfo(Node& node, Scene& scene, BindlessSystem& bindless, uint32_t lightBufferIndex);
-void showNodeVolumeInfo(Node& node, Scene& scene, BindlessSystem& bindless, uint32_t volumeBufferIndex);
+void showNodeVolumeInfo(Node& node, Scene& scene);
+void showNodeEmitterInfo(Node& node, Scene& scene, BindlessSystem& bindless, uint32_t particleBufferIndex);
 void showNodeTransformInfo(Node& node, Scene& scene);
 

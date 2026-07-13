@@ -104,6 +104,7 @@ class Renderer {
     uint32_t                            indexBufferIndex;
     uint32_t                            positionBufferIndex;
     uint32_t                            billboardBufferIndex;
+    uint32_t                            particleBufferIndex;
     uint32_t                            shadowInstanceDataBufferIndex;
     uint32_t                            shadowMeshDrawDataBufferIndex;
     uint32_t                            litInstanceDataBufferIndex;
@@ -176,7 +177,7 @@ class Renderer {
 #pragma region GET/SET
     uint32_t getModelMatrixBufferIndex();
     uint32_t getLightBufferIndex();
-    uint32_t getVolumeBufferIndex();
+    uint32_t getParticleBufferIndex();
 
     void clearLights();
     void clearVolumes();

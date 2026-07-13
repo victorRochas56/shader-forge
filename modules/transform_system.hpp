@@ -30,15 +30,21 @@ namespace TransformSystem {
         }
     }
 
-    // Sync a node's world transform to GPU buffers, update light direction, and recompute bounding box
-    template<typename MeshArray>
-    void syncToGPU(Node& node, std::vector<Node>& nodes, DescriptorSet& ds, uint32_t modelMatrixBufferIndex,
-                   const MeshArray& meshes, std::unordered_map<uint32_t, Light>& lights) {
-        // Update model matrix for all frames
+    // Write this node's world model-matrix into a single frame-in-flight slice. Called once per
+    // frame per dirty node by the fan-out uploader so each write targets a fence-idle slice.
+    inline void uploadModelMatrixSlice(Node& node, DescriptorSet& ds, uint32_t modelMatrixBufferIndex, uint32_t frame) {
         glm::mat4 offsetTransform = makeTransform(node.getWorldPosition(), node.getWorldRotation(), node.getWorldScale());
-        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-            ds.updateFixedBufferWithOffset(modelMatrixBufferIndex, node.modelMatrixIndices[i], offsetTransform, i);
-        }
+        ds.updateFixedBufferWithOffset(modelMatrixBufferIndex, node.modelMatrixIndices[frame], offsetTransform, frame);
+    }
+
+    // Recompute CPU-side derived state (bounding box, light direction/influence) and flag the
+    // model matrix dirty. The actual GPU write is fanned out one slice per frame by
+    // SceneGraph::uploadDirtyTransforms (each slice written post-fence), so we only schedule it here.
+    template<typename MeshArray>
+    void syncToGPU(Node& node, std::vector<Node>& nodes, const MeshArray& meshes, std::unordered_map<uint32_t, Light>& lights) {
+        // Schedule the model-matrix upload; uploadDirtyTransforms writes the current slice each
+        // frame until every frame-in-flight slice has the new value.
+        node.gpuDirtyFrames = MAX_FRAMES_IN_FLIGHT;
 
         // Update world-space bounding box if node has a mesh.
         // Done before light reconciliation so the new AABB is what gets tested.
@@ -75,17 +81,16 @@ namespace TransformSystem {
 
         uint32_t child = node.firstChild;
         while (child != 0) {
-            syncToGPU(nodes[child], nodes, ds, modelMatrixBufferIndex, meshes, lights);
+            syncToGPU(nodes[child], nodes, meshes, lights);
             child = nodes[child].nextSibling;
         }
     }
 
-    // Full update: recompute transforms then sync to GPU (replaces Node::update())
+    // Full update: recompute transforms then schedule the GPU sync (replaces Node::update())
     template<typename MeshArray>
-    void updateAll(Node& node, std::vector<Node>& nodes, DescriptorSet& ds, uint32_t modelMatrixBufferIndex,
-                   const MeshArray& meshes, std::unordered_map<uint32_t, Light>& lights) {
+    void updateAll(Node& node, std::vector<Node>& nodes, const MeshArray& meshes, std::unordered_map<uint32_t, Light>& lights) {
         recomputeTransforms(node, nodes);
-        syncToGPU(node, nodes, ds, modelMatrixBufferIndex, meshes, lights);
+        syncToGPU(node, nodes, meshes, lights);
     }
 
 }

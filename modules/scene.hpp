@@ -27,17 +27,20 @@ class Scene {
     Scene(const Scene&) = delete;
     Scene& operator=(const Scene&) = delete;
 
-    SceneGraph                 sceneGraph;
-    AssetManager               assetManager;
-    Camera                     activeCamera;
-    ShadowAtlas                shadowAtlas;
-    std::unordered_map<uint32_t, Light>  lights;
-    std::unordered_map<uint32_t, Volume> volumes;
-    std::unordered_map<uint32_t, Billboard> billboards;
-    std::vector<Material>      materials;
-    Shader                     fallbackLitShader;
-    uint32_t                   fallbackDefaultMaterialIndex = 0;
-    uint32_t                   skyboxIndex = 0;
+    SceneGraph                                      sceneGraph;
+    AssetManager                                    assetManager;
+    Camera                                          activeCamera;
+    ShadowAtlas                                     shadowAtlas;
+
+    std::unordered_map<uint32_t, Light>             lights;
+    std::unordered_map<uint32_t, ParticleEmitter>   particleEmitters;
+    std::unordered_map<uint32_t, Volume>            volumes;
+    std::unordered_map<uint32_t, Billboard>         billboards;
+    std::vector<Material>                           materials;
+    
+    Shader                                          fallbackLitShader;
+    uint32_t                                        fallbackDefaultMaterialIndex = 0;
+    uint32_t                                        skyboxIndex = 0;
 
     // Render list — derived index of (node, material, shader) tuples that the
     // renderer iterates each frame. Lives on Scene because every mutation
@@ -145,36 +148,14 @@ class Scene {
     }
 
     // --- volumes -------------------------------------------------------
+    // Streamed like billboards: keyed by owning node index, rebuilt into the volume buffer every
+    // frame by VolumetricsPass. No bindless slot lifecycle — add/remove are pure map operations.
     const std::unordered_map<uint32_t, Volume>& getVolumes() const { return volumes; }
     std::unordered_map<uint32_t, Volume>&       getVolumesMutable() { return volumes; }
-    // Same shape as addLight: allocates the bindless slot and stores the volume
-    // under the assigned index, which is returned to the caller.
-    uint32_t addVolume(BindlessSystem& bindless, uint32_t volumeBufferIndex, Volume volume) {
-        uint32_t idx = bindless.descriptorSet->allocateFixedBuffer<Volume>(volumeBufferIndex, volume);
-        volumes[idx] = volume;
-        return idx;
-    }
-    Volume&                                     getVolume(uint32_t index) { return volumes[index]; }
-
-    // Same rationale as getLightLoopBound — volumes share the sparse-slot model.
-    uint32_t getVolumeLoopBound() const {
-        return volumes.empty() ? 0u : volumes.size();
-    }
-
-    void clearVolumes(BindlessSystem& bindless, uint32_t volumeBufferIndex) {
-        bindless.descriptorSet->clearFixedBuffer(volumeBufferIndex);
-        volumes.clear();
-    }
-
-    void removeVolume(BindlessSystem& bindless, uint32_t volumeBufferIndex, uint32_t volumeIndex) {
-        // Same dead-slot trick as removeLight: density == 0 makes the shader skip.
-        Volume disabled{};
-        disabled.density = 0.0f;
-        disabled.radius = 0.0f;
-        bindless.descriptorSet->updateFixedBuffer<Volume>(volumeBufferIndex, volumeIndex, disabled);
-        bindless.descriptorSet->freeFixedBuffer(volumeBufferIndex,volumeIndex);
-        volumes.erase(volumeIndex);
-    }
+    void addVolume(uint32_t nodeIndex, Volume volume) { volumes[nodeIndex] = volume; }
+    Volume&                                     getVolume(uint32_t nodeIndex) { return volumes[nodeIndex]; }
+    void clearVolumes() { volumes.clear(); }
+    void removeVolume(uint32_t nodeIndex) { volumes.erase(nodeIndex); }
 
     const std::unordered_map<uint32_t, Billboard>& getBillboards() const { return billboards; }
     std::unordered_map<uint32_t, Billboard>&       getBillboardsMutable() { return billboards; }
@@ -183,6 +164,21 @@ class Scene {
     void removeBillboard(uint32_t index) { billboards.erase(index); }
     void clearBillboards() { billboards.clear(); }
 
+    uint32_t addEmitter(BindlessSystem& bindless, ParticleEmitter emitter,uint32_t particleBufferIndex) {
+        uint32_t idx = bindless.descriptorSet->allocateFixedBuffer<ParticleEmitter>(particleBufferIndex, emitter);
+        particleEmitters[idx] = emitter;
+        return idx;
+    }
+    void removeEmitter(BindlessSystem& bindless, uint32_t particleBufferIndex, uint32_t emitterIndex) {
+        // TODO probably need to clear up remaining particles ?
+        ParticleEmitter disabled{};
+        disabled.emissionRate = 0.0f;
+        for (uint32_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++) {
+            bindless.descriptorSet->updateFixedBufferWithOffset<ParticleEmitter>(particleBufferIndex, emitterIndex, disabled, frame);
+        }
+        bindless.descriptorSet->freeFixedBuffer(particleBufferIndex, emitterIndex);
+        particleEmitters.erase(emitterIndex);
+    }
     // --- render list ---------------------------------------------------
     void addMeshToShader(uint32_t nodeIndex, Shader shader, Material material) {
         uint32_t matIdx = 0;

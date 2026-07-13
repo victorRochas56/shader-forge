@@ -24,9 +24,8 @@ class SceneLoader {
     // at its own init(), so the loader doesn't need a renderer pointer.
     void clearScene(Scene& scene, BindlessSystem& bindless,
                     uint32_t modelMatrixBufferIndex,
-                    uint32_t lightBufferIndex,
-                    uint32_t volumeBufferIndex) {
-        clearSceneInternal(scene, bindless, modelMatrixBufferIndex, lightBufferIndex, volumeBufferIndex);
+                    uint32_t lightBufferIndex) {
+        clearSceneInternal(scene, bindless, modelMatrixBufferIndex, lightBufferIndex);
     }
 
     void saveScene(std::string filePath, Scene& scene) {
@@ -55,8 +54,7 @@ class SceneLoader {
 
     void loadScene(std::string filePath, Scene& scene, BindlessSystem& bindless,
                    uint32_t modelMatrixBufferIndex,
-                   uint32_t lightBufferIndex,
-                   uint32_t volumeBufferIndex) {
+                   uint32_t lightBufferIndex) {
         std::cout << "Loading scene from: " << filePath << std::endl;
 
         std::ifstream ifs(filePath);
@@ -66,7 +64,7 @@ class SceneLoader {
         }
 
         // Clear existing scene (except root node)
-        clearSceneInternal(scene, bindless, modelMatrixBufferIndex, lightBufferIndex, volumeBufferIndex);
+        clearSceneInternal(scene, bindless, modelMatrixBufferIndex, lightBufferIndex);
 
         // Maps to track loaded resources
         std::unordered_map<uint32_t, uint32_t> materialIDToIndex; // materialID -> material index in scene
@@ -78,7 +76,7 @@ class SceneLoader {
             if (line == "Materials {") {
                 parseMaterialsSection(ifs, scene, materialIDToIndex);
             } else if (line == "Node {") {
-                parseNode(ifs, scene, bindless, lightBufferIndex, volumeBufferIndex, SceneGraph::ROOT_INDEX, materialIDToIndex);
+                parseNode(ifs, scene, bindless, lightBufferIndex, SceneGraph::ROOT_INDEX, materialIDToIndex);
             }
         }
 
@@ -128,8 +126,7 @@ class SceneLoader {
 
     void clearSceneInternal(Scene& scene, BindlessSystem& bindless,
                             uint32_t modelMatrixBufferIndex,
-                            uint32_t lightBufferIndex,
-                            uint32_t volumeBufferIndex) {
+                            uint32_t lightBufferIndex) {
         // meshes and textures remain loaded in memory for reuse (TODO check on load for unused?)
         std::cout << "Clearing scene..." << std::endl;
 
@@ -160,7 +157,7 @@ class SceneLoader {
         scene.clearBillboards();
         scene.clearRenderList();
         scene.clearLights(bindless, lightBufferIndex);
-        scene.clearVolumes(bindless, volumeBufferIndex);
+        scene.clearVolumes();
         scene.sceneGraph.reset();
         std::cout << "Scene cleared successfully!" << std::endl;
     }
@@ -337,7 +334,7 @@ class SceneLoader {
     }
 
     void parseNode(std::ifstream& ifs, Scene& scene, BindlessSystem& bindless,
-                   uint32_t lightBufferIndex, uint32_t volumeBufferIndex,
+                   uint32_t lightBufferIndex,
                    uint32_t parentIndex, std::unordered_map<uint32_t, uint32_t>& materialIDToIndex) {
         std::string name = "Node";
         glm::vec3 position(0.0f);
@@ -452,8 +449,8 @@ class SceneLoader {
                 vol.density = std::stof(parts[0]);
                 vol.phase = std::stof(parts[1]);
                 vol.shape = static_cast<VolumeShape>(std::stoul(parts[2]));
-                auto centerParts = split(parts[3], ',');
-                vol.center = glm::vec3(std::stof(centerParts[0]),std::stof(centerParts[1]),std::stof(centerParts[2]));
+                // parts[3] is a legacy center token — volumes now derive center from their node at
+                // stream time, so it is parsed for format compatibility but discarded.
                 vol.radius = std::stof(parts[4]);
                 auto dimParts = split(parts[5], ',');
                 vol.dimensions = glm::vec3(std::stof(dimParts[0]),std::stof(dimParts[1]),std::stof(dimParts[2]));
@@ -512,14 +509,14 @@ class SceneLoader {
         // same for volume
         if (hasVolume) {
             Node& n = scene.sceneGraph.getNodes()[nodeIndex];
-            NodeOps::assignVolume(n, vol, scene, bindless, volumeBufferIndex);
+            NodeOps::assignVolume(n, vol, scene);
             std::cout << "Added volume to node: " << name << std::endl;
         }
 
         // Now parse child nodes recursively
         for (auto& pos : childNodePositions) {
             ifs.seekg(pos);
-            parseNode(ifs, scene, bindless, lightBufferIndex, volumeBufferIndex, nodeIndex, materialIDToIndex);
+            parseNode(ifs, scene, bindless, lightBufferIndex, nodeIndex, materialIDToIndex);
         }
     }
 
@@ -633,9 +630,11 @@ class SceneLoader {
             }
         }
 
-        if (node.volumeIndex != 0xFFFFFFFF) {
-            Volume& vol = scene.volumes[node.volumeIndex];
-            ofs << indent << " Volume : " << vol.density << ";" << vol.phase << ";" << static_cast<uint32_t>(vol.shape) << ";" << vol.center.x << "," << vol.center.y << "," << vol.center.z << ";" << vol.radius << ";" << vol.dimensions.x << "," << vol.dimensions.y << "," << vol.dimensions.z << std::endl;
+        if (scene.volumes.contains(node.nodeIndex)) {
+            Volume& vol = scene.volumes[node.nodeIndex];
+            // Center is derived from the node at stream time; write a 0,0,0 placeholder to keep the
+            // legacy token slot in the format (it is discarded on load).
+            ofs << indent << " Volume : " << vol.density << ";" << vol.phase << ";" << static_cast<uint32_t>(vol.shape) << ";" << "0,0,0" << ";" << vol.radius << ";" << vol.dimensions.x << "," << vol.dimensions.y << "," << vol.dimensions.z << std::endl;
         }
 
         // Write children

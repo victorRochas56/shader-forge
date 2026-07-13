@@ -181,7 +181,7 @@ class App {
         traverseNodeTree(scene.sceneGraph.getRootNode(), 0, scene.sceneGraph.selectedNode, scene.sceneGraph);
         ImGui::End();
         
-        showNodeInfo(scene.sceneGraph.getNodes()[scene.sceneGraph.selectedNode], scene, bindless, renderer.getLightBufferIndex(), renderer.getVolumeBufferIndex());
+        showNodeInfo(scene.sceneGraph.getNodes()[scene.sceneGraph.selectedNode], scene, bindless, renderer.getLightBufferIndex(), renderer.getParticleBufferIndex());
         if (InputManager::getInstance().contextMenuShown) {
             showActionMenu(0, gpu.getWindow(), scene.activeCamera, scene.sceneGraph, InputManager::getInstance().contextMenuPinX, InputManager::getInstance().contextMenuPinY);
         }

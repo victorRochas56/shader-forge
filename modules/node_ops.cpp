@@ -100,14 +100,19 @@ void assignLight(Node& node, Light light, Scene& scene, BindlessSystem& bindless
     node.transformDirty = true;
 }
 
-void assignVolume(Node& node, Volume volume, Scene& scene, BindlessSystem& bindless, uint32_t volumeBufferIndex) {
+void assignVolume(Node& node, Volume volume, Scene& scene) {
     volume.nodeIndex = node.nodeIndex;
-    node.volumeIndex = scene.addVolume(bindless, volumeBufferIndex, volume);
+    scene.addVolume(node.nodeIndex, volume);
 }
 
 void assignBillboard(Node& node, Billboard billboard, Scene& scene) {
     billboard.nodeIndex = node.nodeIndex;
     scene.addBillboard(node.nodeIndex,billboard);
+}
+
+void assignEmitter(Node& node, ParticleEmitter emitter, Scene& scene, BindlessSystem& bindless, uint32_t particleBufferIndex) {
+    emitter.nodeIndex = node.nodeIndex;
+    node.particleIndex = scene.addEmitter(bindless, emitter,particleBufferIndex);
 }
 
 }

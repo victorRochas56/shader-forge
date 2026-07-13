@@ -17,7 +17,10 @@ class VolumetricsPass : public RenderPass {
 public:
 
     VolumetricsPass(GpuContext& gpu, BindlessSystem& bindless, Scene& scene, RenderFeatures& features, RenderPassResources& shared) : RenderPass(gpu, bindless, scene, features, shared) {
-        shared.buffers.volumeBufferIndex = bindless.descriptorSet->createFixedBuffer<Volume>(MAX_FIXED_BUFFER, false, "Volume");
+        shared.buffers.volumeBufferIndex = bindless.descriptorSet->createFixedBuffer<GPUVolume>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true, "Volume");
+        for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            bindless.descriptorSet->setBufferFrameOffset(shared.buffers.volumeBufferIndex, i, MAX_FIXED_BUFFER * i);
+        }
     }
 
     void init(uint32_t width, uint32_t height) {
@@ -49,11 +52,24 @@ public:
         auto& volRes = bindless.descriptorSet->getTextureResource(textureIndex);
         vk::Extent2D extent = {volRes.width, volRes.height};
 
+        // Stream live volumes into this frame's slice (mirrors the billboard pass): rebuild the
+        // contiguous list every frame, pulling each volume's world center fresh from its node.
+        // This runs during command recording (post-fence), so the slice written is never in flight.
+        std::vector<GPUVolume> volumeWriteBuf;
+        volumeWriteBuf.reserve(scene.getVolumes().size());
+        for (const auto& [nodeIdx, vol] : scene.getVolumes()) {
+            if (!scene.sceneGraph.isNodeValid(nodeIdx)) continue;
+            volumeWriteBuf.push_back(vol.toGPU(scene.sceneGraph.getNode(nodeIdx).getWorldPosition()));
+        }
+        uint32_t volumeCount = static_cast<uint32_t>(volumeWriteBuf.size());
+        bindless.descriptorSet->writeFixedBuffer<GPUVolume>(shared.buffers.volumeBufferIndex, volumeWriteBuf.data(),
+                                                            volumeCount, gpu.currentFrame * MAX_FIXED_BUFFER, gpu.currentFrame);
+
         drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[pipelineIndex], *bindless.descriptorSet->getTextureResource(textureIndex).imageView,
                         extent,
                         VolumetricPushConstants {
                                 .lightsAddress = bindless.descriptorSet->getFixedBuffers()[shared.buffers.lightBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(GPULight),
-                                .volumeBufferAddress = bindless.descriptorSet->getFixedBuffers()[shared.buffers.volumeBufferIndex]->address /* + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(Volume)*/,
+                                .volumeBufferAddress = bindless.descriptorSet->getFixedBuffers()[shared.buffers.volumeBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(GPUVolume),
                                 .lightCount = scene.getLightLoopBound(),
                                 .shadowAtlasIndex = scene.shadowAtlas.textureIndex,
                                 .depthTextureIndex = gpu.getSwapchain().getDepthResolveIndex(),
@@ -61,7 +77,7 @@ public:
                                 .cameraPos = scene.activeCamera.position,
                                 .numSteps = static_cast<uint32_t>(features.volumetrics.numSteps),
                                 .cameraDir = scene.activeCamera.getLookDir(),
-                                .volumeCount = scene.getVolumeLoopBound(),
+                                .volumeCount = volumeCount,
                                 .screenSize = {extent.width, extent.height},
                                 .maxDist = features.volumetrics.maxDist,
                                 .invViewProjection = glm::inverse(scene.activeCamera.viewProjection)

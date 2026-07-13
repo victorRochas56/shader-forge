@@ -88,7 +88,7 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     passResources.indexBufferIndex  = indexBufferIndex;
 
     billboardBufferIndex   = bindless.descriptorSet->createFixedBuffer<GPUBillboard>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true, "Billboard");
-    sdfPassDataBufferIndex = bindless.descriptorSet->createFixedBuffer<SDF>(MAX_FIXED_BUFFER, false, "SDF");
+    sdfPassDataBufferIndex = bindless.descriptorSet->createFixedBuffer<SDF>(MAX_FIXED_BUFFER, true, "SDF");
 
 
     // these buffers store the data once per frame in flight since they are usually accessed every frame by the CPU
@@ -96,6 +96,7 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     shadowInstanceDataBufferIndex          = bindless.descriptorSet->createFixedBuffer<ShadowInstanceData>(MAX_FRAMES_IN_FLIGHT * MAX_SHADOW_CASTERS * MAX_FIXED_BUFFER, true, "ShadowInstanceData");
     shadowMeshDrawDataBufferIndex          = bindless.descriptorSet->createFixedBuffer<ShadowMeshDrawData>(MAX_FRAMES_IN_FLIGHT * MAX_SHADOW_CASTERS * MAX_FIXED_BUFFER, true, "ShadowMeshDrawData");
     passResources.buffers.lightBufferIndex = bindless.descriptorSet->createFixedBuffer<GPULight>(MAX_LIGHTS * MAX_FRAMES_IN_FLIGHT, true, "Light");
+    particleBufferIndex                    = bindless.descriptorSet->createFixedBuffer<ParticleEmitter>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true, "ParticleEmitters");
     litPassDataBufferIndex                 = bindless.descriptorSet->createFixedBuffer<LitPassData>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true, "LitPassData");
     litMeshDrawDataBufferIndex = bindless.descriptorSet->createFixedBuffer<LitMeshDrawData>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true, "LitMeshDrawData");
     litInstanceDataBufferIndex = bindless.descriptorSet->createFixedBuffer<LitInstanceData>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true, "LitInstanceDrawData");
@@ -107,6 +108,7 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
         bindless.descriptorSet->setBufferFrameOffset(shadowMeshDrawDataBufferIndex, i, MAX_SHADOW_CASTERS * MAX_FIXED_BUFFER * i);
         bindless.descriptorSet->setBufferFrameOffset(litPassDataBufferIndex,i, MAX_FIXED_BUFFER * i);
         bindless.descriptorSet->setBufferFrameOffset(billboardBufferIndex, i, MAX_FIXED_BUFFER * i);
+        bindless.descriptorSet->setBufferFrameOffset(particleBufferIndex,i, MAX_FIXED_BUFFER * i);
         bindless.descriptorSet->setBufferFrameOffset(litMeshDrawDataBufferIndex, i, MAX_FIXED_BUFFER * i);
         bindless.descriptorSet->setBufferFrameOffset(litInstanceDataBufferIndex, i, MAX_FIXED_BUFFER * i);
     }
@@ -265,7 +267,7 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
 
     // Blits the compute output image onto the swapchain (Option B present stage).
     computePresentPipelineIndex =
-        bindless.pipelineManager->createPipeline<ComputePresentPushConstants>(PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
+        bindless.pipelineManager->createPipeline<ComputePresentPushConstants>(PipelineCategory::POSTPROCESS_ALPHA_BLEND, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
                                                                vk::False, "shaders/compute_present.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
                                                                gpu.getSwapchain().getSwapChainImageFormat());
 
@@ -359,6 +361,10 @@ void Renderer::drawFrame() {
     gpu.getDevice().getDevice().resetFences(*gpu.getInFlightFence(gpu.currentFrame));
     tracing::endTrace("reset fences");
 
+    // Fan out model-matrix writes for recently-moved nodes into this frame's slice. Runs here
+    // (after the fence wait above) so the slice being written is no longer read by the GPU.
+    scene.sceneGraph.uploadDirtyTransforms(gpu.currentFrame);
+
     for (auto& [id, light] : scene.lights) {
         glm::vec3 lightDir = scene.sceneGraph.getNode(light.nodeIndex).forward();
         glm::vec3 lightPos = scene.sceneGraph.getNode(light.nodeIndex).getWorldPosition();
@@ -436,10 +442,10 @@ void Renderer::drawFrame() {
 
 uint32_t Renderer::getModelMatrixBufferIndex() { return buffers.modelMatrixBufferIndex; }
 uint32_t Renderer::getLightBufferIndex() { return passResources.buffers.lightBufferIndex; }
-uint32_t Renderer::getVolumeBufferIndex() { return passResources.buffers.volumeBufferIndex; }
+uint32_t Renderer::getParticleBufferIndex() { return particleBufferIndex; }
 
 void Renderer::clearLights() { scene.clearLights(bindless, passResources.buffers.lightBufferIndex); }
-void Renderer::clearVolumes() { scene.clearVolumes(bindless, passResources.buffers.volumeBufferIndex); }
+void Renderer::clearVolumes() { scene.clearVolumes(); }
 
 void Renderer::toggleVsync() {
     gpu.vSync = !gpu.vSync;

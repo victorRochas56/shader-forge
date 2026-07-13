@@ -9,7 +9,7 @@ static std::unordered_map<uint32_t, NodeGuiState> guiStates;
 
 NodeGuiState& getNodeGuiState(uint32_t nodeIndex) { return guiStates[nodeIndex]; }
 
-void showNodeInfo(Node& node, Scene& scene, BindlessSystem& bindless, uint32_t lightBufferIndex, uint32_t volumeBufferIndex) {
+void showNodeInfo(Node& node, Scene& scene, BindlessSystem& bindless, uint32_t lightBufferIndex, uint32_t particleBufferIndex) {
     if (scene.sceneGraph.selectedNode == 0)
         return;
 
@@ -23,7 +23,8 @@ void showNodeInfo(Node& node, Scene& scene, BindlessSystem& bindless, uint32_t l
         showNodeMaterialDialog(node, scene);
     }
     showNodeLightInfo(node, scene, bindless, lightBufferIndex);
-    showNodeVolumeInfo(node, scene, bindless, volumeBufferIndex);
+    showNodeVolumeInfo(node, scene);
+    showNodeEmitterInfo(node, scene, bindless, particleBufferIndex);
     showNodeTransformInfo(node, scene);
     node.transformDirty = true;
 
@@ -272,21 +273,35 @@ void showNodeLightInfo(Node& node, Scene& scene, BindlessSystem& bindless, uint3
 
 }
 
-void showNodeVolumeInfo(Node& node, Scene& scene, BindlessSystem& bindless, uint32_t volumeBufferIndex) {
+void showNodeVolumeInfo(Node& node, Scene& scene) {
 
-    if(node.volumeIndex == 0xFFFFFFFF) {
+    if(!scene.volumes.contains(node.nodeIndex)) {
         if(ImGui::Button("Add Volume")){
             Volume vol;
-            NodeOps::assignVolume(node, vol, scene, bindless, volumeBufferIndex);
+            NodeOps::assignVolume(node, vol, scene);
         }
     }
     else {
-        if(ImGui::SliderFloat("radius", &scene.volumes[node.volumeIndex].radius,0.0f,20.0f))
-            node.transformDirty = true;
-        if(ImGui::SliderFloat("density", &scene.volumes[node.volumeIndex].density,0.0f,1.0f))
-            node.transformDirty = true;
-        if(ImGui::SliderFloat("phase", &scene.volumes[node.volumeIndex].phase,0.0f,1.0f))
-            node.transformDirty = true;
+        // Edits land in the CPU-side Volume; VolumetricsPass streams it to the GPU next frame,
+        // so no explicit re-upload (or transformDirty) is needed here.
+        ImGui::SliderFloat("radius", &scene.volumes[node.nodeIndex].radius,0.0f,20.0f);
+        ImGui::SliderFloat("density", &scene.volumes[node.nodeIndex].density,0.0f,1.0f);
+        ImGui::SliderFloat("phase", &scene.volumes[node.nodeIndex].phase,0.0f,1.0f);
+    }
+}
+
+void showNodeEmitterInfo(Node& node, Scene& scene, BindlessSystem& bindless, uint32_t particleBufferIndex) {
+    if(node.particleIndex == 0xFFFFFFFF) {
+        if(ImGui::Button("Add Emitter")){
+            ParticleEmitter emitter;
+            NodeOps::assignEmitter(node, emitter, scene, bindless, particleBufferIndex);
+        }
+    }
+    else {
+        if ( ImGui::Button("Remove Emitter")) {
+            scene.removeEmitter(bindless, particleBufferIndex, node.particleIndex);
+            node.particleIndex = 0xFFFFFFFF;
+        }
     }
 }
 

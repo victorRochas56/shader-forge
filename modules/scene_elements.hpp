@@ -97,7 +97,9 @@ class Node { // need to be able to hide nodes from tree for internal logic
     uint32_t meshIndex = MAX_MESHES;
     uint32_t materialIndex = 0xFFFFFFFF;
     uint32_t lightIndex = MAX_LIGHTS;
-    uint32_t volumeIndex = 0xFFFFFFFF;
+    // Volumes are streamed and keyed by node index (like billboards), so there is no per-node
+    // volume slot to store — presence is `scene.volumes.contains(nodeIndex)`.
+    uint32_t particleIndex = 0xFFFFFFFF;
 
     // Bounding box for frustum culling (in world space)
     glm::vec3 boundingBoxMin = glm::vec3(0.0f);
@@ -107,7 +109,132 @@ class Node { // need to be able to hide nodes from tree for internal logic
     bool isSelected = false;
     bool alive = true;
     bool transformDirty = false;
+    // Countdown mirroring Light::gpuDirtyFrames: set to MAX_FRAMES_IN_FLIGHT when the world
+    // transform changes so the model-matrix write fans out one frame-in-flight slice per frame
+    // (each written post-fence) instead of stomping every slice at once. Driven by
+    // SceneGraph::uploadDirtyTransforms.
+    uint32_t gpuDirtyFrames = 0;
     bool showWireframe = false;
+};
+
+struct Billboard {
+    uint32_t textureIndex;
+    uint32_t nodeIndex;
+    bool hidden = false;
+    float clipThreshold = 0.5f;
+    bool screenSpaceSize = false;
+    float size = 0.1f;
+    bool depthTest = false;
+    
+    GPUBillboard toGPU(glm::vec3& position) {
+        GPUBillboard out;
+        out.position = position;
+        out.clipThreshold = clipThreshold;
+        out.textureIndex = textureIndex;
+        out.screenSpace = screenSpaceSize ? 1 : 0;
+        out.size = size;
+        out.alphaBlend = false;
+        return out;
+    }
+};
+
+struct Cascade {
+    glm::mat4 lightSpaceMatrix;
+    uint32_t shadowAtlasTile;
+    glm::vec4 shadowAtlasUVRange = glm::vec4(0);
+    float splitDistance = 0.0f;
+    float texelSize = 0.0f;
+    float worldTexelSize = 0.0f;
+};
+
+struct PointShadowFace {
+    glm::mat4 lightSpaceMatrix;
+    uint32_t shadowAtlasTile;
+    glm::vec4 shadowAtlasUVRange = glm::vec4(0);
+};
+
+struct Light {
+    LightType type = LightType::Point;
+    uint32_t modelMatrixIndex = 0;
+    uint32_t nodeIndex = 0;
+    float range = 10.0f;
+    float intensity = 1.0f;
+    uint32_t shadowResolution = DEFAULT_SHADOW_RESOLUTION;
+    glm::vec4 color = glm::vec4(0, 0, 0, 1);
+    glm::mat4 lightSpaceMatrix;
+    glm::vec3 direction = glm::vec3(1, 0, 0);
+    int castsShadows = 0;
+    int showCascades = 0;
+    uint32_t numCascades = 3;
+    std::array<Cascade, 3> cascades;
+    std::array<PointShadowFace,6> cubeMapIndices;
+    bool shadowDirty = true;
+    // Countdown for fanning out a GPULight write across every frame-in-flight slice of the
+    // per-frame light buffer. Set to MAX_FRAMES_IN_FLIGHT whenever any field feeding
+    // Light::toGPU changes (position, direction, range, matrices, color, flags, etc.).
+    // The per-frame renderer loop writes the current frame's slice and decrements.
+    uint32_t gpuDirtyFrames = 0;
+    // Point-light only: node indices whose world AABB currently overlaps this light's sphere.
+    // Maintained exclusively by LightInfluence — do not mutate elsewhere.
+    std::unordered_set<uint32_t> influencedNodes;
+
+    GPULight toGPU(glm::vec3 lightPos, glm::vec3 lightDir) const {
+        GPULight gpu;
+        gpu.type = type;
+        gpu.position = lightPos;
+        gpu.direction = lightDir;
+        gpu.range = range;
+        gpu.intensity = intensity;
+        gpu.color = color;
+        gpu.castsShadows = castsShadows;
+        gpu.showCascades = showCascades;
+        gpu.numCascades = numCascades;
+        gpu.shadowResolution = shadowResolution;
+        for (uint32_t i = 0; i < 3; i++) {
+            gpu.cascades[i].lightSpaceMatrix = cascades[i].lightSpaceMatrix;
+            gpu.cascades[i].shadowAtlasRange = cascades[i].shadowAtlasUVRange;
+            gpu.cascades[i].splitDistance = cascades[i].splitDistance;
+            gpu.cascades[i].texelSize = cascades[i].texelSize;
+            gpu.cascades[i].worldTexelSize = cascades[i].worldTexelSize;
+        }
+        for (uint32_t i = 0; i < 6; i++) {
+            gpu.pointFaces[i].lightSpaceMatrix = cubeMapIndices[i].lightSpaceMatrix;
+            gpu.pointFaces[i].shadowAtlasRange = cubeMapIndices[i].shadowAtlasUVRange;
+        }
+        return gpu;
+    }
+
+    bool operator==(const Light& other) const {
+        return type == other.type && modelMatrixIndex == other.modelMatrixIndex && range == other.range && intensity == other.intensity && shadowResolution == other.shadowResolution && 
+               color == other.color && lightSpaceMatrix == other.lightSpaceMatrix && direction == other.direction && castsShadows == other.castsShadows;
+    }
+};
+
+struct ParticleEmitter {
+    uint32_t nodeIndex;
+    uint32_t textureIndex;
+    //offsets from the node it's attached to
+    glm::vec3 positionOffset = glm::vec3(0);
+    glm::quat rotationOffset = glm::quat(0,0,0,1);
+
+    //=====Emission Params=====//
+    // particles / second
+    float emissionRate = 5.0f;
+    glm::vec2 lifeTime = glm::vec2(1.0f,1.0f); // implicitly the particle cap of this emitter is (lifetime * emissionRate)
+    // this is the half angle of the spread
+    float spreadAngle = 30.0f;
+    glm::vec3 velocityRandomMax = glm::vec3(1);
+    glm::vec3 velocityRandomMin = glm::vec3(0);
+    glm::vec2 angularVelocityRandom = glm::vec2(0,0);
+    float drag = 0.01f;
+
+    //=====Rendering Behavior=====//
+    bool initialized = false;
+    bool animated = false;
+    uint8_t numFrames = 0;
+    bool lit = false;
+    bool volumetric = false;
+    glm::vec2 densityRange = glm::vec2(0,1.0f);
 };
 
 struct Camera {

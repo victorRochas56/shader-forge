@@ -335,27 +335,6 @@ struct GPUBillboard {
     float clipThreshold;
 };
 
-struct Billboard {
-    uint32_t textureIndex;
-    uint32_t nodeIndex;
-    bool hidden = false;
-    float clipThreshold = 0.5f;
-    bool screenSpaceSize = false;
-    float size = 0.1f;
-    bool depthTest = false;
-    
-    GPUBillboard toGPU(glm::vec3& position) {
-        GPUBillboard out;
-        out.position = position;
-        out.clipThreshold = clipThreshold;
-        out.textureIndex = textureIndex;
-        out.screenSpace = screenSpaceSize ? 1 : 0;
-        out.size = size;
-        out.alphaBlend = false;
-        return out;
-    }
-};
-
 struct SDF {
     glm::mat4 worldTransform;
     glm::mat4 invWorldTransform;
@@ -756,84 +735,13 @@ struct GPULight {
     GPUPointFace pointFaces[6];
 };
 
-struct Cascade {
-    glm::mat4 lightSpaceMatrix;
-    uint32_t shadowAtlasTile;
-    glm::vec4 shadowAtlasUVRange = glm::vec4(0);
-    float splitDistance = 0.0f;
-    float texelSize = 0.0f;
-    float worldTexelSize = 0.0f;
-};
-
-struct PointShadowFace {
-    glm::mat4 lightSpaceMatrix;
-    uint32_t shadowAtlasTile;
-    glm::vec4 shadowAtlasUVRange = glm::vec4(0);
-};
-
-struct Light {
-    LightType type = LightType::Point;
-    uint32_t modelMatrixIndex = 0;
-    uint32_t nodeIndex = 0;
-    float range = 10.0f;
-    float intensity = 1.0f;
-    uint32_t shadowResolution = DEFAULT_SHADOW_RESOLUTION;
-    glm::vec4 color = glm::vec4(0, 0, 0, 1);
-    glm::mat4 lightSpaceMatrix;
-    glm::vec3 direction = glm::vec3(1, 0, 0);
-    int castsShadows = 0;
-    int showCascades = 0;
-    uint32_t numCascades = 3;
-    std::array<Cascade, 3> cascades;
-    std::array<PointShadowFace,6> cubeMapIndices;
-    bool shadowDirty = true;
-    // Countdown for fanning out a GPULight write across every frame-in-flight slice of the
-    // per-frame light buffer. Set to MAX_FRAMES_IN_FLIGHT whenever any field feeding
-    // Light::toGPU changes (position, direction, range, matrices, color, flags, etc.).
-    // The per-frame renderer loop writes the current frame's slice and decrements.
-    uint32_t gpuDirtyFrames = 0;
-    // Point-light only: node indices whose world AABB currently overlaps this light's sphere.
-    // Maintained exclusively by LightInfluence — do not mutate elsewhere.
-    std::unordered_set<uint32_t> influencedNodes;
-
-    GPULight toGPU(glm::vec3 lightPos, glm::vec3 lightDir) const {
-        GPULight gpu;
-        gpu.type = type;
-        gpu.position = lightPos;
-        gpu.direction = lightDir;
-        gpu.range = range;
-        gpu.intensity = intensity;
-        gpu.color = color;
-        gpu.castsShadows = castsShadows;
-        gpu.showCascades = showCascades;
-        gpu.numCascades = numCascades;
-        gpu.shadowResolution = shadowResolution;
-        for (uint32_t i = 0; i < 3; i++) {
-            gpu.cascades[i].lightSpaceMatrix = cascades[i].lightSpaceMatrix;
-            gpu.cascades[i].shadowAtlasRange = cascades[i].shadowAtlasUVRange;
-            gpu.cascades[i].splitDistance = cascades[i].splitDistance;
-            gpu.cascades[i].texelSize = cascades[i].texelSize;
-            gpu.cascades[i].worldTexelSize = cascades[i].worldTexelSize;
-        }
-        for (uint32_t i = 0; i < 6; i++) {
-            gpu.pointFaces[i].lightSpaceMatrix = cubeMapIndices[i].lightSpaceMatrix;
-            gpu.pointFaces[i].shadowAtlasRange = cubeMapIndices[i].shadowAtlasUVRange;
-        }
-        return gpu;
-    }
-
-    bool operator==(const Light& other) const {
-        return type == other.type && modelMatrixIndex == other.modelMatrixIndex && range == other.range && intensity == other.intensity && shadowResolution == other.shadowResolution && 
-               color == other.color && lightSpaceMatrix == other.lightSpaceMatrix && direction == other.direction && castsShadows == other.castsShadows;
-    }
-};
-
 enum class VolumeShape {
     SPHERE,
     BOX
 };
 
-struct Volume {
+// GPU-side volume payload — layout must match `struct Volume` in shaders/volumetrics.slang.
+struct GPUVolume {
     uint32_t nodeIndex = 0;
     float density = 0.8f;
     float phase = 0.8f;
@@ -841,6 +749,22 @@ struct Volume {
     glm::vec3 center = glm::vec3(0,0,0);
     float radius = 1.0f;
     glm::vec3 dimensions = glm::vec3(1,1,1);
+};
+
+// CPU-side volume: authoring data only. Streamed into the volume buffer every frame (like
+// Billboard), so it carries no persistent GPU slot or dirty-tracking state. The world center is
+// pulled fresh from the owning node at stream time and passed into toGPU, mirroring Billboard.
+struct Volume {
+    uint32_t nodeIndex = 0;
+    float density = 0.8f;
+    float phase = 0.8f;
+    VolumeShape shape = VolumeShape::SPHERE;
+    float radius = 1.0f;
+    glm::vec3 dimensions = glm::vec3(1,1,1);
+
+    GPUVolume toGPU(const glm::vec3& worldCenter) const {
+        return GPUVolume{nodeIndex, density, phase, shape, worldCenter, radius, dimensions};
+    }
 };
 
 struct Vertex {

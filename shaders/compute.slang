@@ -23,5 +23,5 @@ void computeMain(uint3 tid : SV_DispatchThreadID) {
     float2 uv = float2(tid.xy) / float2(pc.width, pc.height);
     // simple animated test pattern
     float3 col = float3(uv, 0.5 + 0.5 * sin(pc.time));
-    storageImages[pc.outputImageIndex][int2(tid.xy)] = float4(col, 1.0);
+    storageImages[pc.outputImageIndex][int2(tid.xy)] = float4(col, 0.2);
 }

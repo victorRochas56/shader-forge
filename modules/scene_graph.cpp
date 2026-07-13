@@ -24,8 +24,7 @@ void SceneGraph::reset() {
     nodes[ROOT_INDEX].name = "root";
     lastNode = ROOT_INDEX;
     allocateNodeGPU(nodes[ROOT_INDEX]);
-    TransformSystem::updateAll(nodes[ROOT_INDEX], nodes, *bindless->descriptorSet, buffers->modelMatrixBufferIndex,
-                               scene->assetManager.meshes, scene->getLightsMutable());
+    TransformSystem::updateAll(nodes[ROOT_INDEX], nodes, scene->assetManager.meshes, scene->getLightsMutable());
 }
 
 uint32_t SceneGraph::addNode(bool internal,uint32_t parentIndex, glm::vec3 position, glm::quat rotation, glm::vec3 scale) {
@@ -49,8 +48,7 @@ uint32_t SceneGraph::addNode(bool internal,uint32_t parentIndex, glm::vec3 posit
     newNode.worldTransform = parent.worldTransform * newNode.localTransform;
 
     allocateNodeGPU(newNode);
-    TransformSystem::updateAll(newNode, nodes, *bindless->descriptorSet, buffers->modelMatrixBufferIndex,
-                               scene->assetManager.meshes, scene->getLightsMutable());
+    TransformSystem::updateAll(newNode, nodes, scene->assetManager.meshes, scene->getLightsMutable());
 
     NodeOps::assignBillboard(newNode,{.textureIndex = buffers->nodeTextureIndex, .hidden = true, .screenSpaceSize = false, .size = 0.25f}, *scene);
     return newIndex;
@@ -71,11 +69,7 @@ void SceneGraph::killNode(uint32_t idx) {
         node.lightIndex = MAX_LIGHTS;
     }
 
-    if(node.volumeIndex != 0xFFFFFFFF) {
-        scene->removeVolume(*bindless, buffers->volumeBufferIndex, node.volumeIndex);
-        node.volumeIndex = 0xFFFFFFFF;
-    }
-
+    scene->removeVolume(idx);
     scene->removeBillboard(idx);
 
     scene->removeNodeFromRenderList(idx);
@@ -110,12 +104,22 @@ void SceneGraph::syncDirtyNodes() {
     for (uint32_t i = ROOT_INDEX; i <= lastNode; i++) {
         if (!nodes[i].alive || !nodes[i].transformDirty) continue;
         nodes[i].transformDirty = false;
-        TransformSystem::updateAll(nodes[i], nodes, *bindless->descriptorSet, buffers->modelMatrixBufferIndex,
-                                   scene->assetManager.meshes, scene->getLightsMutable());
-        if(nodes[i].volumeIndex != 0xFFFFFFFF) {
-            scene->volumes[nodes[i].volumeIndex].center = nodes[i].getWorldPosition();
-            bindless->descriptorSet->updateFixedBuffer<Volume>(buffers->volumeBufferIndex, nodes[i].volumeIndex, scene->volumes[nodes[i].volumeIndex]);
-        }
+        TransformSystem::updateAll(nodes[i], nodes, scene->assetManager.meshes, scene->getLightsMutable());
+        // Volumes need no per-move GPU work: VolumetricsPass streams them every frame and pulls
+        // each volume's world center straight from its node, so a moved node is picked up for free.
+    }
+}
+
+// Fan out model-matrix uploads: write the current frame-in-flight slice for every node whose world
+// transform changed recently, one slice per frame, decrementing until all slices carry the new
+// value. Must run after the current frame's fence wait (see Renderer::drawFrame) so the slice being
+// written is guaranteed no longer in flight.
+void SceneGraph::uploadDirtyTransforms(uint32_t currentFrame) {
+    for (uint32_t i = ROOT_INDEX; i <= lastNode; i++) {
+        Node& node = nodes[i];
+        if (!node.alive || node.gpuDirtyFrames == 0) continue;
+        TransformSystem::uploadModelMatrixSlice(node, *bindless->descriptorSet, buffers->modelMatrixBufferIndex, currentFrame);
+        node.gpuDirtyFrames--;
     }
 }
 

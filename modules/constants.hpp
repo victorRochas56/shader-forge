@@ -11,6 +11,7 @@ constexpr int MAX_FRAMES_IN_FLIGHT = 2;
 
 constexpr uint32_t MAX_MESHES = 2048;
 constexpr uint32_t MAX_LIGHTS = 2048;
+constexpr uint32_t MAX_EMITTERS = 2048;
 constexpr uint32_t MAX_NODES = 32384; // node is currently ~304 bytes so this is <10mb of node data
 constexpr uint32_t MAX_GIZMO_LINES = 1024 * 1024; //100mb of gizmo buffer
 

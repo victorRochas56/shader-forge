@@ -58,6 +58,8 @@ class SceneGraph {
                      glm::quat rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f), glm::vec3 scale = glm::vec3(1.0f));
     void removeNode(uint32_t index);
     void syncDirtyNodes();
+    // Fans out model-matrix writes across frames-in-flight; call post-fence inside the frame loop.
+    void uploadDirtyTransforms(uint32_t currentFrame);
 
     void selectNode(uint32_t nodeIndex) {
         if (isNodeValid(nodeIndex)) {
