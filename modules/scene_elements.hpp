@@ -223,10 +223,11 @@ struct ParticleEmitter {
     glm::vec2 lifeTime = glm::vec2(1.0f,1.0f); // implicitly the particle cap of this emitter is (lifetime * emissionRate)
     // this is the half angle of the spread
     float spreadAngle = 30.0f;
-    glm::vec3 velocityRandomMax = glm::vec3(1);
-    glm::vec3 velocityRandomMin = glm::vec3(0);
+    float speedMin = 0.0f;
+    float speedMax = 1.0f;
     glm::vec2 angularVelocityRandom = glm::vec2(0,0);
     float drag = 0.01f;
+    glm::vec2 sizeRandom = glm::vec2(1.0f, 1.0f); // per-particle size range (min, max)
 
     //=====Rendering Behavior=====//
     bool initialized = false;
@@ -234,7 +235,52 @@ struct ParticleEmitter {
     uint8_t numFrames = 0;
     bool lit = false;
     bool volumetric = false;
+    bool softParticle = false;      // fade out where particles intersect scene geometry
+    float softRadius = 1.0f;        // depth-fade distance (view-space units)
     glm::vec2 densityRange = glm::vec2(0,1.0f);
+
+    //=====Pool residency (assigned by Scene::addEmitter)=====//
+    // Contiguous sub-range this emitter owns in the shared particle pool, run as a ring buffer.
+    uint32_t particleOffset = 0;    // base index into the pool, in Particle units
+    uint32_t particleCapacity = 0;  // ring size; 0 until the emitter is registered
+
+    // Compute dispatches process the pool in workgroups of this size
+    static constexpr uint32_t PARTICLE_WORKGROUP = 64;
+
+    // Steady-state live count is emissionRate * maxLifetime; because the ring holds at least that
+    // many, the head can never lap a still-alive particle. 
+    // +1 to cover the spawn-in-the-same-frame-as-expiry edge, then round up to keep dispatches aligned.
+    uint32_t capacity() const {
+        float maxLife = glm::max(lifeTime.x, lifeTime.y);
+        uint32_t raw = static_cast<uint32_t>(maxLife * emissionRate) + 1u + PARTICLE_WORKGROUP;
+        return ((raw + PARTICLE_WORKGROUP - 1u) / PARTICLE_WORKGROUP) * PARTICLE_WORKGROUP;
+    }
+
+    GPUParticleEmitter toGPU(const glm::vec3& worldPos, const glm::quat& worldRot) const {
+        GPUParticleEmitter gpu{};
+        gpu.position          = worldPos;
+        gpu.emissionRate      = emissionRate;
+        gpu.spawnRotation     = glm::vec4(worldRot.x, worldRot.y, worldRot.z, worldRot.w);
+        gpu.speedMin          = speedMin;
+        gpu.lifeTimeMin       = lifeTime.x;
+        gpu.speedMax          = speedMax;
+        gpu.lifeTimeMax       = lifeTime.y;
+        gpu.angularVelocityRandom = angularVelocityRandom;
+        gpu.spreadAngle       = glm::radians(spreadAngle);
+        gpu.drag              = drag;
+        gpu.sizeRandom        = sizeRandom;
+        gpu.softRadius        = softRadius;
+        gpu.densityRange      = densityRange;
+        gpu.particleOffset    = particleOffset;
+        gpu.particleCapacity  = particleCapacity;
+        gpu.textureIndex      = textureIndex;
+        gpu.numFrames         = numFrames;
+        gpu.flags             = (animated ? EMITTER_FLAG_ANIMATED : 0u) |
+                                (lit ? EMITTER_FLAG_LIT : 0u) |
+                                (volumetric ? EMITTER_FLAG_VOLUMETRIC : 0u) |
+                                (softParticle ? EMITTER_FLAG_SOFT : 0u);
+        return gpu;
+    }
 };
 
 struct Camera {

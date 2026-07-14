@@ -24,6 +24,7 @@
 #include "ssao_pass.hpp"
 #include "ssr_pass.hpp"
 #include "volumetrics_pass.hpp"
+#include "particle_pass.hpp"
 #include "thumbnail_pass.hpp"
 #include "material_thumbnail_pass.hpp"
 
@@ -96,7 +97,6 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     shadowInstanceDataBufferIndex          = bindless.descriptorSet->createFixedBuffer<ShadowInstanceData>(MAX_FRAMES_IN_FLIGHT * MAX_SHADOW_CASTERS * MAX_FIXED_BUFFER, true, "ShadowInstanceData");
     shadowMeshDrawDataBufferIndex          = bindless.descriptorSet->createFixedBuffer<ShadowMeshDrawData>(MAX_FRAMES_IN_FLIGHT * MAX_SHADOW_CASTERS * MAX_FIXED_BUFFER, true, "ShadowMeshDrawData");
     passResources.buffers.lightBufferIndex = bindless.descriptorSet->createFixedBuffer<GPULight>(MAX_LIGHTS * MAX_FRAMES_IN_FLIGHT, true, "Light");
-    particleBufferIndex                    = bindless.descriptorSet->createFixedBuffer<ParticleEmitter>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true, "ParticleEmitters");
     litPassDataBufferIndex                 = bindless.descriptorSet->createFixedBuffer<LitPassData>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true, "LitPassData");
     litMeshDrawDataBufferIndex = bindless.descriptorSet->createFixedBuffer<LitMeshDrawData>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true, "LitMeshDrawData");
     litInstanceDataBufferIndex = bindless.descriptorSet->createFixedBuffer<LitInstanceData>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true, "LitInstanceDrawData");
@@ -108,7 +108,6 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
         bindless.descriptorSet->setBufferFrameOffset(shadowMeshDrawDataBufferIndex, i, MAX_SHADOW_CASTERS * MAX_FIXED_BUFFER * i);
         bindless.descriptorSet->setBufferFrameOffset(litPassDataBufferIndex,i, MAX_FIXED_BUFFER * i);
         bindless.descriptorSet->setBufferFrameOffset(billboardBufferIndex, i, MAX_FIXED_BUFFER * i);
-        bindless.descriptorSet->setBufferFrameOffset(particleBufferIndex,i, MAX_FIXED_BUFFER * i);
         bindless.descriptorSet->setBufferFrameOffset(litMeshDrawDataBufferIndex, i, MAX_FIXED_BUFFER * i);
         bindless.descriptorSet->setBufferFrameOffset(litInstanceDataBufferIndex, i, MAX_FIXED_BUFFER * i);
     }
@@ -133,6 +132,7 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
 
     passes.emplace(PassId::SSAO,std::make_unique<SSAOPass>(gpu, bindless, scene, features, passResources));
     passes.emplace(PassId::SSR,std::make_unique<SSRPass>(gpu, bindless, scene, features, passResources));
+    passes.emplace(PassId::PARTICLES,std::make_unique<ParticlePass>(gpu, bindless, scene, features, passResources));
     passes.emplace(PassId::VOLUMETRICS,std::make_unique<VolumetricsPass>(gpu, bindless, scene, features, passResources));
     passes.emplace(PassId::THUMBNAIL,std::make_unique<ThumbnailPass>(gpu, bindless, scene, features, passResources));
     passes.emplace(PassId::MATERIAL_THUMBNAIL,std::make_unique<MaterialThumbnailPass>(gpu, bindless, scene, features, passResources));
@@ -442,7 +442,7 @@ void Renderer::drawFrame() {
 
 uint32_t Renderer::getModelMatrixBufferIndex() { return buffers.modelMatrixBufferIndex; }
 uint32_t Renderer::getLightBufferIndex() { return passResources.buffers.lightBufferIndex; }
-uint32_t Renderer::getParticleBufferIndex() { return particleBufferIndex; }
+uint32_t Renderer::getParticleBufferIndex() { return buffers.emitterBufferIndex; }
 
 void Renderer::clearLights() { scene.clearLights(bindless, passResources.buffers.lightBufferIndex); }
 void Renderer::clearVolumes() { scene.clearVolumes(); }
@@ -734,6 +734,7 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
 
     tracing::endTrace("record shadow pass");
 
+    /*
     tracing::startTrace("record compute test");
     if (testComputePipelineIndex != 0xFFFFFFFF && computeOutputStorageIndex != 0xFFFFFFFF) {
         auto& outputImage = *bindless.descriptorSet->getTextureResource(computeOutputTextureIndex).image;
@@ -757,7 +758,8 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
             vk::ImageLayout::eGeneral, vk::ImageLayout::eShaderReadOnlyOptimal);
     }
     tracing::endTrace("record compute test");
-
+    */
+   
     tracing::startTrace("record geo pass");
     recordGeometryPass(cmd, imageIndex);
     tracing::endTrace("record geo pass");

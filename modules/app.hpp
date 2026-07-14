@@ -164,7 +164,8 @@ class App {
             InputManager::endFrame();
 
             deltaTime = std::chrono::steady_clock::now() - frameStart;
-            gpu.time += deltaTime.count();
+            gpu.deltaTime = static_cast<float>(deltaTime.count());
+            gpu.time += gpu.deltaTime;
             tracing::endTrace("frame time");
         }
         gpu.getDevice().getDevice().waitIdle();
@@ -181,7 +182,7 @@ class App {
         traverseNodeTree(scene.sceneGraph.getRootNode(), 0, scene.sceneGraph.selectedNode, scene.sceneGraph);
         ImGui::End();
         
-        showNodeInfo(scene.sceneGraph.getNodes()[scene.sceneGraph.selectedNode], scene, bindless, renderer.getLightBufferIndex(), renderer.getParticleBufferIndex());
+        showNodeInfo(scene.sceneGraph.getNodes()[scene.sceneGraph.selectedNode], scene, bindless, renderer.getLightBufferIndex(), renderer.buffers);
         if (InputManager::getInstance().contextMenuShown) {
             showActionMenu(0, gpu.getWindow(), scene.activeCamera, scene.sceneGraph, InputManager::getInstance().contextMenuPinX, InputManager::getInstance().contextMenuPinY);
         }

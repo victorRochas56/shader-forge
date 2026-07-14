@@ -4,6 +4,7 @@
 class Renderer;
 class Scene;
 class BindlessSystem;
+struct RenderBuffers;
 
 namespace NodeOps {
 
@@ -12,7 +13,7 @@ namespace NodeOps {
     void assignLight(Node& node, Light light, Scene& scene, BindlessSystem& bindless, uint32_t lightBufferIndex);
     void assignVolume(Node& node, Volume volume, Scene& scene);
     void assignBillboard(Node& node, Billboard billboard, Scene& scene);
-    void assignEmitter(Node& node, ParticleEmitter emitter, Scene& scene, BindlessSystem& bindless, uint32_t particleBufferIndex);
+    void assignEmitter(Node& node, ParticleEmitter emitter, Scene& scene, BindlessSystem& bindless, const RenderBuffers& buffers);
     void enableLightShadows(Light& light, const std::string& nodeName, Scene& scene);
     void disableLightShadows(Light& light, Scene& scene);
 }

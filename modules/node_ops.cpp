@@ -110,9 +110,9 @@ void assignBillboard(Node& node, Billboard billboard, Scene& scene) {
     scene.addBillboard(node.nodeIndex,billboard);
 }
 
-void assignEmitter(Node& node, ParticleEmitter emitter, Scene& scene, BindlessSystem& bindless, uint32_t particleBufferIndex) {
+void assignEmitter(Node& node, ParticleEmitter emitter, Scene& scene, BindlessSystem& bindless, const RenderBuffers& buffers) {
     emitter.nodeIndex = node.nodeIndex;
-    node.particleIndex = scene.addEmitter(bindless, emitter,particleBufferIndex);
+    node.particleIndex = scene.addEmitter(bindless, emitter, buffers);
 }
 
 }

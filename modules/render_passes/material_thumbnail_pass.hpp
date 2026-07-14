@@ -61,12 +61,14 @@ public:
         resize(scratchAIndex, SIZE, SIZE, COLOR_FORMAT, "internal/matThumbScratchA");
         resize(scratchBIndex, SIZE, SIZE, COLOR_FORMAT, "internal/matThumbScratchB");
 
-        buildSphere();
+        if (instanceBufferIndex == 0xFFFFFFFF) {
+            buildSphere();
 
-        instanceBufferIndex = bindless.descriptorSet->createFixedBuffer<LitInstanceData>(MAX_FRAMES_IN_FLIGHT * MAX_MATS, false, "MatThumbInstance");
-        meshDrawBufferIndex = bindless.descriptorSet->createFixedBuffer<LitMeshDrawData>(MAX_FRAMES_IN_FLIGHT, false, "MatThumbMeshDraw");
-        modelBufferIndex    = bindless.descriptorSet->createFixedBuffer<glm::mat4>(MAX_FRAMES_IN_FLIGHT, false, "MatThumbModel");
-        passBufferIndex     = bindless.descriptorSet->createFixedBuffer<LitPassData>(MAX_FRAMES_IN_FLIGHT, false, "MatThumbPass");
+            instanceBufferIndex = bindless.descriptorSet->createFixedBuffer<LitInstanceData>(MAX_FRAMES_IN_FLIGHT * MAX_MATS, false, "MatThumbInstance");
+            meshDrawBufferIndex = bindless.descriptorSet->createFixedBuffer<LitMeshDrawData>(MAX_FRAMES_IN_FLIGHT, false, "MatThumbMeshDraw");
+            modelBufferIndex    = bindless.descriptorSet->createFixedBuffer<glm::mat4>(MAX_FRAMES_IN_FLIGHT, false, "MatThumbModel");
+            passBufferIndex     = bindless.descriptorSet->createFixedBuffer<LitPassData>(MAX_FRAMES_IN_FLIGHT, false, "MatThumbPass");
+        }
     }
 
     void record(vk::raii::CommandBuffer& cmd, uint32_t) override {

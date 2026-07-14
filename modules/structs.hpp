@@ -335,6 +335,95 @@ struct GPUBillboard {
     float clipThreshold;
 };
 
+// ===== Particle system =====
+// One element of the shared particle pool. All emitters live in a single pool buffer
+// (see Renderer::particlePoolBufferIndex); each emitter owns a contiguous sub-range that it
+// runs as a ring buffer.
+struct Particle {
+    glm::vec3 position;   // world-space
+    float     age;        // seconds alive; age < 0 marks a dead/free slot
+    glm::vec3 velocity;
+    float     lifeSpan;   // total lifetime assigned at spawn (age reaches this -> death)
+    float     rotation;   // current angular position, radians
+    float     angularVel;
+    float     size;
+    uint32_t  seed;       // per-particle RNG state (also drives atlas frame for animated)
+    uint32_t  emitterIdx;
+};
+
+// Emitter-flag bits packed into GPUParticleEmitter::flags.
+constexpr uint32_t EMITTER_FLAG_ANIMATED   = 1u << 0;
+constexpr uint32_t EMITTER_FLAG_LIT        = 1u << 1;
+constexpr uint32_t EMITTER_FLAG_VOLUMETRIC = 1u << 2;
+constexpr uint32_t EMITTER_FLAG_SOFT       = 1u << 3; // depth-fade near intersecting geometry
+
+// GPU-side emitter descriptor consumed by the compute sim + render passes.
+struct GPUParticleEmitter {
+    glm::vec3 position;            // world spawn origin (node world pos + rotated offset)
+    float     emissionRate;       // particles / second
+
+    glm::vec4 spawnRotation;      // quat (x,y,z,w): node world rot * rotationOffset
+
+    float     speedMin;
+    float     lifeTimeMin;
+
+    float     speedMax;
+    float     lifeTimeMax;
+
+    glm::vec2 angularVelocityRandom;
+    float     spreadAngle;        // radians, half-angle of the emission cone
+    float     drag;
+
+    glm::vec2 densityRange;
+    uint32_t  particleOffset;     // base index into the shared pool (Particle units)
+    uint32_t  particleCapacity;   // ring size = ceil(lifeTimeMax * rate), workgroup-rounded
+
+    uint32_t  textureIndex;
+    uint32_t  numFrames;          // atlas frame count when EMITTER_FLAG_ANIMATED, else 0
+    uint32_t  flags;              // EMITTER_FLAG_*
+    glm::vec2 sizeRandom;         // per-particle size range (min, max)
+    float     softRadius;         // EMITTER_FLAG_SOFT: depth-fade distance (view-space units)
+    glm::vec2 _pad;               // pad to a 16-byte multiple (112 bytes total)
+};
+
+// Per-emitter mutable state, owned exclusively by the GPU sim after CPU zero-init on creation.
+// Kept out of GPUParticleEmitter so re-uploading emitter params never races/clobbers it.
+struct EmitterRuntime {
+    uint32_t ringHead;          // next slot to (over)write, mod particleCapacity
+    float    spawnAccumulator;  // fractional particle carried between frames
+    uint32_t aliveCount;        // live particles this frame (diagnostics / indirect draw)
+    uint32_t _pad;
+};
+
+struct ParticleComputePushConstants {
+    uint64_t runtimeBDA;
+    uint64_t emittersBDA;
+    uint64_t particlesBDA;
+    uint32_t emitterCount;
+    uint32_t particleCount;
+    float dt;
+};
+
+// Drawn per-emitter: instanceCount = particleCapacity, 6 verts/quad. The vertex shader reads
+// particles[particleOffset + instanceID] by device address and degenerates dead slots (age < 0).
+// Depth test is done in-shader against the resolved depth, like billboards.
+struct ParticleDrawPushConstants {
+    glm::mat4  viewProjection;
+    uint64_t   particlesBDA;       // pool base address
+    uint32_t   particleOffset;     // this emitter's base index into the pool
+    uint32_t   particleCount;      // instances to draw (emitter ring capacity)
+    uint32_t   textureIndex;
+    uint32_t   numFrames;          // atlas frames, 0 = static
+    uint32_t   samplerIndex;
+    uint32_t   depthTextureIndex;
+    uint32_t   depthSamplerIndex;
+    uint32_t   flags;              // EMITTER_FLAG_*
+    glm::uvec2 resolution;
+    float      softRadius;         // EMITTER_FLAG_SOFT depth-fade distance (view-space units)
+    float      nearPlane;          // for linearizing the sampled scene depth
+    float      farPlane;
+};
+
 struct SDF {
     glm::mat4 worldTransform;
     glm::mat4 invWorldTransform;

@@ -103,7 +103,8 @@ class GpuContext {
     // --- public per-frame state ----------------------------------------
     uint32_t currentFrame = 0;
     uint32_t totalFrames  = 0;
-    float    time         = 0;
+    float    time         = 0;   // cumulative seconds since start
+    float    deltaTime    = 0;    // seconds elapsed last frame (for sim/integration)
     bool     vSync        = true;
 
   private:

@@ -6,6 +6,7 @@
 #include "asset_manager.hpp"
 #include "bindless_system.hpp"
 #include "constants.hpp"
+#include "render_buffers.hpp"
 #include "scene_elements.hpp"
 #include "scene_graph.hpp"
 #include "structs.hpp"
@@ -164,20 +165,74 @@ class Scene {
     void removeBillboard(uint32_t index) { billboards.erase(index); }
     void clearBillboards() { billboards.clear(); }
 
-    uint32_t addEmitter(BindlessSystem& bindless, ParticleEmitter emitter,uint32_t particleBufferIndex) {
-        uint32_t idx = bindless.descriptorSet->allocateFixedBuffer<ParticleEmitter>(particleBufferIndex, emitter);
+    uint32_t addEmitter(BindlessSystem& bindless, ParticleEmitter emitter, const RenderBuffers& buffers) {
+        auto& descriptorSet = *bindless.descriptorSet;
+
+        emitter.particleCapacity = emitter.capacity();
+        Particle dead{};
+        dead.age = -1.0f;
+        uint32_t byteOffset = descriptorSet.allocateVariableBuffer<Particle>(std::vector<Particle>(emitter.particleCapacity, dead), buffers.particlePoolBufferIndex);
+        emitter.particleOffset = byteOffset / static_cast<uint32_t>(sizeof(Particle));
+
+        Node& node = sceneGraph.getNode(emitter.nodeIndex);
+        glm::quat worldRot = node.getWorldRotation();
+        glm::vec3 spawnPos = node.getWorldPosition() + worldRot * emitter.positionOffset;
+        glm::quat spawnRot = worldRot * emitter.rotationOffset;
+
+        // allocate the descriptor slot (fanned across every frame slice by allocateFixedBuffer).
+        uint32_t idx = descriptorSet.allocateFixedBuffer<GPUParticleEmitter>(buffers.emitterBufferIndex, emitter.toGPU(spawnPos, spawnRot));
+
+        // Zero the GPU-owned runtime slot at the same index
+        if (auto* runtime = descriptorSet.getFixedBufferMappedData<EmitterRuntime>(buffers.emitterRuntimeBufferIndex))
+            runtime[idx] = EmitterRuntime{};
+
         particleEmitters[idx] = emitter;
         return idx;
     }
-    void removeEmitter(BindlessSystem& bindless, uint32_t particleBufferIndex, uint32_t emitterIndex) {
-        // TODO probably need to clear up remaining particles ?
-        ParticleEmitter disabled{};
+
+    void removeEmitter(BindlessSystem& bindless, const RenderBuffers& buffers, uint32_t emitterIndex) {
+        auto& ds = *bindless.descriptorSet;
+        auto it = particleEmitters.find(emitterIndex);
+        if (it == particleEmitters.end()) return;
+
+        // Release the pool sub-range (any live particles in it simply vanish with the range).
+        ds.freeVariableBuffer(buffers.particlePoolBufferIndex, it->second.particleOffset * static_cast<uint32_t>(sizeof(Particle)));
+
+        // Stamp a disabled sentinel into every frame slice before freeing, same as removeLight.
+        GPUParticleEmitter disabled{};
         disabled.emissionRate = 0.0f;
         for (uint32_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++) {
-            bindless.descriptorSet->updateFixedBufferWithOffset<ParticleEmitter>(particleBufferIndex, emitterIndex, disabled, frame);
+            ds.updateFixedBufferWithOffset<GPUParticleEmitter>(buffers.emitterBufferIndex, emitterIndex, disabled, frame);
         }
-        bindless.descriptorSet->freeFixedBuffer(particleBufferIndex, emitterIndex);
-        particleEmitters.erase(emitterIndex);
+        ds.freeFixedBuffer(buffers.emitterBufferIndex, emitterIndex);
+        particleEmitters.erase(it);
+    }
+
+    // Re-reserve an emitter's pool sub-range after an edit to emissionRate/lifeTime (the fields that
+    // feed capacity()). Keeps the emitter's descriptor slot (so node.particleIndex stays valid); only
+    // the variable-buffer range moves. No-op when the rounded capacity is unchanged.
+    void resizeEmitterPool(BindlessSystem& bindless, const RenderBuffers& buffers, uint32_t emitterIndex) {
+        auto it = particleEmitters.find(emitterIndex);
+        if (it == particleEmitters.end()) return;
+        auto& emitter = it->second;
+
+        uint32_t newCapacity = emitter.capacity();
+        if (newCapacity == emitter.particleCapacity) return; // rounding left the ring size unchanged
+
+        auto& ds = *bindless.descriptorSet;
+        // Release the old range, then reserve a fresh one filled with dead sentinels.
+        ds.freeVariableBuffer(buffers.particlePoolBufferIndex, emitter.particleOffset * static_cast<uint32_t>(sizeof(Particle)));
+        Particle dead{};
+        dead.age = -1.0f;
+        uint32_t byteOffset = ds.allocateVariableBuffer<Particle>(std::vector<Particle>(newCapacity, dead), buffers.particlePoolBufferIndex);
+        emitter.particleOffset   = byteOffset / static_cast<uint32_t>(sizeof(Particle));
+        emitter.particleCapacity = newCapacity;
+
+        // Range moved and old particles are gone — reset the ring bookkeeping so the head/accumulator
+        // don't index past the new capacity. record() re-uploads the descriptor (with the new
+        // offset/capacity) next frame, so no explicit emitter re-upload here.
+        if (auto* runtime = ds.getFixedBufferMappedData<EmitterRuntime>(buffers.emitterRuntimeBufferIndex))
+            runtime[emitterIndex] = EmitterRuntime{};
     }
     // --- render list ---------------------------------------------------
     void addMeshToShader(uint32_t nodeIndex, Shader shader, Material material) {

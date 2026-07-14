@@ -72,6 +72,11 @@ void SceneGraph::killNode(uint32_t idx) {
     scene->removeVolume(idx);
     scene->removeBillboard(idx);
 
+    if (node.particleIndex != 0xFFFFFFFF) {
+        scene->removeEmitter(*bindless, *buffers, node.particleIndex);
+        node.particleIndex = 0xFFFFFFFF;
+    }
+
     scene->removeNodeFromRenderList(idx);
 
     // Clear selection if this node was selected

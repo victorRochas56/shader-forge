@@ -94,6 +94,17 @@ struct Vertex
     float3 tangent;
 };
 
+struct Particle {
+    float3 position;
+    float age;
+    float3 velocity;
+    float lifespan;
+    float rotation;
+    float angularVelocity;
+    float size;
+    uint seed; // also drives animation index
+    uint emitterIdx;
+};
 struct VertexOutput
 {
     float4 position : SV_Position;

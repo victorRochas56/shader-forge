@@ -21,6 +21,8 @@ constexpr uint32_t MAX_SAMPLERS = 2048;
 constexpr uint32_t MAX_STORAGE_IMAGES = 256; // compute-writable images (RWTexture2D)
 
 constexpr uint32_t MAX_FIXED_BUFFER = 2048;
+// Shared particle pool. 128MB / 48B ~= 2.7M particles.
+constexpr uint32_t PARTICLE_POOL_SIZE = 128u * 1024u * 1024u;
 constexpr uint32_t MAX_VARIABLE_BUFFER = 2048;
 constexpr uint32_t MAX_INDIRECT_COMMANDS = 10000; // per frame slot count for indirect draw buffers
 constexpr uint32_t MAX_SHADOW_CASTERS = 8; // per-frame slot count for shadow indirect/draw-data buffers

@@ -9,7 +9,7 @@ static std::unordered_map<uint32_t, NodeGuiState> guiStates;
 
 NodeGuiState& getNodeGuiState(uint32_t nodeIndex) { return guiStates[nodeIndex]; }
 
-void showNodeInfo(Node& node, Scene& scene, BindlessSystem& bindless, uint32_t lightBufferIndex, uint32_t particleBufferIndex) {
+void showNodeInfo(Node& node, Scene& scene, BindlessSystem& bindless, uint32_t lightBufferIndex, const RenderBuffers& buffers) {
     if (scene.sceneGraph.selectedNode == 0)
         return;
 
@@ -24,7 +24,7 @@ void showNodeInfo(Node& node, Scene& scene, BindlessSystem& bindless, uint32_t l
     }
     showNodeLightInfo(node, scene, bindless, lightBufferIndex);
     showNodeVolumeInfo(node, scene);
-    showNodeEmitterInfo(node, scene, bindless, particleBufferIndex);
+    showNodeEmitterInfo(node, scene, bindless, buffers);
     showNodeTransformInfo(node, scene);
     node.transformDirty = true;
 
@@ -290,17 +290,59 @@ void showNodeVolumeInfo(Node& node, Scene& scene) {
     }
 }
 
-void showNodeEmitterInfo(Node& node, Scene& scene, BindlessSystem& bindless, uint32_t particleBufferIndex) {
+void showNodeEmitterInfo(Node& node, Scene& scene, BindlessSystem& bindless, const RenderBuffers& buffers) {
     if(node.particleIndex == 0xFFFFFFFF) {
         if(ImGui::Button("Add Emitter")){
             ParticleEmitter emitter;
-            NodeOps::assignEmitter(node, emitter, scene, bindless, particleBufferIndex);
+            NodeOps::assignEmitter(node, emitter, scene, bindless, buffers);
         }
     }
     else {
         if ( ImGui::Button("Remove Emitter")) {
-            scene.removeEmitter(bindless, particleBufferIndex, node.particleIndex);
+            scene.removeEmitter(bindless, buffers, node.particleIndex);
             node.particleIndex = 0xFFFFFFFF;
+            return; // emitter gone; don't touch it below
+        }
+
+        ParticleEmitter& emitter = scene.particleEmitters.at(node.particleIndex);
+
+        // These two feed capacity() -> the reserved pool range. Re-reserve when the drag ends
+        // (not every frame it's held) so the ring never under-/over-sizes vs the sim.
+        ImGui::DragFloat("Emission Rate", &emitter.emissionRate, 0.5f, 0.0f, 1000.0f);
+        if (ImGui::IsItemDeactivatedAfterEdit()) scene.resizeEmitterPool(bindless, buffers, node.particleIndex);
+        ImGui::DragFloat2("Lifetime (min/max)", &emitter.lifeTime.x, 0.05f, 0.0f, 60.0f);
+        if (ImGui::IsItemDeactivatedAfterEdit()) scene.resizeEmitterPool(bindless, buffers, node.particleIndex);
+
+        // The rest only flow through toGPU (re-uploaded each frame in ParticlePass::record),
+        // so editing the CPU struct is enough — no buffer work.
+        ImGui::SliderFloat("Spread Angle", &emitter.spreadAngle, 0.0f, 180.0f);
+        ImGui::DragFloat("Speed Min", &emitter.speedMin, 0.05f, 0.0f, 1000.0f);
+        ImGui::DragFloat("Speed Max", &emitter.speedMax, 0.05f, 0.0f, 1000.0f);
+        ImGui::DragFloat2("Angular Vel (min/max)", &emitter.angularVelocityRandom.x, 0.05f);
+        ImGui::SliderFloat("Drag", &emitter.drag, 0.0f, 5.0f);
+        ImGui::DragFloat2("Size (min/max)", &emitter.sizeRandom.x, 0.01f, 0.0f, 100.0f);
+        ImGui::DragFloat2("Density Range", &emitter.densityRange.x, 0.01f, 0.0f, 1.0f);
+
+        // Soft particles: depth-fade where the billboard meets scene geometry.
+        ImGui::Checkbox("Soft Particles", &emitter.softParticle);
+        if (emitter.softParticle)
+            ImGui::SliderFloat("Soft Radius", &emitter.softRadius, 0.01f, 10.0f);
+
+        // Texture picker (like the material editor): seed the buffer from the current texture once,
+        // then Browse/type a path and Apply to (re)load it.
+        auto& state = getNodeGuiState(node.nodeIndex);
+        if (!state.emitterTexInit) {
+            std::string cur = scene.assetManager.getTexturePathFromIndex(emitter.textureIndex);
+            strncpy(state.emitterTexBuffer, cur.c_str(), sizeof(state.emitterTexBuffer) - 1);
+            state.emitterTexBuffer[sizeof(state.emitterTexBuffer) - 1] = '\0';
+            state.emitterTexInit = true;
+        }
+        ImGui::SetNextItemWidth(200);
+        ImGui::InputText("Texture", state.emitterTexBuffer, sizeof(state.emitterTexBuffer));
+        browseButton("emitterTex", state.emitterTexBuffer, sizeof(state.emitterTexBuffer));
+        if (ImGui::Button("Apply Texture##emitter") && strlen(state.emitterTexBuffer) > 0) {
+            try { emitter.textureIndex = scene.assetManager.loadTextureFromFile(state.emitterTexBuffer); }
+            catch (...) {}
         }
     }
 }

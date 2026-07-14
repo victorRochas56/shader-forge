@@ -46,6 +46,7 @@ enum PassId {
     SSAO,
     SSR,
     VOLUMETRICS,
+    PARTICLES,
     THUMBNAIL,
     MATERIAL_THUMBNAIL,
 };

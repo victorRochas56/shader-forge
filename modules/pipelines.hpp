@@ -563,10 +563,12 @@ class PipelineManager {
 
 public:
     template <typename T>
-    uint32_t createComputePipeline(std::string shaderPath, vk::raii::DescriptorSetLayout& setLayout, vk::raii::DescriptorSet& descriptorSet) {
+    uint32_t createComputePipeline(std::string shaderPath, vk::raii::DescriptorSetLayout& setLayout, vk::raii::DescriptorSet& descriptorSet, const char* entryPoint = "computeMain") {
         ensureSpvUpToDate(shaderPath); // build .spv from .slang like the graphics path (pipelines.hpp:189)
         vk::raii::ShaderModule module = createShaderModule(readFile(shaderPath));
-        vk::PipelineShaderStageCreateInfo stage{.stage = vk::ShaderStageFlagBits::eCompute, .module = module, .pName = "computeMain"};
+        // One VkPipeline binds one entry point. A multi-kernel .spv (e.g. particle spawn/integrate)
+        // is turned into several pipelines by calling this once per entry point with the same path.
+        vk::PipelineShaderStageCreateInfo stage{.stage = vk::ShaderStageFlagBits::eCompute, .module = module, .pName = entryPoint};
         vk::PushConstantRange pc{vk::ShaderStageFlagBits::eCompute, 0, sizeof(T)};
         vk::PipelineLayoutCreateInfo layoutInfo{
             .setLayoutCount = 1, .pSetLayouts = &*setLayout, .pushConstantRangeCount = 1, .pPushConstantRanges = &pc};
