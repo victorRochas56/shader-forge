@@ -144,7 +144,6 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     createColorResolveResources(startWidth, startHeight);
     createHiZResources(startWidth, startHeight);
     createSDFResources(startWidth,startHeight);
-    createComputeOutputResources(startWidth, startHeight);
 
     for(auto& pass : passes) {
         pass.second->init(startWidth, startHeight);
@@ -261,16 +260,7 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
         bindless.pipelineManager->createPipeline<ExposureAdaptPushConstants>(PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
                                                                vk::False, "shaders/exposure_adapt.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
                                                                vk::Format::eR16Sfloat);
-
                                                                
-    testComputePipelineIndex = bindless.pipelineManager->createComputePipeline<ComputeTestPushConstants>("shaders/compute.spv",bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet());
-
-    // Blits the compute output image onto the swapchain (Option B present stage).
-    computePresentPipelineIndex =
-        bindless.pipelineManager->createPipeline<ComputePresentPushConstants>(PipelineCategory::POSTPROCESS_ALPHA_BLEND, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
-                                                               vk::False, "shaders/compute_present.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
-                                                               gpu.getSwapchain().getSwapChainImageFormat());
-
     /**
      * post process pipelines added declaratively are added here?
      */
@@ -464,7 +454,6 @@ void Renderer::handleSwapchainResize() {
         createColorResolveResources(width, height);
         createHiZResources(width, height);
         createSDFResources(width, height);
-        createComputeOutputResources(width, height);
 
         for(auto& pass : passes) {
             pass.second->init(width,height);
@@ -509,10 +498,11 @@ void Renderer::createShadowAtlas(uint32_t resolution) {
 
     vk::raii::ImageView view = bindless.resourceManager->createImageView(image,format,vk::ImageAspectFlagBits::eDepth,1);
 
-    // The first-frame shadow barrier expects oldLayout=eDepthReadOnlyOptimal — seed that here so the
-    // first transition is valid even if no shadow casters render this frame (atlas is still sampled
-    // by the lit pass).
+    // Atlas rests in eShaderReadOnlyOptimal so it matches its bindless descriptor's recorded layout —
+    // required for the froxel light pass to sample it correctly from compute (VolumetricsPass C).
+    // Seed via depth-read-only (Undefined can't go straight to shader-read for a depth aspect here).
     bindless.resourceManager->transitionImageLayout(nullptr, *image, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthReadOnlyOptimal);
+    bindless.resourceManager->transitionImageLayout(nullptr, *image, vk::ImageLayout::eDepthReadOnlyOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
 
     scene.shadowAtlas.textureIndex = bindless.descriptorSet->allocateTexture(std::move(image),std::move(memory),std::move(view),"internal/scene.shadowAtlas",false,resolution,resolution);
 }
@@ -688,26 +678,6 @@ void Renderer::createSDFResources(uint32_t width, uint32_t height) {
     }
 }
 
-// Compute output image for the Option-B test: the compute shader writes it as a storage image (binding 4),
-// then recordComputePresentPass samples it (binding 0) onto the swapchain. Registered under both bindings.
-// UNORM (not SRGB) because storage images bypass sRGB encode — the shader writes plain [0,1] values.
-void Renderer::createComputeOutputResources(uint32_t width, uint32_t height) {
-    // Recycle the old storage slot (device is idle here — resize/init only).
-    bindless.descriptorSet->freeStorageImage(computeOutputStorageIndex);
-
-    // createOrResizeRenderTarget makes the image Storage+Sampled and registers the sampled slot,
-    // leaving it in eShaderReadOnlyOptimal. It owns the image/memory/view.
-    createOrResizeRenderTarget(computeOutputTextureIndex, width, height, vk::Format::eR8G8B8A8Unorm,
-                               "internal/compute_output", vk::ImageUsageFlagBits::eStorage);
-
-    // Register the same view as a storage-image descriptor for the compute shader to write.
-    vk::ImageView view = *bindless.descriptorSet->getTextureResource(computeOutputTextureIndex).imageView.value();
-    computeOutputStorageIndex = bindless.descriptorSet->allocateStorageImage(view);
-
-    computeOutputWidth = width;
-    computeOutputHeight = height;
-}
-
 /////=================================================RENDERING=================================================/////
 
 void Renderer::recordCommandBuffer(uint32_t imageIndex) {
@@ -716,7 +686,7 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
 
     tracing::startTrace("record shadow pass");
     
-    bindless.resourceManager->transitionImageLayout(&cmd, *bindless.descriptorSet->getTextureResource(scene.shadowAtlas.textureIndex).image, vk::ImageLayout::eDepthReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
+    bindless.resourceManager->transitionImageLayout(&cmd, *bindless.descriptorSet->getTextureResource(scene.shadowAtlas.textureIndex).image, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
     uint32_t shadowSlot = 0;
     for (auto& [lightId, light] : scene.lights) {
         if (light.castsShadows != 1) continue;
@@ -730,35 +700,9 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
         if (light.type == LightType::Point) light.shadowDirty = false;
         shadowSlot++;
     }
-    bindless.resourceManager->transitionImageLayout(&cmd, *bindless.descriptorSet->getTextureResource(scene.shadowAtlas.textureIndex).image, vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eDepthReadOnlyOptimal);
+    bindless.resourceManager->transitionImageLayout(&cmd, *bindless.descriptorSet->getTextureResource(scene.shadowAtlas.textureIndex).image, vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
 
     tracing::endTrace("record shadow pass");
-
-    /*
-    tracing::startTrace("record compute test");
-    if (testComputePipelineIndex != 0xFFFFFFFF && computeOutputStorageIndex != 0xFFFFFFFF) {
-        auto& outputImage = *bindless.descriptorSet->getTextureResource(computeOutputTextureIndex).image;
-
-        // Storage writes require eGeneral; the image is left in eShaderReadOnlyOptimal by the present pass / creation.
-        bindless.resourceManager->transitionImageLayout(&cmd, outputImage,
-            vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eGeneral);
-
-        auto& computePipeline = static_cast<ComputePipeline<ComputeTestPushConstants>&>(
-            *bindless.pipelineManager->getComputePipelines()[testComputePipelineIndex]);
-        computePipeline.pushConstantData = {.outputImageIndex = computeOutputStorageIndex,
-                                            .width = computeOutputWidth,
-                                            .height = computeOutputHeight,
-                                            .time = gpu.time};
-        bindComputePipeline(cmd, computePipeline);
-        computePipeline.pushConstants(cmd);
-        cmd.dispatch((computeOutputWidth + 7) / 8, (computeOutputHeight + 7) / 8, 1);
-
-        // Make the result sampleable for the present pass.
-        bindless.resourceManager->transitionImageLayout(&cmd, outputImage,
-            vk::ImageLayout::eGeneral, vk::ImageLayout::eShaderReadOnlyOptimal);
-    }
-    tracing::endTrace("record compute test");
-    */
    
     tracing::startTrace("record geo pass");
     recordGeometryPass(cmd, imageIndex);
@@ -781,12 +725,6 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
 
     // Tonemap HDR composite -> swapchain. Scene passes above run in HDR; UI passes below run in LDR.
     recordTonemapPass(cmd, imageIndex);
-
-    // Option-B compute test: blit the compute output over the swapchain. This overwrites the tonemapped
-    // scene (it's a full-screen test); GUI/overlay below still draws on top. Remove this call to hide it.
-    tracing::startTrace("record compute present");
-    recordComputePresentPass(cmd, imageIndex);
-    tracing::endTrace("record compute present");
 
     tracing::startTrace("record image vis pass");
     if (features.imageVis.imageIndex != 0xFFFFFFFF)
@@ -1352,19 +1290,6 @@ void Renderer::recordTonemapPass(vk::raii::CommandBuffer& cmd, uint32_t imageInd
         });
 }
 
-void Renderer::recordComputePresentPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
-    if (computePresentPipelineIndex == 0xFFFFFFFF || computeOutputTextureIndex == 0xFFFFFFFF)
-        return;
-
-    auto extent = gpu.getSwapchain().getSwapChainExtent();
-    // Compute output is already in eShaderReadOnlyOptimal from the dispatch's trailing transition.
-    drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[computePresentPipelineIndex],
-        *gpu.getSwapchain().getSwapChainImageViews()[imageIndex], extent,
-        ComputePresentPushConstants{.textureIndex = computeOutputTextureIndex,
-                                    .samplerIndex = passResources.defaultSamplerIndex},
-        vk::AttachmentLoadOp::eLoad);
-}
-
 void Renderer::recordOverlayPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
     auto extent = gpu.getSwapchain().getSwapChainExtent();
     vk::RenderingAttachmentInfo colorAttachment = {.imageView = gpu.getSwapchain().getSwapChainImageViews()[imageIndex],
@@ -1602,6 +1527,27 @@ void Renderer::createOrResizeRenderTarget(uint32_t& index, uint32_t width, uint3
     auto view = bindless.resourceManager->createImageView(image, format, vk::ImageAspectFlagBits::eColor);
     bindless.resourceManager->transitionImageLayout(nullptr, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal);
     index = bindless.descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(view), debugName, false, width, height);
+}
+
+void Renderer::createOrResize3DStorageImage(uint32_t& textureIndex, uint32_t& storageIndex, uint32_t width, uint32_t height, uint32_t depth, vk::Format format,
+                                          const char* debugName, vk::ImageUsageFlags extraUsage) {
+    // Recycle old slots (device is idle here — init/resize only).
+    if (storageIndex != 0xFFFFFFFF) bindless.descriptorSet->freeStorageImage(storageIndex);
+    if (textureIndex != 0xFFFFFFFF) bindless.descriptorSet->freeTexture(textureIndex);
+
+    vk::raii::Image image = nullptr;
+    vk::raii::DeviceMemory memory = nullptr;
+    bindless.resourceManager->create3DImage(width, height, depth, 1, vk::SampleCountFlagBits::e1, format, vk::ImageTiling::eOptimal,
+                                 vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled | extraUsage,
+                                 vk::MemoryPropertyFlagBits::eDeviceLocal, image, memory, 1);
+    auto view = bindless.resourceManager->create3DImageView(image, format, vk::ImageAspectFlagBits::eColor);
+    // Sampled slot reads it in eShaderReadOnlyOptimal; compute passes transition to eGeneral before writing.
+    bindless.resourceManager->transitionImageLayout(nullptr, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal);
+
+    // Register the same view twice: once sampled (owns image/memory/view), once as a storage descriptor.
+    vk::ImageView rawView = *view;
+    textureIndex = bindless.descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(view), debugName, false, width, height);
+    storageIndex = bindless.descriptorSet->allocateStorageImage(rawView);
 }
 
 void Renderer::createOrResizeMSAATarget(Image& target, uint32_t width, uint32_t height, vk::Format format) {

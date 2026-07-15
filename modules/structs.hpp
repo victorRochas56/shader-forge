@@ -139,6 +139,13 @@ struct VolumetricSettings {
     float blurRadius = 2.0f;
     int numSteps = 16;
     float maxDist = 35.0f;
+    // Froxel grid (FROXEL_VOLUMETRICS_PLAN.md). Screen-independent 3D media grid: x/y tiles, z
+    // exponential slices between the near plane and gridFar. gridFar is distinct from maxDist.
+    glm::uvec3 froxelDims = glm::uvec3(240, 135, 128);
+    float gridFar = 50.0f;
+    // Froxel debug overlay: 0 = off, else visualizes a grid volume (see FroxelDebugMode in
+    // volumetrics_apply.slang). Per-volume scattering phase comes from each Volume's own `phase`.
+    int debugView = 0;
 };
 
 struct TonemapSettings {
@@ -194,18 +201,6 @@ struct ExposureAdaptPushConstants {
     float speed;
     uint32_t initialized;       // 0 on first frame -> snap instead of lerp
     uint32_t padding;
-};
-
-struct ComputeTestPushConstants {
-    uint32_t outputImageIndex;  // storage-image descriptor index the compute shader writes to
-    uint32_t width;
-    uint32_t height;
-    float time;
-};
-
-struct ComputePresentPushConstants {
-    uint32_t textureIndex;      // sampled view of the compute output
-    uint32_t samplerIndex;
 };
 
 struct ShadowPushConstants {
@@ -356,6 +351,7 @@ constexpr uint32_t EMITTER_FLAG_ANIMATED   = 1u << 0;
 constexpr uint32_t EMITTER_FLAG_LIT        = 1u << 1;
 constexpr uint32_t EMITTER_FLAG_VOLUMETRIC = 1u << 2;
 constexpr uint32_t EMITTER_FLAG_SOFT       = 1u << 3; // depth-fade near intersecting geometry
+constexpr uint32_t EMITTER_FLAG_VOLUME_SPHERE = 1u << 4; // volumetric injection: view-independent sphere (else textured billboard)
 
 // GPU-side emitter descriptor consumed by the compute sim + render passes.
 struct GPUParticleEmitter {
@@ -470,9 +466,124 @@ struct VolumetricPushConstants {
     glm::mat4 invViewProjection;       // 96, ends at 160
 };
 
+// Froxel composite (Pass E). Depth -> view Z -> fractional slice, trilinearly sample integratedVol,
+// then blend with POSTPROCESS_VOLUMETRIC. vec3s on 16-byte boundaries to match std430.
+// When debugMode != 0 the shader overwrites the scene with a visualization of a grid volume.
 struct VolumetricApplyPushConstants {
-    uint32_t volumetricTextureIndex;
-    uint32_t samplerIndex;
+    uint32_t   integratedTexIndex;   // 0   sampled 3D slot of integratedVol
+    uint32_t   samplerIndex;         // 4
+    uint32_t   depthTexIndex;        // 8
+    uint32_t   depthSamplerIndex;    // 12
+    glm::uvec3 dims;                 // 16
+    float      nearZ;                // 28
+    glm::vec3  cameraPos;            // 32
+    float      gridFar;              // 44
+    glm::vec3  cameraForward;        // 48
+    uint32_t   debugMode;            // 60  0 = normal composite
+    glm::mat4  invViewProjection;    // 64
+    uint32_t   mediaTexIndex;        // 128 debug: sampled mediaVol
+    uint32_t   scatterTexIndex;      // 132 debug: sampled scatterVol
+    uint32_t   mediaPhaseTexIndex;   // 136 debug: sampled mediaPhase
+    uint32_t   frame;                // 140 (ends 144)
+};
+
+// Froxel density injection — shared by passes A0 (clear) and A (analytic volume inject).
+// See FROXEL_VOLUMETRICS_PLAN.md. vec3 members sit on 16-byte boundaries to match the slang
+// std430 push-constant layout (mirror of FroxelInjectPushConstants in shaders/froxel_inject.slang).
+struct FroxelInjectPushConstants {
+    uint64_t   volsAddress;          // 0   Volume* (BDA into the per-frame volume buffer)
+    uint32_t   volumeCount;          // 8
+    uint32_t   mediaVolIndex;        // 12  storage-image slot of mediaVol
+    glm::uvec3 dims;                 // 16  froxel grid dimensions
+    float      nearZ;                // 28
+    glm::vec3  cameraPos;            // 32
+    float      gridFar;              // 44
+    glm::vec3  cameraForward;        // 48  normalized camera look dir
+    uint32_t   mediaPhaseIndex;      // 60  R32F storage slot: density-weighted phase accumulator
+    glm::mat4  invViewProjection;    // 64 (ends 128)
+    uint32_t   frame;
+};
+
+// Pass B — volumetric particle injection via froxel-parallel gather (clustered, like tiled lighting).
+// The bin pass buckets each volumetric particle into the screen tiles its sphere overlaps; the gather
+// pass runs one thread per froxel, reads its tile's particle list, and writes the summed density.
+constexpr uint32_t FROXEL_TILE_SIZE = 8;             // froxels per tile edge (screen XY)
+constexpr uint32_t MAX_PARTICLES_PER_TILE = 256;     // per-tile list capacity (overflow dropped)
+
+// Bin pass (1 thread/particle): append particle index to each overlapped tile's list.
+struct FroxelBinPushConstants {
+    uint64_t   particlesAddress;     // 0   Particle* pool
+    uint64_t   emittersAddress;      // 8   ParticleEmitter* (this frame's slice)
+    uint64_t   tileCountsAddress;    // 16  uint per tile (atomic counter)
+    uint64_t   tileListAddress;      // 24  uint[tiles * maxPerTile]
+    uint32_t   particleCount;        // 32
+    uint32_t   tilesX;               // 36
+    uint32_t   tilesY;               // 40
+    uint32_t   maxPerTile;           // 44
+    glm::uvec3 dims;                 // 48
+    float      nearZ;                // 60
+    glm::vec3  cameraPos;            // 64
+    float      gridFar;              // 76
+    glm::vec3  cameraForward;        // 80
+    float      billboardScale;       // 92
+    glm::mat4  viewProj;             // 96
+    glm::mat4  invViewProjection;    // 160 (ends 224)
+};
+
+// Gather pass (1 thread/froxel): sum density from the froxel's tile particle list into mediaVol.
+struct FroxelGatherPushConstants {
+    uint64_t   particlesAddress;     // 0
+    uint64_t   emittersAddress;      // 8
+    uint64_t   tileCountsAddress;    // 16
+    uint64_t   tileListAddress;      // 24
+    uint32_t   mediaVolIndex;        // 32
+    uint32_t   tilesX;               // 36
+    uint32_t   tilesY;               // 40
+    uint32_t   maxPerTile;           // 44
+    uint32_t   samplerIndex;         // 48
+    uint32_t   frame;                // 52
+    uint32_t   _padB;                // 56
+    uint32_t   _padC;                // 60
+    glm::uvec3 dims;                 // 64
+    float      nearZ;                // 76
+    glm::vec3  cameraPos;            // 80
+    float      gridFar;              // 92
+    glm::vec3  cameraForward;        // 96
+    float      billboardScale;       // 108
+    glm::vec3  cameraRight;          // 112
+    float      _padD;                // 124
+    glm::vec3  cameraUp;             // 128
+    float      _padE;                // 140
+    glm::mat4  invViewProjection;    // 144 (ends 208)
+};
+
+// Pass C — light scattering (1 thread/froxel). Reads mediaVol, writes lit scatterVol.
+// Mirror of FroxelLightPushConstants in shaders/froxel_light.slang.
+struct FroxelLightPushConstants {
+    uint64_t   lightsAddress;        // 0   Light* (this frame's slice)
+    uint32_t   lightCount;           // 8
+    uint32_t   shadowAtlasIndex;     // 12
+    glm::uvec3 dims;                 // 16
+    uint32_t   mediaVolIndex;        // 28  storage slot read
+    uint32_t   scatterVolIndex;      // 32  storage slot written
+    float      nearZ;                // 36
+    float      gridFar;              // 40
+    uint32_t   mediaPhaseIndex;      // 44  R32F storage slot: density-weighted phase (read)
+    glm::vec3  cameraPos;            // 48
+    uint32_t   debugMode;            // 60  matches VolumetricApplyPushConstants::debugMode
+    glm::vec3  cameraForward;        // 64
+    uint32_t   frame;                // 76
+    glm::mat4  invViewProjection;    // 80 (ends 144)
+};
+
+// Pass D — integration (1 thread per x,y column). Front-to-back marches scatterVol into integratedVol.
+// Mirror of FroxelIntegratePushConstants in shaders/froxel_integrate.slang.
+struct FroxelIntegratePushConstants {
+    glm::uvec3 dims;                 // 0
+    uint32_t   scatterVolIndex;      // 12
+    uint32_t   integratedVolIndex;   // 16
+    float      nearZ;                // 20
+    float      gridFar;              // 24
 };
 
 struct LitMeshDrawData {

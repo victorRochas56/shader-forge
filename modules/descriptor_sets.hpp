@@ -216,7 +216,7 @@ class DescriptorSet {
         layoutBindings.push_back(vk::DescriptorSetLayoutBinding{.binding = bindingIndex,
                                                                 .descriptorType = vk::DescriptorType::eSampledImage,
                                                                 .descriptorCount = MAX_TEXTURES,
-                                                                .stageFlags = vk::ShaderStageFlagBits::eFragment | vk::ShaderStageFlagBits::eVertex});
+                                                                .stageFlags = vk::ShaderStageFlagBits::eFragment | vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eCompute});
         poolSizes.push_back(vk::DescriptorPoolSize(vk::DescriptorType::eSampledImage, MAX_TEXTURES));
         bindingFlags.push_back(vk::DescriptorBindingFlagBits::ePartiallyBound | vk::DescriptorBindingFlagBits::eUpdateAfterBind);
         // variableCounts.push_back(MAX_TEXTURES);
@@ -227,7 +227,7 @@ class DescriptorSet {
         layoutBindings.push_back(vk::DescriptorSetLayoutBinding{.binding = bindingIndex,
                                                                 .descriptorType = vk::DescriptorType::eSampledImage,
                                                                 .descriptorCount = MAX_CUBEMAPS,
-                                                                .stageFlags = vk::ShaderStageFlagBits::eFragment | vk::ShaderStageFlagBits::eVertex});
+                                                                .stageFlags = vk::ShaderStageFlagBits::eFragment | vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eCompute});
         poolSizes.push_back(vk::DescriptorPoolSize(vk::DescriptorType::eSampledImage, MAX_CUBEMAPS));
         bindingFlags.push_back(vk::DescriptorBindingFlagBits::ePartiallyBound | vk::DescriptorBindingFlagBits::eUpdateAfterBind);
         // variableCounts.push_back(MAX_CUBEMAPS);
@@ -238,7 +238,7 @@ class DescriptorSet {
         layoutBindings.push_back(vk::DescriptorSetLayoutBinding{.binding = bindingIndex,
                                                                 .descriptorType = vk::DescriptorType::eSampler,
                                                                 .descriptorCount = MAX_SAMPLERS,
-                                                                .stageFlags = vk::ShaderStageFlagBits::eFragment | vk::ShaderStageFlagBits::eVertex});
+                                                                .stageFlags = vk::ShaderStageFlagBits::eFragment | vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eCompute});
         poolSizes.push_back(vk::DescriptorPoolSize(vk::DescriptorType::eSampler, MAX_SAMPLERS));
         bindingFlags.push_back(vk::DescriptorBindingFlagBits::ePartiallyBound | vk::DescriptorBindingFlagBits::eUpdateAfterBind);
         // variableCounts.push_back(MAX_SAMPLERS);
@@ -251,7 +251,7 @@ class DescriptorSet {
         layoutBindings.push_back(vk::DescriptorSetLayoutBinding{.binding = bindingIndex,
                                                                 .descriptorType = vk::DescriptorType::eSampler,
                                                                 .descriptorCount = 1,
-                                                                .stageFlags = vk::ShaderStageFlagBits::eFragment | vk::ShaderStageFlagBits::eVertex});
+                                                                .stageFlags = vk::ShaderStageFlagBits::eFragment | vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eCompute});
         poolSizes.push_back(vk::DescriptorPoolSize(vk::DescriptorType::eSampler, 1));
         bindingFlags.push_back({});
         shadowCompareSamplerBindingIndex = bindingIndex;

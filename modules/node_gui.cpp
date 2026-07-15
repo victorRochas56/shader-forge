@@ -321,7 +321,19 @@ void showNodeEmitterInfo(Node& node, Scene& scene, BindlessSystem& bindless, con
         ImGui::DragFloat2("Angular Vel (min/max)", &emitter.angularVelocityRandom.x, 0.05f);
         ImGui::SliderFloat("Drag", &emitter.drag, 0.0f, 5.0f);
         ImGui::DragFloat2("Size (min/max)", &emitter.sizeRandom.x, 0.01f, 0.0f, 100.0f);
-        ImGui::DragFloat2("Density Range", &emitter.densityRange.x, 0.01f, 0.0f, 1.0f);
+
+        // Lit billboards sample scene lighting in the draw shader.
+        ImGui::Checkbox("Lit", &emitter.lit);
+
+        // Volumetric: particles inject density into the froxel grid (VolumetricsPass pass B).
+        // Density Range is the per-particle density and only matters when this is on.
+        ImGui::Checkbox("Volumetric", &emitter.volumetric);
+        if (emitter.volumetric) {
+            ImGui::DragFloat2("Density Range", &emitter.densityRange.x, 0.01f, 0.0f, 1.0f);
+            // Sphere: view-independent radial density (correct when you're inside / fly through it).
+            // Off = textured billboard (samples the sprite's alpha, but only reads right from outside).
+            ImGui::Checkbox("Sphere (fly-through)", &emitter.volumetricSphere);
+        }
 
         // Soft particles: depth-fade where the billboard meets scene geometry.
         ImGui::Checkbox("Soft Particles", &emitter.softParticle);

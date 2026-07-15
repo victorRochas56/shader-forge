@@ -235,6 +235,7 @@ struct ParticleEmitter {
     uint8_t numFrames = 0;
     bool lit = false;
     bool volumetric = false;
+    bool volumetricSphere = false;  // volumetric: inject a view-independent sphere (fly-through) vs a textured billboard
     bool softParticle = false;      // fade out where particles intersect scene geometry
     float softRadius = 1.0f;        // depth-fade distance (view-space units)
     glm::vec2 densityRange = glm::vec2(0,1.0f);
@@ -278,6 +279,7 @@ struct ParticleEmitter {
         gpu.flags             = (animated ? EMITTER_FLAG_ANIMATED : 0u) |
                                 (lit ? EMITTER_FLAG_LIT : 0u) |
                                 (volumetric ? EMITTER_FLAG_VOLUMETRIC : 0u) |
+                                (volumetricSphere ? EMITTER_FLAG_VOLUME_SPHERE : 0u) |
                                 (softParticle ? EMITTER_FLAG_SOFT : 0u);
         return gpu;
     }

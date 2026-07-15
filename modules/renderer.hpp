@@ -200,7 +200,6 @@ class Renderer {
     void createMotionVectorResources(uint32_t width, uint32_t height);
     void createHiZResources(uint32_t width, uint32_t height);
     void createSDFResources(uint32_t width, uint32_t height);
-    void createComputeOutputResources(uint32_t width, uint32_t height);
 #pragma endregion
 
 
@@ -228,6 +227,11 @@ class Renderer {
     void createOrResizeRenderTarget(uint32_t& index, uint32_t width, uint32_t height,
                                      vk::Format format, const char* debugName,
                                      vk::ImageUsageFlags extraUsage = {});
+    // Froxel volume: a 3D RGBA16F image usable as both RWTexture3D (compute write) and Texture3D
+    // (sampled read). Registers two bindless slots for the same view — textureIndex (sampled) and
+    // storageIndex (storage). Device must be idle (init/resize only).
+    void createOrResize3DStorageImage(uint32_t& textureIndex, uint32_t& storageIndex, uint32_t width, uint32_t height, uint32_t depth,
+                                    vk::Format format, const char* debugName, vk::ImageUsageFlags extraUsage = {});
     void createOrResizeMSAATarget(Image& target, uint32_t width, uint32_t height, vk::Format format);
 
     void setFullscreenViewport(vk::raii::CommandBuffer& cmd, vk::Extent2D extent);

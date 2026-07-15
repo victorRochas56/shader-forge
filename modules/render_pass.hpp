@@ -55,6 +55,11 @@ class RenderPass {
 public:
     virtual ~RenderPass() = default;
     void resize(uint32_t& index, uint32_t width, uint32_t height, vk::Format format, const char* debugName, vk::ImageUsageFlags extraUsage = {});
+    // Allocates a 3D storage+sampled volume (froxel grid) and registers two bindless slots for one
+    // view: textureIndex (sampled read) + storageIndex (compute write). Screen-independent, so unlike
+    // resize() it's typically called once. Device must be idle. See FROXEL_VOLUMETRICS_PLAN.md prereq 1.
+    void resize3DStorageImage(uint32_t& textureIndex, uint32_t& storageIndex, uint32_t width, uint32_t height, uint32_t depth,
+                              vk::Format format, const char* debugName);
     virtual void init(uint32_t width, uint32_t height) = 0;
     virtual void record(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) = 0;
 

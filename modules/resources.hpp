@@ -91,11 +91,45 @@ class ResourceManager {
         image.bindMemory(imageMemory, 0);
     }
 
+    void create3DImage(uint32_t width, uint32_t height, uint32_t depth, uint32_t mipLevels, vk::SampleCountFlagBits numSamples, vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage,
+                     vk::MemoryPropertyFlags properties, vk::raii::Image& image, vk::raii::DeviceMemory& imageMemory, uint32_t arrayLayers = 1,
+                     vk::ImageCreateFlagBits createFlags = vk::ImageCreateFlagBits{}) {
+
+        vk::ImageCreateInfo imageInfo{.flags = createFlags,
+                                      .imageType = vk::ImageType::e3D,
+                                      .format = format,
+                                      .extent = {width, height, depth},
+                                      .mipLevels = mipLevels,
+                                      .arrayLayers = arrayLayers,
+                                      .samples = numSamples,
+                                      .tiling = tiling,
+                                      .usage = usage,
+                                      .sharingMode = vk::SharingMode::eExclusive,
+                                      .initialLayout = vk::ImageLayout::eUndefined};
+
+        image = vk::raii::Image(device.getDevice(), imageInfo);
+        vk::MemoryRequirements memRequirements = image.getMemoryRequirements();
+        vk::MemoryAllocateInfo allocInfo{.allocationSize = memRequirements.size, .memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties, device)};
+
+        imageMemory = vk::raii::DeviceMemory(device.getDevice(), allocInfo);
+        image.bindMemory(imageMemory, 0);
+    }
+
     [[nodiscard]] vk::raii::ImageView createImageView(vk::raii::Image& image, vk::Format format, vk::ImageAspectFlags aspectFlags, uint32_t mipLevels = 1) const {
         vk::ImageViewCreateInfo viewInfo{.image = image,
                                          .viewType = vk::ImageViewType::e2D,
                                          .format = format,
                                          .subresourceRange = {.aspectMask = aspectFlags, .baseMipLevel = 0, .levelCount = mipLevels, .baseArrayLayer = 0, .layerCount = 1}};
+        return vk::raii::ImageView(device.getDevice(), viewInfo);
+    }
+
+    // 3D view over a whole volume (single mip/layer). Used for froxel volumes bound as both
+    // RWTexture3D (storage) and Texture3D (sampled).
+    [[nodiscard]] vk::raii::ImageView create3DImageView(vk::raii::Image& image, vk::Format format, vk::ImageAspectFlags aspectFlags) const {
+        vk::ImageViewCreateInfo viewInfo{.image = image,
+                                         .viewType = vk::ImageViewType::e3D,
+                                         .format = format,
+                                         .subresourceRange = {.aspectMask = aspectFlags, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1}};
         return vk::raii::ImageView(device.getDevice(), viewInfo);
     }
 
@@ -409,32 +443,58 @@ class ResourceManager {
             barrier.srcAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
             barrier.dstAccessMask = vk::AccessFlagBits2::eShaderRead;
             barrier.srcStageMask = vk::PipelineStageFlagBits2::eLateFragmentTests;
-            barrier.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+            // Compute in dst: the shadow atlas is sampled by the froxel light pass (VolumetricsPass C)
+            // from compute, so the depth writes must be visible there too — not just to fragment.
+            barrier.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader | vk::PipelineStageFlagBits2::eComputeShader;
             barrier.subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eDepth, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1};
         }
 
         else if (oldLayout == vk::ImageLayout::eShaderReadOnlyOptimal && newLayout == vk::ImageLayout::eDepthStencilAttachmentOptimal) {
             barrier.srcAccessMask = vk::AccessFlagBits2::eShaderRead;
             barrier.dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
-            barrier.srcStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+            // Compute in src: next frame's shadow writes must wait for this frame's compute reads (WAR).
+            barrier.srcStageMask = vk::PipelineStageFlagBits2::eFragmentShader | vk::PipelineStageFlagBits2::eComputeShader;
             barrier.dstStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests;
             barrier.subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eDepth, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1};
         }
 
         // Depth-only read layout — preserves Z-compression on NV/AMD for faster sampled-depth reads.
+        // Includes the compute stage: the froxel light pass (VolumetricsPass C) samples the shadow
+        // atlas from a compute shader, so its reads must be ordered after the depth writes.
         else if (oldLayout == vk::ImageLayout::eDepthStencilAttachmentOptimal && newLayout == vk::ImageLayout::eDepthReadOnlyOptimal) {
             barrier.srcAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
             barrier.dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eShaderRead;
             barrier.srcStageMask = vk::PipelineStageFlagBits2::eLateFragmentTests;
-            barrier.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader | vk::PipelineStageFlagBits2::eEarlyFragmentTests;
+            barrier.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader | vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eComputeShader;
             barrier.subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eDepth, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1};
         }
 
         else if (oldLayout == vk::ImageLayout::eDepthReadOnlyOptimal && newLayout == vk::ImageLayout::eDepthStencilAttachmentOptimal) {
             barrier.srcAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eShaderRead;
             barrier.dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
-            barrier.srcStageMask = vk::PipelineStageFlagBits2::eFragmentShader | vk::PipelineStageFlagBits2::eEarlyFragmentTests;
+            // Compute in src: next frame's shadow writes must wait for this frame's compute reads (WAR).
+            barrier.srcStageMask = vk::PipelineStageFlagBits2::eFragmentShader | vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eComputeShader;
             barrier.dstStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests;
+            barrier.subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eDepth, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1};
+        }
+
+        // Depth-read-only -> generic shader-read-only (and back). Lets a compute pass sample a depth
+        // image (the shadow atlas, VolumetricsPass pass C) with a descriptor recorded as
+        // eShaderReadOnlyOptimal — eDepthReadOnlyOptimal mismatches that descriptor and is undefined in
+        // compute on some drivers. Read->read: contents preserved, only the layout/visibility changes.
+        else if (oldLayout == vk::ImageLayout::eDepthReadOnlyOptimal && newLayout == vk::ImageLayout::eShaderReadOnlyOptimal) {
+            barrier.srcAccessMask = vk::AccessFlagBits2::eShaderRead;
+            barrier.dstAccessMask = vk::AccessFlagBits2::eShaderRead;
+            barrier.srcStageMask = vk::PipelineStageFlagBits2::eFragmentShader | vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests;
+            barrier.dstStageMask = vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eFragmentShader;
+            barrier.subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eDepth, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1};
+        }
+
+        else if (oldLayout == vk::ImageLayout::eShaderReadOnlyOptimal && newLayout == vk::ImageLayout::eDepthReadOnlyOptimal) {
+            barrier.srcAccessMask = vk::AccessFlagBits2::eShaderRead;
+            barrier.dstAccessMask = vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eDepthStencilAttachmentRead;
+            barrier.srcStageMask = vk::PipelineStageFlagBits2::eComputeShader | vk::PipelineStageFlagBits2::eFragmentShader;
+            barrier.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader | vk::PipelineStageFlagBits2::eEarlyFragmentTests;
             barrier.subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eDepth, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1};
         }
 

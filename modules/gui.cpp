@@ -487,9 +487,12 @@ void showToggles(RenderFeatures& f){
         f.volumetrics.enabled = !f.volumetrics.enabled;
     }
     if(f.volumetrics.enabled){
-        ImGui::SliderInt("Steps", &f.volumetrics.numSteps,4,32);
-        ImGui::SliderFloat("Max Distance", &f.volumetrics.maxDist, 5.0f, 50.0f);
-        ImGui::SliderFloat("Blur Radius", &f.volumetrics.blurRadius, 0.0f, 4.0f);
+        // Grid Far bounds the froxel volume (media beyond it isn't rendered). Scattering phase is a
+        // per-volume property (edit it on each Volume node). Debug View overwrites the scene with a
+        // false-color visualization of a grid volume to diagnose injection/lighting.
+        ImGui::SliderFloat("Grid Far", &f.volumetrics.gridFar, 5.0f, 200.0f);
+        const char* dbgItems[] = {"Off", "Extinction", "Scatter", "In-Scatter", "Transmittance", "Slice", "Phase g", "Shadow"};
+        ImGui::Combo("Debug View", &f.volumetrics.debugView, dbgItems, IM_ARRAYSIZE(dbgItems));
     }
     if(ImGui::Button("Show BBOXes")){
         f.showBBoxes = !f.showBBoxes;

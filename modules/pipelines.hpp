@@ -23,7 +23,7 @@ BEFORE_GEOMETRY is only used by shadow rendering
 GEOMETRY is the main pass with 2 color attachments (color + roughness/metallic)
 POSTPROCESS are passes that process color attachments
 */
-enum class PipelineCategory { BEFORE_GEOMETRY, LIT_GEOMETRY, ALPHA_GEOMETRY, POSTPROCESS, POSTPROCESS_MULTIPLY, POSTPROCESS_ALPHA_BLEND, SHADOW, DEPTH_PREPASS, THUMBNAIL, MATERIAL_THUMBNAIL };
+enum class PipelineCategory { BEFORE_GEOMETRY, LIT_GEOMETRY, ALPHA_GEOMETRY, POSTPROCESS, POSTPROCESS_MULTIPLY, POSTPROCESS_ALPHA_BLEND, POSTPROCESS_VOLUMETRIC, SHADOW, DEPTH_PREPASS, THUMBNAIL, MATERIAL_THUMBNAIL };
 
 class PipelineManager;
 
@@ -446,10 +446,12 @@ class PipelineManager {
             break;
         }
         case PipelineCategory::POSTPROCESS_ALPHA_BLEND:
+        case PipelineCategory::POSTPROCESS_VOLUMETRIC:
         case PipelineCategory::POSTPROCESS_MULTIPLY:
         case PipelineCategory::POSTPROCESS: {
             bool multiply = (pipelineCategory == PipelineCategory::POSTPROCESS_MULTIPLY);
             bool alphaBlend = (pipelineCategory == PipelineCategory::POSTPROCESS_ALPHA_BLEND);
+            bool volumetric = (pipelineCategory == PipelineCategory::POSTPROCESS_VOLUMETRIC);
             assert(colorAttachmentFormat != vk::Format::eUndefined && "POSTPROCESS pipelines require an explicit colorAttachmentFormat");
             pipelineRenderingCreateInfo = {.colorAttachmentCount = 1, .pColorAttachmentFormats = &pipeline->colorAttachmentFormat, .depthAttachmentFormat = depthFormat};
             inputAssembly = {.topology = topology};
@@ -462,8 +464,8 @@ class PipelineManager {
                           .lineWidth = 1.0f};
             multisampling = {.rasterizationSamples = vk::SampleCountFlagBits::e1,
                              .sampleShadingEnable = vk::False};
-            depthStencil = {.depthTestEnable = (multiply || alphaBlend) ? vk::False : depthTestEnable,
-                            .depthWriteEnable = (multiply || alphaBlend) ? vk::False : depthWriteEnable,
+            depthStencil = {.depthTestEnable = (multiply || alphaBlend || volumetric) ? vk::False : depthTestEnable,
+                            .depthWriteEnable = (multiply || alphaBlend || volumetric) ? vk::False : depthWriteEnable,
                             .depthCompareOp = vk::CompareOp::eNever,
                             .depthBoundsTestEnable = vk::False,
                             .stencilTestEnable = vk::False};
@@ -474,6 +476,18 @@ class PipelineManager {
                                         .colorBlendOp = vk::BlendOp::eAdd,
                                         .srcAlphaBlendFactor = vk::BlendFactor::eOne,
                                         .dstAlphaBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha,
+                                        .alphaBlendOp = vk::BlendOp::eAdd,
+                                        .colorWriteMask =
+                                            vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA};
+            } else if (volumetric) {
+                // Froxel composite E: out.rgb = inScatter + sceneColor * transmittance.
+                // Shader outputs rgb = accumulated in-scatter (premultiplied), a = transmittance.
+                colorBlendAttachment = {.blendEnable = vk::True,
+                                        .srcColorBlendFactor = vk::BlendFactor::eOne,
+                                        .dstColorBlendFactor = vk::BlendFactor::eSrcAlpha,
+                                        .colorBlendOp = vk::BlendOp::eAdd,
+                                        .srcAlphaBlendFactor = vk::BlendFactor::eOne,
+                                        .dstAlphaBlendFactor = vk::BlendFactor::eZero,
                                         .alphaBlendOp = vk::BlendOp::eAdd,
                                         .colorWriteMask =
                                             vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA};
@@ -555,6 +569,7 @@ class PipelineManager {
         case PipelineCategory::POSTPROCESS:
         case PipelineCategory::POSTPROCESS_MULTIPLY:
         case PipelineCategory::POSTPROCESS_ALPHA_BLEND:
+        case PipelineCategory::POSTPROCESS_VOLUMETRIC:
             return &postProcessPipelines;
         default:
             return nullptr;
