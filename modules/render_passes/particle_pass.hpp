@@ -159,6 +159,8 @@ class ParticlePass : public RenderPass {
                 ParticleDrawPushConstants pc = {
                     .viewProjection    = scene.activeCamera.viewProjection,
                     .particlesBDA      = poolAddress,
+                    .lightsBDA         = bindless.descriptorSet->getFixedBuffers()[shared.buffers.lightBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(GPULight),
+                    .lightCount        = scene.getLightLoopBound(),
                     .particleOffset    = emitter.particleOffset,
                     .particleCount     = emitter.particleCapacity,
                     .textureIndex      = emitter.textureIndex,

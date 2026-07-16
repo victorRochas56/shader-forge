@@ -2,24 +2,27 @@ import modules.common;
 import modules.pbr;
 
 struct ParticleDrawPushConstants {
-    float4x4  viewProjection;
-    Particle*   particlesBDA;       // pool base address
-    uint  particleOffset;     // this emitter's base index into the pool
-    uint  particleCount;      // instances to draw (emitter ring capacity)
-    uint  textureIndex;
-    uint  numFrames;          // atlas frames, 0 = static
-    uint  samplerIndex;
-    uint  depthTextureIndex;
-    uint  depthSamplerIndex;
-    uint  flags;              // EMITTER_FLAG_*
-    uint2 resolution;
-    float softRadius;         // EMITTER_FLAG_SOFT depth-fade distance (view-space units)
-    float nearPlane;          // for linearizing the sampled scene depth
-    float farPlane;
+    float4x4  viewProjection; 
+    Particle*   particlesBDA; 
+    Light*      lightsBDA;    
+    uint  lightCount;
+    uint  particleOffset;     
+    uint  particleCount;      
+    uint  textureIndex;       
+    uint  numFrames;          
+    uint  samplerIndex;       
+    uint  depthTextureIndex;  
+    uint  depthSamplerIndex;  
+    uint  flags;              
+    uint2 resolution;         
+    float softRadius;         
+    float nearPlane;          
+    float farPlane;           
 };
 
 // Mirror of the EMITTER_FLAG_* bits in structs.hpp.
 static const uint EMITTER_FLAG_SOFT = 1u << 3;
+static const uint EMITTER_FLAG_LIT  = 1u << 1;
 
 // Shared descriptor bindings
 [[vk::push_constant]]
@@ -115,6 +118,91 @@ float4 fragMain(PSInput input) : SV_Target
     float2 screenUV = input.position.xy / float2(depthW, depthH);
     float sceneDepth = textures[particlePc.depthTextureIndex].Sample(samplers[particlePc.depthSamplerIndex], screenUV).r;
     if (input.position.z < sceneDepth) discard;
+
+    if((particlePc.flags & EMITTER_FLAG_LIT) != 0) {
+        for(int i = 0; i < particlePc.lightCount; i++) {
+            Light* currentLight = &pc.lights[i];
+
+            // Sparse slot skip: removed lights leave a zeroed sentinel in the buffer.
+            if(currentLight.intensity <= 0.0) continue;
+
+            if(currentLight.type != 1) {
+                float distance = length(currentLight.position - input.worldPos);
+                if(distance > currentLight.range){
+                    continue;
+                }
+            }
+
+            float3 L;
+            float attenuation;
+            float3 radiance;
+
+            if(currentLight.type == 1) {
+                float3 lightDir = currentLight.direction;
+                lightDir = normalize(lightDir);
+                L = -lightDir;
+                attenuation = 1.0;
+                radiance = currentLight.color.rgb * currentLight.intensity;
+            }
+            else {
+                float3 lightPos = currentLight.position;
+                float distance = length(lightPos - input.worldPos);
+
+                L = normalize(lightPos - input.worldPos);
+                attenuation = 1.0 / (distance * distance);
+                radiance = currentLight.color.rgb * currentLight.intensity * attenuation;
+            }
+
+            float3 H = normalize(V + L);
+
+            float NdotL_raw = dot(N, L);
+            if(NdotL_raw <= 0.0) {
+                continue;
+            }
+
+            float NdotV = max(dot(N, V), 0.001);
+            float NdotL = max(NdotL_raw, 0.001);
+            float NdotH = max(dot(N, H), 0.001);
+            float HdotV = max(dot(H, V), 0.001);
+
+            float NDF = DistributionGGX(N, H, roughness.r);
+            float G = GeometrySmith(N, V, L, roughness.r);
+            float3 F = fresnelSchlick(HdotV, F0);
+
+            float3 kS = F;
+            float3 kD = float3(1.0) - kS;
+            kD *= 1.0 - metallic.r;
+
+            float3 numerator = NDF * G * F;
+            float denominator = max(4.0 * NdotV * NdotL, 0.001);
+            float3 specular = numerator / denominator;
+            specular = max(specular, float3(0.0, 0.0, 0.0));
+            specular = min(specular, float3(100.0, 100.0, 100.0));
+
+            float shadow = 0.0;
+            if(currentLight.castsShadows == 1) {
+                float3 geometricNormal = normalize(input.normal);
+                shadow = calculateShadow(input.worldPos, pc.litPassData.cameraPos, pc.litPassData.cameraForward, geometricNormal, L, currentLight, pc.litPassData.shadowAtlasIndex);
+                if( currentLight.showCascades>0){
+                    if(shadow == 0){
+                        output.color = float4(1,0,0,1);
+                    }
+                    if(shadow == 1){
+                        output.color = float4(0,1,0,1);
+                    }
+                    if(shadow == 2){
+                        output.color = float4(0,0,1,1);
+                    }
+                    if(shadow == 3){
+                        output.color = float4(1,1,0,1);
+                    }
+                    return output;
+                }
+            }
+
+            Lo += (1.0 - shadow) * (kD * albedo.rgb / 3.14159265 + specular) * radiance * NdotL;
+        }
+    }
 
     // Fade alpha out over the last 20% of life so particles don't vanish abruptly.
     float ageFrac = p.age / max(p.lifespan, 1e-4);

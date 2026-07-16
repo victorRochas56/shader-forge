@@ -406,6 +406,8 @@ struct ParticleComputePushConstants {
 struct ParticleDrawPushConstants {
     glm::mat4  viewProjection;
     uint64_t   particlesBDA;       // pool base address
+    uint64_t   lightsBDA;
+    uint32_t   lightCount;
     uint32_t   particleOffset;     // this emitter's base index into the pool
     uint32_t   particleCount;      // instances to draw (emitter ring capacity)
     uint32_t   textureIndex;
