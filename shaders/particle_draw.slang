@@ -15,13 +15,21 @@ struct ParticleDrawPushConstants {
     uint  depthSamplerIndex;  
     uint  flags;              
     uint2 resolution;         
-    float softRadius;         
-    float nearPlane;          
-    float farPlane;           
+    float softRadius;
+    float nearPlane;
+    float farPlane;
+    float3 cameraPos;         // world-space, for lit particles
+    float3 cameraForward;     // normalized look dir, for cascade selection
+    uint  shadowAtlasIndex;
+    float sphereRoundness;    // lit spherical-impostor bulge: 0 flat .. 1 sphere (>1 exaggerates)
+    float densityMin;         // volumetric self-shadow extinction: emitter densityRange (min,max)
+    float densityMax;
+    float opacity;            // global transparency multiplier for the whole emitter
 };
 
 // Mirror of the EMITTER_FLAG_* bits in structs.hpp.
 static const uint EMITTER_FLAG_SOFT = 1u << 3;
+static const uint EMITTER_FLAG_VOLUMETRIC  = 1u << 2;
 static const uint EMITTER_FLAG_LIT  = 1u << 1;
 
 // Shared descriptor bindings
@@ -34,6 +42,7 @@ struct PSInput {
     nointerpolation uint instanceID : TEXCOORD1;
     float  coverage : TEXCOORD2;   // sub-pixel alpha fade (1.0 = full size)
     float  viewDepth : TEXCOORD3;  // clip.w of the center = linear view-space depth (soft particles)
+    float3 worldPos : TEXCOORD4;   // per-corner world-space position (lighting, shadows)
 };
 
 [shader("vertex")]
@@ -58,23 +67,30 @@ PSInput vertMain(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID)
         return o;
     }
 
-    // Project the center first; clip.w drives both the billboard scale and the pixel-size test.
-    float4 clip = mul(particlePc.viewProjection, float4(p.position, 1.0));
+    // Camera-facing (spherical) billboard basis, derived from the camera's forward direction.
+    float3 fwd     = particlePc.cameraForward;
+    float3 worldUp = abs(fwd.y) < 0.999 ? float3(0, 1, 0) : float3(1, 0, 0);
+    float3 right   = normalize(cross(worldUp, fwd));
+    float3 up      = cross(fwd, right);
+
+    // Project the center: gives the view depth and the NDC anchor for the pixel-size test.
+    float4 centerClip = mul(particlePc.viewProjection, float4(p.position, 1.0));
+    float2 ndcCenter  = centerClip.xy / centerClip.w;
 
     // Rotate the corner in the billboard plane, then scale by the particle's size.
     float2 corner = CORNERS[vertexID] * p.size;
     float s = sin(p.rotation);
     float c = cos(p.rotation);
     corner = float2(corner.x * c - corner.y * s, corner.x * s + corner.y * c);
-    // Aspect-correct x so the quad stays square on screen (offset is applied in clip space).
-    corner.x *= float(particlePc.resolution.y) / float(particlePc.resolution.x);
 
-    // Sub-pixel handling: the quad's on-screen half-extent in pixels. Offset is in clip space with
-    // no *w, so NDC half-extent = (0.5*size)/clip.w; *0.5*resolution.y converts NDC->pixels (y axis
-    // has no aspect skew). Below ~1px a particle would shimmer, so instead of shrinking it further we
+    // Sub-pixel handling: measure the quad's real on-screen half-extent by projecting a reference
+    // offset (0.5*size along the billboard up axis) and taking the NDC->pixel delta -> exact under
+    // any projection. Below ~1px a particle would shimmer, so instead of shrinking it further we
     // clamp the quad up to the floor and pay back the extra area in alpha (coverage) -> smooth fade
     // out with distance, no popping, roughly energy-preserving for additive/soft particles.
-    float halfPixels = (0.5 * p.size / clip.w) * 0.5 * float(particlePc.resolution.y);
+    float4 refClip    = mul(particlePc.viewProjection, float4(p.position + up * (0.5 * p.size), 1.0));
+    float2 refPix     = (refClip.xy / refClip.w - ndcCenter) * 0.5 * float2(particlePc.resolution);
+    float  halfPixels = length(refPix);
     const float MIN_PIXELS = 1.0;
     float coverage = 1.0;
     if (halfPixels < MIN_PIXELS) {
@@ -83,14 +99,16 @@ PSInput vertMain(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID)
         coverage  = 1.0 / (grow * grow);
     }
 
-    // Offset in clip space so the quad always faces the camera (shrinks with distance).
-    clip.xy += corner;
+    // Build the corner in world space so the fragment gets a true per-corner world position.
+    float3 worldPos = p.position + right * corner.x + up * corner.y;
+    float4 clip     = mul(particlePc.viewProjection, float4(worldPos, 1.0));
 
     o.position   = clip;
+    o.worldPos   = worldPos;
     o.texCoord   = UVS[vertexID];
     o.instanceID = instanceID;   // re-fetch the particle in fragMain (atlas frame, age fade)
     o.coverage   = coverage;
-    o.viewDepth  = clip.w;       // center's view-space depth (clip.w unaffected by the xy offset)
+    o.viewDepth  = centerClip.w; // center's view-space depth (independent of the corner offset)
     return o;
 }
 
@@ -119,89 +137,129 @@ float4 fragMain(PSInput input) : SV_Target
     float sceneDepth = textures[particlePc.depthTextureIndex].Sample(samplers[particlePc.depthSamplerIndex], screenUV).r;
     if (input.position.z < sceneDepth) discard;
 
-    if((particlePc.flags & EMITTER_FLAG_LIT) != 0) {
+
+    // --- Lit particles ------------------------------------------------------
+    // A billboard has no real surface, so we light the whole quad at the
+    // particle center (p.position) and fake a hemispherical normal that bulges
+    // toward the camera from the quad UV -> the sprite reads like a lit sphere.
+    if((particlePc.flags & EMITTER_FLAG_LIT) != 0u) {
+        float3 albedo   = outCol.rgb;      // particle texture is the base color
+        float3 worldPos = input.worldPos;  // per-corner world position
+        float3 V        = normalize(particlePc.cameraPos - worldPos);
+
+        const float roughness = 0.8;       // particles aren't PBR surfaces; soft response
+        const float metallic  = 0.0;
+        float3 F0 = lerp(float3(0.04), albedo, metallic);
+
+        // Spherical-impostor normal: treat the sprite as the front hemisphere of a sphere. Build the
+        // billboard tangent frame from the SAME basis the vertex shader used (cameraForward, not V --
+        // V points toward the camera so cross(up0,V) yields -right and mirrors the shading). Rotate
+        // the centered UV by p.rotation so the hemisphere lines up with the drawn, rotated quad;
+        // without this each particle is mis-oriented by its own rotation -> dark side points a random
+        // way per particle.
+        float3 fwd   = particlePc.cameraForward;
+        float3 up0   = abs(fwd.y) < 0.999 ? float3(0, 1, 0) : float3(1, 0, 0);
+        float3 right = normalize(cross(up0, fwd));
+        float3 bUp   = cross(fwd, right);
+        float  sr    = sin(p.rotation);
+        float  cr    = cos(p.rotation);
+        float2 d0    = input.texCoord * 2.0 - 1.0;                       // centered UV, [-1,1]
+        float2 d     = float2(d0.x * cr - d0.y * sr, d0.x * sr + d0.y * cr); // -> rotated quad frame
+        float  z     = sqrt(saturate(1.0 - dot(d0, d0)));               // 1 at center, 0 at the rim
+        // Roundness blends the flat billboard normal (-fwd) toward the full spherical bulge:
+        // 0 = flat card (uniform facing normal, soft flat lighting), 1 = full sphere, >1 exaggerates.
+        float3 sphereN = normalize(d.x * right + d.y * bUp - z * fwd);  // bulges toward camera (-fwd)
+        float3 N       = normalize(lerp(-fwd, sphereN, particlePc.sphereRoundness));
+
+        // Volumetric self-shadow setup: extinction from the emitter's density range (same age fade as
+        // the froxel sphere injection), sphere radius = billboard half-extent (matches billboardScale=1).
+        bool  volumetric = (particlePc.flags & EMITTER_FLAG_VOLUMETRIC) != 0u;
+        float sphereR    = 0.5 * p.size;
+        float volDensity = 0.0;
+        if (volumetric) {
+            float af      = p.age / max(p.lifespan, 1e-4);
+            float ageFade = 1.0 - smoothstep(0.8, 1.0, af);
+            volDensity    = lerp(particlePc.densityMin, particlePc.densityMax, ageFade);
+        }
+
+        float3 Lo = float3(0.0);
         for(int i = 0; i < particlePc.lightCount; i++) {
-            Light* currentLight = &pc.lights[i];
+            Light* currentLight = &particlePc.lightsBDA[i];
 
             // Sparse slot skip: removed lights leave a zeroed sentinel in the buffer.
             if(currentLight.intensity <= 0.0) continue;
 
             if(currentLight.type != 1) {
-                float distance = length(currentLight.position - input.worldPos);
-                if(distance > currentLight.range){
-                    continue;
-                }
+                float dist = length(currentLight.position - worldPos);
+                if(dist > currentLight.range) continue;
             }
 
             float3 L;
-            float attenuation;
             float3 radiance;
-
             if(currentLight.type == 1) {
-                float3 lightDir = currentLight.direction;
-                lightDir = normalize(lightDir);
-                L = -lightDir;
-                attenuation = 1.0;
+                L = -normalize(currentLight.direction);
                 radiance = currentLight.color.rgb * currentLight.intensity;
             }
             else {
-                float3 lightPos = currentLight.position;
-                float distance = length(lightPos - input.worldPos);
-
-                L = normalize(lightPos - input.worldPos);
-                attenuation = 1.0 / (distance * distance);
+                float3 toLight = currentLight.position - worldPos;
+                float  dist    = length(toLight);
+                L = toLight / max(dist, 1e-4);
+                float attenuation = 1.0 / (dist * dist);
                 radiance = currentLight.color.rgb * currentLight.intensity * attenuation;
+            }
+
+            // Volumetric particles scatter rather than reflect: light wraps around the sphere and is
+            // absorbed crossing it. For the parabolic sphere the optical depth of the light ray to this
+            // surface point reduces to a cube of (N.L) -- closed form, no ray march -- so the shadow
+            // side darkens smoothly and the shadow is "extruded" through the volume. N is the
+            // roundness-blended normal, so sphereRoundness still shapes the spherical effect here.
+            // Wrapped diffuse, no specular.
+            if (volumetric) {
+                float shadowV = 0.0;
+                if(currentLight.castsShadows == 1)
+                    shadowV = calculateShadow(worldPos, particlePc.cameraPos, particlePc.cameraForward,
+                                              N, L, currentLight, particlePc.shadowAtlasIndex);
+                float sndl  = dot(N, L);
+                float depth = max(-sndl, 0.0);                  // light-ray penetration, shadow side only
+                float tau   = (4.0 / 3.0) * sphereR * volDensity * depth * depth * depth;
+                float trans = exp(-tau);                        // 1 on the lit side -> 0 deep in shadow
+                float wrap  = sndl * 0.5 + 0.5;                 // soft wrap, no hard terminator
+                Lo += (1.0 - shadowV) * albedo * radiance * (wrap * trans);
+                continue;
             }
 
             float3 H = normalize(V + L);
 
             float NdotL_raw = dot(N, L);
-            if(NdotL_raw <= 0.0) {
-                continue;
-            }
+            if(NdotL_raw <= 0.0) continue;
 
             float NdotV = max(dot(N, V), 0.001);
             float NdotL = max(NdotL_raw, 0.001);
-            float NdotH = max(dot(N, H), 0.001);
             float HdotV = max(dot(H, V), 0.001);
 
-            float NDF = DistributionGGX(N, H, roughness.r);
-            float G = GeometrySmith(N, V, L, roughness.r);
-            float3 F = fresnelSchlick(HdotV, F0);
+            float NDF  = DistributionGGX(N, H, roughness);
+            float G    = GeometrySmith(N, V, L, roughness);
+            float3 F   = fresnelSchlick(HdotV, F0);
 
             float3 kS = F;
-            float3 kD = float3(1.0) - kS;
-            kD *= 1.0 - metallic.r;
+            float3 kD = (float3(1.0) - kS) * (1.0 - metallic);
 
-            float3 numerator = NDF * G * F;
-            float denominator = max(4.0 * NdotV * NdotL, 0.001);
-            float3 specular = numerator / denominator;
-            specular = max(specular, float3(0.0, 0.0, 0.0));
-            specular = min(specular, float3(100.0, 100.0, 100.0));
+            float3 specular = (NDF * G * F) / max(4.0 * NdotV * NdotL, 0.001);
+            specular = clamp(specular, float3(0.0), float3(100.0));
 
+            // Shadow: reuse the impostor normal for the normal-offset bias. Small
+            // billboards, so the bias direction matters little.
             float shadow = 0.0;
             if(currentLight.castsShadows == 1) {
-                float3 geometricNormal = normalize(input.normal);
-                shadow = calculateShadow(input.worldPos, pc.litPassData.cameraPos, pc.litPassData.cameraForward, geometricNormal, L, currentLight, pc.litPassData.shadowAtlasIndex);
-                if( currentLight.showCascades>0){
-                    if(shadow == 0){
-                        output.color = float4(1,0,0,1);
-                    }
-                    if(shadow == 1){
-                        output.color = float4(0,1,0,1);
-                    }
-                    if(shadow == 2){
-                        output.color = float4(0,0,1,1);
-                    }
-                    if(shadow == 3){
-                        output.color = float4(1,1,0,1);
-                    }
-                    return output;
-                }
+                shadow = calculateShadow(worldPos, particlePc.cameraPos, particlePc.cameraForward,
+                                         N, L, currentLight, particlePc.shadowAtlasIndex);
             }
 
-            Lo += (1.0 - shadow) * (kD * albedo.rgb / 3.14159265 + specular) * radiance * NdotL;
+            Lo += (1.0 - shadow) * (kD * albedo / PI + specular) * radiance * NdotL;
         }
+
+        // Small ambient so the shadowed side of the billboard isn't pure black.
+        outCol.rgb = Lo + albedo * 0.3;
     }
 
     // Fade alpha out over the last 20% of life so particles don't vanish abruptly.
@@ -217,6 +275,6 @@ float4 fragMain(PSInput input) : SV_Target
         softFade = saturate((sceneLinear - input.viewDepth) / particlePc.softRadius);
     }
 
-    outCol.a *= input.coverage * ageFade * softFade;
+    outCol.a *= particlePc.opacity * input.coverage * ageFade * softFade;
     return outCol;
 }

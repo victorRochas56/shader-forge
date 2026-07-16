@@ -176,6 +176,13 @@ class ParticlePass : public RenderPass {
                     .softRadius        = emitter.softRadius,
                     .nearPlane         = scene.activeCamera.nearPlane,
                     .farPlane          = scene.activeCamera.farPlane,
+                    .cameraPos         = scene.activeCamera.position,
+                    .cameraForward     = scene.activeCamera.getLookDir(),
+                    .shadowAtlasIndex  = scene.shadowAtlas.textureIndex,
+                    .sphereRoundness   = emitter.sphereRoundness,
+                    .densityMin        = emitter.densityRange.x,
+                    .densityMax        = emitter.densityRange.y,
+                    .opacity           = emitter.opacity,
                 };
                 cmd.pushConstants<ParticleDrawPushConstants>(*pipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pc);
                 cmd.draw(6, emitter.particleCapacity, 0, 0); // 6 verts/quad, one instance per ring slot

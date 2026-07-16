@@ -321,9 +321,14 @@ void showNodeEmitterInfo(Node& node, Scene& scene, BindlessSystem& bindless, con
         ImGui::DragFloat2("Angular Vel (min/max)", &emitter.angularVelocityRandom.x, 0.05f);
         ImGui::SliderFloat("Drag", &emitter.drag, 0.0f, 5.0f);
         ImGui::DragFloat2("Size (min/max)", &emitter.sizeRandom.x, 0.01f, 0.0f, 100.0f);
+        // Global transparency multiplier applied to every particle's alpha in the draw shader.
+        ImGui::SliderFloat("Opacity", &emitter.opacity, 0.0f, 1.0f);
 
         // Lit billboards sample scene lighting in the draw shader.
         ImGui::Checkbox("Lit", &emitter.lit);
+        // Spherical-impostor bulge for lit shading: 0 = flat card, 1 = sphere, >1 exaggerates.
+        if (emitter.lit)
+            ImGui::SliderFloat("Roundness", &emitter.sphereRoundness, 0.0f, 2.0f);
 
         // Volumetric: particles inject density into the froxel grid (VolumetricsPass pass B).
         // Density Range is the per-particle density and only matters when this is on.

@@ -238,6 +238,8 @@ struct ParticleEmitter {
     bool volumetricSphere = false;  // volumetric: inject a view-independent sphere (fly-through) vs a textured billboard
     bool softParticle = false;      // fade out where particles intersect scene geometry
     float softRadius = 1.0f;        // depth-fade distance (view-space units)
+    float sphereRoundness = 1.0f;   // lit: spherical-impostor bulge, 0 flat card .. 1 sphere (>1 exaggerates)
+    float opacity = 1.0f;           // global transparency multiplier for the whole emitter
     glm::vec2 densityRange = glm::vec2(0,1.0f);
 
     //=====Pool residency (assigned by Scene::addEmitter)=====//

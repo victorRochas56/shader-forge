@@ -403,23 +403,37 @@ struct ParticleComputePushConstants {
 // Drawn per-emitter: instanceCount = particleCapacity, 6 verts/quad. The vertex shader reads
 // particles[particleOffset + instanceID] by device address and degenerates dead slots (age < 0).
 // Depth test is done in-shader against the resolved depth, like billboards.
+// Slang compiles this push constant with std430 rules: uvec2 aligns to 8 and
+// vec3 to 16. The _pad* fields make the C++ offsets match the shader exactly
+// (offsets in comments; verified against particle_draw.spv). Do not reorder
+// without re-checking the SPIR-V, or resolution/camera data will be misread.
 struct ParticleDrawPushConstants {
-    glm::mat4  viewProjection;
-    uint64_t   particlesBDA;       // pool base address
-    uint64_t   lightsBDA;
-    uint32_t   lightCount;
-    uint32_t   particleOffset;     // this emitter's base index into the pool
-    uint32_t   particleCount;      // instances to draw (emitter ring capacity)
-    uint32_t   textureIndex;
-    uint32_t   numFrames;          // atlas frames, 0 = static
-    uint32_t   samplerIndex;
-    uint32_t   depthTextureIndex;
-    uint32_t   depthSamplerIndex;
-    uint32_t   flags;              // EMITTER_FLAG_*
-    glm::uvec2 resolution;
-    float      softRadius;         // EMITTER_FLAG_SOFT depth-fade distance (view-space units)
-    float      nearPlane;          // for linearizing the sampled scene depth
-    float      farPlane;
+    glm::mat4  viewProjection;     // 0
+    uint64_t   particlesBDA;       // 64  pool base address
+    uint64_t   lightsBDA;          // 72
+    uint32_t   lightCount;         // 80
+    uint32_t   particleOffset;     // 84  this emitter's base index into the pool
+    uint32_t   particleCount;      // 88  instances to draw (emitter ring capacity)
+    uint32_t   textureIndex;       // 92
+    uint32_t   numFrames;          // 96  atlas frames, 0 = static
+    uint32_t   samplerIndex;       // 100
+    uint32_t   depthTextureIndex;  // 104
+    uint32_t   depthSamplerIndex;  // 108
+    uint32_t   flags;              // 112 EMITTER_FLAG_*
+    uint32_t   _pad0;              // 116 aligns resolution (uvec2) to 120
+    glm::uvec2 resolution;         // 120
+    float      softRadius;         // 128 EMITTER_FLAG_SOFT depth-fade distance (view-space units)
+    float      nearPlane;          // 132 for linearizing the sampled scene depth
+    float      farPlane;           // 136
+    uint32_t   _pad1;              // 140 aligns cameraPos (vec3) to 144
+    glm::vec3  cameraPos;          // 144 world-space, for lit particles
+    uint32_t   _pad2;              // 156 aligns cameraForward (vec3) to 160
+    glm::vec3  cameraForward;      // 160 normalized look dir, for cascade selection
+    uint32_t   shadowAtlasIndex;   // 172
+    float      sphereRoundness;    // 176 lit spherical-impostor bulge: 0 flat .. 1 sphere (>1 exaggerates)
+    float      densityMin;         // 180 volumetric self-shadow extinction (emitter densityRange)
+    float      densityMax;         // 184
+    float      opacity;            // 188 global transparency multiplier for the emitter
 };
 
 struct SDF {

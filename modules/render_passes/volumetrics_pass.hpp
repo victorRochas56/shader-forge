@@ -191,7 +191,9 @@ class VolumetricsPass : public RenderPass {
         for (auto& [id, emitter] : scene.particleEmitters)
             activePool = std::max(activePool, emitter.particleOffset + emitter.particleCapacity);
         if (activePool > 0 && !scene.particleEmitters.empty()) {
-            float billboardScale = std::tan(glm::radians(scene.activeCamera.fov) * 0.5f);
+            // p.size is a world-space extent (the billboard builds its quad in world space, half-
+            // extent 0.5*size), so the froxel sphere radius is 0.5*size directly -- no fov factor.
+            float billboardScale = 1.0f;
             uint32_t numTiles = tilesX * tilesY;
             vk::DeviceSize countsFrameOffset = static_cast<vk::DeviceSize>(gpu.currentFrame) * numTiles * sizeof(uint32_t);
             vk::DeviceSize listFrameOffset   = static_cast<vk::DeviceSize>(gpu.currentFrame) * numTiles * MAX_PARTICLES_PER_TILE * sizeof(uint32_t);
