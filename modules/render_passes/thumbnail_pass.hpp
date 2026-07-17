@@ -34,11 +34,11 @@ public:
                 bindless.descriptorSet->getDescriptorSet(), COLOR_FORMAT);
         }
         if (*depthImage == VK_NULL_HANDLE) {
-            bindless.resourceManager->createImage(SIZE, SIZE, 1, vk::SampleCountFlagBits::e1, vk::Format::eD32Sfloat,
+            resource::createImage(*bindless.resourceCtx, SIZE, SIZE, 1, vk::SampleCountFlagBits::e1, vk::Format::eD32Sfloat,
                 vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eDepthStencilAttachment,
                 vk::MemoryPropertyFlagBits::eDeviceLocal, depthImage, depthMemory, 1);
-            depthView = bindless.resourceManager->createImageView(depthImage, vk::Format::eD32Sfloat, vk::ImageAspectFlagBits::eDepth);
-            bindless.resourceManager->transitionImageLayout(nullptr, *depthImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal);
+            depthView = resource::createImageView(*bindless.resourceCtx, depthImage, vk::Format::eD32Sfloat, vk::ImageAspectFlagBits::eDepth);
+            resource::transitionImageLayout(*bindless.resourceCtx, nullptr, *depthImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal);
         }
     }
 
@@ -62,7 +62,7 @@ public:
 private:
     void renderMesh(vk::raii::CommandBuffer& cmd, const Mesh& mesh) {
         TextureResource& target = bindless.descriptorSet->getTextureResource(mesh.thumbnailTextureIndex);
-        bindless.resourceManager->transitionImageLayout(&cmd, *target.image, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
+        resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *target.image, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
 
         vk::ClearValue clearColor{.color = vk::ClearColorValue(std::array<float, 4>{0.10f, 0.10f, 0.12f, 1.0f})};
         vk::ClearValue clearDepth{.depthStencil = vk::ClearDepthStencilValue{1.0f, 0}};
@@ -94,7 +94,7 @@ private:
         cmd.drawIndexed(mesh.indexCount, 1, static_cast<uint32_t>(mesh.indexOffset / sizeof(uint32_t)), 0, 0);
         cmd.endRendering();
 
-        bindless.resourceManager->transitionImageLayout(&cmd, *target.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+        resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *target.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
     }
 
     // Frame the mesh's AABB with a fixed 3/4 view. Matches the engine's Vulkan clip convention.

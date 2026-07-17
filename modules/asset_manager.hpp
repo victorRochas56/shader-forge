@@ -33,8 +33,8 @@ class AssetManager {
     // source mesh index -> reflected geometry copy used by mirrored instances
     std::map<uint32_t, uint32_t>        mirrorVariants;
 
-    void init(ResourceManager* resourceManager, DescriptorSet* descriptorSet, uint32_t vertexBufferIndex, uint32_t indexBufferIndex, uint32_t positionBufferIndex) {
-        this->resourceManager = resourceManager;
+    void init(resource::Context* resourceCtx, DescriptorSet* descriptorSet, uint32_t vertexBufferIndex, uint32_t indexBufferIndex, uint32_t positionBufferIndex) {
+        this->resourceCtx = resourceCtx;
         this->descriptorSet = descriptorSet;
         this->vertexBufferIndex = vertexBufferIndex;
         this->indexBufferIndex = indexBufferIndex;
@@ -110,7 +110,7 @@ class AssetManager {
 #if DEBUG == 1
         std::cout << "Loading mesh from " << filePath << " (import scale " << importScale << ")" << std::endl;
 #endif
-        MeshData meshData = resourceManager->loadMeshFromFile(filePath);
+        MeshData meshData = resource::loadMeshFromFile(filePath);
 
         // Bake the file's unit scale into vertex positions. Uniform scaling leaves normal
         // directions unchanged, so normals need no renormalization.
@@ -368,7 +368,7 @@ class AssetManager {
         // Parse the source file once and keep it around for the rest of this scene load.
         auto rawIt = rawMeshDataCache.find(filePath);
         if (rawIt == rawMeshDataCache.end()) {
-            rawIt = rawMeshDataCache.emplace(filePath, resourceManager->loadMeshFromFile(filePath)).first;
+            rawIt = rawMeshDataCache.emplace(filePath, resource::loadMeshFromFile(filePath)).first;
         }
         const MeshData& meshData = rawIt->second;
         if (entryIndex >= meshData.entries.size()) {
@@ -428,7 +428,7 @@ class AssetManager {
             return loadedTextures[filePath];
         }
 
-        auto [image, memory, view, texW, texH] = resourceManager->loadTextureFromFile(filePath, format);
+        auto [image, memory, view, texW, texH] = resource::loadTextureFromFile(*resourceCtx, filePath, format);
         uint32_t allocIndex = descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(view), filePath, false, texW, texH);
         loadedTextures[filePath] = allocIndex;
         return allocIndex;
@@ -442,7 +442,7 @@ class AssetManager {
             return loadedCubemaps[cubemapKey];
         }
 
-        auto [image, memory, view] = resourceManager->loadCubeMapFromFile(posX, negX, posY, negY, posZ, negZ, width, height);
+        auto [image, memory, view] = resource::loadCubeMapFromFile(*resourceCtx, posX, negX, posY, negY, posZ, negZ, width, height);
         uint32_t allocIndex = descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(view), cubemapKey, true, width, height);
         loadedCubemaps[cubemapKey] = allocIndex;
         return allocIndex;
@@ -472,7 +472,7 @@ class AssetManager {
     std::map<std::string, MeshData> rawMeshDataCache;  // transient parsed source files, freed after load
     std::map<std::string, uint32_t> sceneMeshCache;    // "file#entry@scale" -> meshIdx, persists across loads
 
-    ResourceManager* resourceManager = nullptr;
+    resource::Context* resourceCtx = nullptr;
     DescriptorSet* descriptorSet = nullptr;
     uint32_t vertexBufferIndex = 0;
     uint32_t indexBufferIndex = 0;

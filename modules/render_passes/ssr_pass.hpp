@@ -99,7 +99,7 @@ public:
             vk::Extent2D mipExtent{mipW, mipH};
 
             // Horizontal blur: read colorResolve mip N-1 -> write temp mip N
-            bindless.resourceManager->transitionImageLayout(&cmd, *tempTexture.image,
+            resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *tempTexture.image,
                 vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal, mip, 1);
 
             drawFullscreenPass(cmd, blurPipeline, (*shared.tempBlurMipViews)[mip], mipExtent,
@@ -107,11 +107,11 @@ public:
                                 .isHorizontal = 1, .blurRadius = 1.0f, .resolution = glm::uvec2(mipW, mipH),
                                 .mipLevel = mip - 1});
 
-            bindless.resourceManager->transitionImageLayout(&cmd, *tempTexture.image,
+            resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *tempTexture.image,
                 vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, mip, 1);
 
             // Vertical blur: read temp mip N -> write colorResolve mip N
-            bindless.resourceManager->transitionImageLayout(&cmd, *colorRes.image,
+            resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *colorRes.image,
                 vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal, mip, 1);
 
             drawFullscreenPass(cmd, blurPipeline, (*shared.colorResolveMipViews)[mip], mipExtent,
@@ -119,12 +119,12 @@ public:
                                 .isHorizontal = 0, .blurRadius = 1.0f, .resolution = glm::uvec2(mipW, mipH),
                                 .mipLevel = mip});
 
-            bindless.resourceManager->transitionImageLayout(&cmd, *colorRes.image,
+            resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *colorRes.image,
                 vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, mip, 1);
         }
 
         // --- Sub-pass 1: Ray trace -> ssrCurrentTextureIndex ---
-        bindless.resourceManager->transitionImageLayouts(cmd, {
+        resource::transitionImageLayouts(cmd, {
             {gpu.getSwapchain().getDepthImage(),  vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal},
             {*ssrCurrent.image,           vk::ImageLayout::eShaderReadOnlyOptimal,          vk::ImageLayout::eColorAttachmentOptimal},
         });
@@ -159,7 +159,7 @@ public:
             vk::AttachmentLoadOp::eClear, {0.0f, 0.0f, 0.0f, 0.0f});
 
         // --- Sub-pass 2: Temporal accumulate -> writeHistory ---
-        bindless.resourceManager->transitionImageLayouts(cmd, {
+        resource::transitionImageLayouts(cmd, {
             {*ssrCurrent.image,    vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal},
             {*ssrWriteHist.image,  vk::ImageLayout::eShaderReadOnlyOptimal,  vk::ImageLayout::eColorAttachmentOptimal},
         });
@@ -175,7 +175,7 @@ public:
             },
             vk::AttachmentLoadOp::eClear, {0.0f, 0.0f, 0.0f, 0.0f});
 
-        bindless.resourceManager->transitionImageLayout(&cmd, *ssrWriteHist.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+        resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *ssrWriteHist.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
 
         // --- Sub-pass 3: Apply accumulated SSR to the HDR composite ---
         drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[applyPipelineIndex], *bindless.descriptorSet->getTextureResource(shared.compositeColorTextureIndex).imageView, swapExtent,
@@ -186,7 +186,7 @@ public:
             vk::AttachmentLoadOp::eLoad);
 
         // transition depth back
-        bindless.resourceManager->transitionImageLayout(&cmd, gpu.getSwapchain().getDepthImage(), vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
+        resource::transitionImageLayout(*bindless.resourceCtx, &cmd, gpu.getSwapchain().getDepthImage(), vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
 
         historyFlip = 1 - historyFlip;
         historyInvalid = false;

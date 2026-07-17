@@ -136,7 +136,7 @@ class ParticlePass : public RenderPass {
 
             // Depth test is done in-shader by sampling the resolved depth, so make it readable.
             auto& depthResolveTex = bindless.descriptorSet->getTextureResource(gpu.getSwapchain().getDepthResolveIndex());
-            bindless.resourceManager->transitionImageLayout(&cmd, *depthResolveTex.image,
+            resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *depthResolveTex.image,
                 vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
 
             vk::RenderingAttachmentInfo colorAttachment = {
@@ -181,7 +181,7 @@ class ParticlePass : public RenderPass {
 
             cmd.endRendering();
 
-            bindless.resourceManager->transitionImageLayout(&cmd, *depthResolveTex.image,
+            resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *depthResolveTex.image,
                 vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
         }
 

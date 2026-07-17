@@ -61,7 +61,7 @@ Renderer::~Renderer() {
 void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     // GpuContext::initCore() must have been called by App already.
     bindless.initResources(gpu);
-    gpu.initSwapchain(*bindless.resourceManager, *bindless.descriptorSet);
+    gpu.initSwapchain(*bindless.resourceCtx, *bindless.descriptorSet);
     bindless.initPipelineManager(gpu);
 
     // Tracy GPU profiling context: calibrates timestamps via a transient submit on the graphics
@@ -84,7 +84,7 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     vertexBufferIndex   = bindless.descriptorSet->createVariableBuffer(256 * 1024 * 1024, vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress, false, "Vertex");
     indexBufferIndex    = bindless.descriptorSet->createVariableBuffer(128 * 1024 * 1024, vk::BufferUsageFlagBits::eIndexBuffer, false, "Index");
     positionBufferIndex = bindless.descriptorSet->createVariableBuffer(128 * 1024 * 1024, vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress, false, "Position");
-    scene.assetManager.init(bindless.resourceManager.get(), bindless.descriptorSet.get(), vertexBufferIndex, indexBufferIndex, positionBufferIndex);
+    scene.assetManager.init(bindless.resourceCtx.get(), bindless.descriptorSet.get(), vertexBufferIndex, indexBufferIndex, positionBufferIndex);
     passResources.vertexBufferIndex = vertexBufferIndex;
     passResources.indexBufferIndex  = indexBufferIndex;
 
@@ -115,8 +115,8 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     // indirect draw buffers (separate for shadow and lit passes)
     // Shadow indirect buffer needs one slot per shadow-casting light per frame so multiple lights
     // recorded into the same command buffer don't overwrite each other's draw commands.
-    std::tie(indirectDrawBuffer, indirectDrawBufferMemory, indirectDrawBufferMapped)          = bindless.resourceManager->createIndirectDrawBuffer(MAX_SHADOW_CASTERS);
-    std::tie(litIndirectDrawBuffer, litIndirectDrawBufferMemory, litIndirectDrawBufferMapped) = bindless.resourceManager->createIndirectDrawBuffer();
+    std::tie(indirectDrawBuffer, indirectDrawBufferMemory, indirectDrawBufferMapped)          = resource::createIndirectDrawBuffer(*bindless.resourceCtx, MAX_SHADOW_CASTERS);
+    std::tie(litIndirectDrawBuffer, litIndirectDrawBufferMemory, litIndirectDrawBufferMapped) = resource::createIndirectDrawBuffer(*bindless.resourceCtx);
     
     //init gizmos
     Gizmos::init(MAX_GIZMO_LINES, &*bindless.descriptorSet, sdfPassDataBufferIndex);
@@ -176,22 +176,22 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
                                                         vk::BorderColor::eFloatOpaqueWhite);
     // Default albedo (white)
     std::array<uint8_t, 4> whiteColor = {255, 255, 255, 255};
-    auto [albedoImage, albedoMemory, albedoImageView] = bindless.resourceManager->createTexture(whiteColor.data(), 1, 1, vk::Format::eR8G8B8A8Srgb);
+    auto [albedoImage, albedoMemory, albedoImageView] = resource::createTexture(*bindless.resourceCtx, whiteColor.data(), 1, 1, vk::Format::eR8G8B8A8Srgb);
     defaultAlbedoIndex = bindless.descriptorSet->allocateTexture(std::move(albedoImage), std::move(albedoMemory), std::move(albedoImageView));
 
     // Default normal (flat normal = 0.5, 0.5, 1.0 in RGB)
     std::array<uint8_t, 4> normalColor = {128, 128, 255, 255};
-    auto [normalImage, normalMemory, normalImageView] = bindless.resourceManager->createTexture(normalColor.data(), 1, 1, vk::Format::eR8G8B8A8Unorm);
+    auto [normalImage, normalMemory, normalImageView] = resource::createTexture(*bindless.resourceCtx, normalColor.data(), 1, 1, vk::Format::eR8G8B8A8Unorm);
     defaultNormalIndex = bindless.descriptorSet->allocateTexture(std::move(normalImage), std::move(normalMemory), std::move(normalImageView));
 
     // Default roughness = 0.5
     std::array<uint8_t, 4> roughnessColor = {128, 128, 128, 255};
-    auto [roughnessImage, roughnessMemory, roughnessImageView] = bindless.resourceManager->createTexture(roughnessColor.data(), 1, 1, vk::Format::eR8G8B8A8Unorm);
+    auto [roughnessImage, roughnessMemory, roughnessImageView] = resource::createTexture(*bindless.resourceCtx, roughnessColor.data(), 1, 1, vk::Format::eR8G8B8A8Unorm);
     uint32_t defaultRoughnessIndex = bindless.descriptorSet->allocateTexture(std::move(roughnessImage), std::move(roughnessMemory), std::move(roughnessImageView));
 
     // Default metallic = 0.0
     std::array<uint8_t, 4> metallicColor = {0, 0, 0, 255};
-    auto [metallicImage, metallicMemory, metallicImageView] = bindless.resourceManager->createTexture(metallicColor.data(), 1, 1, vk::Format::eR8G8B8A8Unorm);
+    auto [metallicImage, metallicMemory, metallicImageView] = resource::createTexture(*bindless.resourceCtx, metallicColor.data(), 1, 1, vk::Format::eR8G8B8A8Unorm);
     uint32_t defaultMetallicIndex = bindless.descriptorSet->allocateTexture(std::move(metallicImage), std::move(metallicMemory), std::move(metallicImageView));
 
     /////S=================================================PIPELINES=================================================/////
@@ -472,16 +472,16 @@ void Renderer::blurAttachment(vk::raii::CommandBuffer& cmd, uint32_t sourceTextu
     vk::Extent2D extent{width, height};
 
     // Horizontal blur (source -> temp)
-    bindless.resourceManager->transitionImageLayout(&cmd, *tempTexture.image, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
+    resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *tempTexture.image, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
     drawFullscreenPass(cmd, blurPipeline, *tempTexture.imageView, extent,
         BlurPushConstants{.inputTextureIndex = sourceTextureIndex, .samplerIndex = samplerIndex, .isHorizontal = 1, .blurRadius = blurRadius, .resolution = glm::uvec2(width, height)});
-    bindless.resourceManager->transitionImageLayout(&cmd, *tempTexture.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+    resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *tempTexture.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
 
     // Vertical blur (temp -> source)
-    bindless.resourceManager->transitionImageLayout(&cmd, *sourceTexture.image, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
+    resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *sourceTexture.image, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
     drawFullscreenPass(cmd, blurPipeline, *sourceTexture.imageView, extent,
         BlurPushConstants{.inputTextureIndex = tempTextureIndex, .samplerIndex = samplerIndex, .isHorizontal = 0, .blurRadius = blurRadius, .resolution = glm::uvec2(width, height)});
-    bindless.resourceManager->transitionImageLayout(&cmd, *sourceTexture.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+    resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *sourceTexture.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
 }
 
 /////=================================================CREATE RESOURCES=================================================/////
@@ -491,18 +491,18 @@ void Renderer::createShadowAtlas(uint32_t resolution) {
     vk::Format format = vk::Format::eD32Sfloat;
     vk::raii::Image image = nullptr;
     vk::raii::DeviceMemory memory = nullptr;
-    bindless.resourceManager->createImage(resolution,resolution, 1, vk::SampleCountFlagBits::e1, format,
+    resource::createImage(*bindless.resourceCtx, resolution,resolution, 1, vk::SampleCountFlagBits::e1, format,
                                 vk::ImageTiling::eOptimal,
                                 vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled,
                                 vk::MemoryPropertyFlagBits::eDeviceLocal, image, memory, 1);
 
-    vk::raii::ImageView view = bindless.resourceManager->createImageView(image,format,vk::ImageAspectFlagBits::eDepth,1);
+    vk::raii::ImageView view = resource::createImageView(*bindless.resourceCtx, image,format,vk::ImageAspectFlagBits::eDepth,1);
 
     // Atlas rests in eShaderReadOnlyOptimal so it matches its bindless descriptor's recorded layout —
     // required for the froxel light pass to sample it correctly from compute (VolumetricsPass C).
     // Seed via depth-read-only (Undefined can't go straight to shader-read for a depth aspect here).
-    bindless.resourceManager->transitionImageLayout(nullptr, *image, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthReadOnlyOptimal);
-    bindless.resourceManager->transitionImageLayout(nullptr, *image, vk::ImageLayout::eDepthReadOnlyOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+    resource::transitionImageLayout(*bindless.resourceCtx, nullptr, *image, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthReadOnlyOptimal);
+    resource::transitionImageLayout(*bindless.resourceCtx, nullptr, *image, vk::ImageLayout::eDepthReadOnlyOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
 
     scene.shadowAtlas.textureIndex = bindless.descriptorSet->allocateTexture(std::move(image),std::move(memory),std::move(view),"internal/scene.shadowAtlas",false,resolution,resolution);
 }
@@ -521,12 +521,12 @@ void Renderer::createNormalResources(uint32_t width, uint32_t height) {
     }
     vk::raii::Image image = nullptr;
     vk::raii::DeviceMemory memory = nullptr;
-    bindless.resourceManager->createImage(width, height, normalMipLevels, vk::SampleCountFlagBits::e1, vk::Format::eR8G8B8A8Unorm, vk::ImageTiling::eOptimal,
+    resource::createImage(*bindless.resourceCtx, width, height, normalMipLevels, vk::SampleCountFlagBits::e1, vk::Format::eR8G8B8A8Unorm, vk::ImageTiling::eOptimal,
                                  vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled |
                                  vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst,
                                  vk::MemoryPropertyFlagBits::eDeviceLocal, image, memory, 1);
-    auto view = bindless.resourceManager->createImageView(image, vk::Format::eR8G8B8A8Unorm, vk::ImageAspectFlagBits::eColor, normalMipLevels);
-    bindless.resourceManager->transitionImageLayout(nullptr, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal, 0, normalMipLevels);
+    auto view = resource::createImageView(*bindless.resourceCtx, image, vk::Format::eR8G8B8A8Unorm, vk::ImageAspectFlagBits::eColor, normalMipLevels);
+    resource::transitionImageLayout(*bindless.resourceCtx, nullptr, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal, 0, normalMipLevels);
     passResources.normalTextureIndex = bindless.descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(view), "internal/normals", false, width, height);
 }
 
@@ -543,7 +543,7 @@ void Renderer::createColorResolveResources(uint32_t width, uint32_t height) {
 
     vk::raii::Image image = nullptr;
     vk::raii::DeviceMemory memory = nullptr;
-    bindless.resourceManager->createImage(width, height, passResources.fullscreenMipLevels, vk::SampleCountFlagBits::e1, format, vk::ImageTiling::eOptimal,
+    resource::createImage(*bindless.resourceCtx, width, height, passResources.fullscreenMipLevels, vk::SampleCountFlagBits::e1, format, vk::ImageTiling::eOptimal,
                                  vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferSrc,
                                  vk::MemoryPropertyFlagBits::eDeviceLocal, image, memory);
 
@@ -557,8 +557,8 @@ void Renderer::createColorResolveResources(uint32_t width, uint32_t height) {
     }
 
     // Create a full-chain view for sampling
-    auto fullView = bindless.resourceManager->createImageView(image, format, vk::ImageAspectFlagBits::eColor, passResources.fullscreenMipLevels);
-    bindless.resourceManager->transitionImageLayout(nullptr, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal, 0, passResources.fullscreenMipLevels);
+    auto fullView = resource::createImageView(*bindless.resourceCtx, image, format, vk::ImageAspectFlagBits::eColor, passResources.fullscreenMipLevels);
+    resource::transitionImageLayout(*bindless.resourceCtx, nullptr, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal, 0, passResources.fullscreenMipLevels);
     passResources.colorResolveTextureIndex = bindless.descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(fullView), "internal/color_resolve", false, width, height);
 
     // Temp texture for separable blur passes (mipmapped, matching color resolve)
@@ -570,7 +570,7 @@ void Renderer::createColorResolveResources(uint32_t width, uint32_t height) {
 
     vk::raii::Image tempImage = nullptr;
     vk::raii::DeviceMemory tempMemory = nullptr;
-    bindless.resourceManager->createImage(width, height, passResources.fullscreenMipLevels, vk::SampleCountFlagBits::e1, format, vk::ImageTiling::eOptimal,
+    resource::createImage(*bindless.resourceCtx, width, height, passResources.fullscreenMipLevels, vk::SampleCountFlagBits::e1, format, vk::ImageTiling::eOptimal,
                                  vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
                                  vk::MemoryPropertyFlagBits::eDeviceLocal, tempImage, tempMemory);
 
@@ -582,8 +582,8 @@ void Renderer::createColorResolveResources(uint32_t width, uint32_t height) {
         tempBlurMipViews.emplace_back(gpu.getDevice().getDevice(), viewInfo);
     }
 
-    auto tempFullView = bindless.resourceManager->createImageView(tempImage, format, vk::ImageAspectFlagBits::eColor, passResources.fullscreenMipLevels);
-    bindless.resourceManager->transitionImageLayout(nullptr, tempImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal, 0, passResources.fullscreenMipLevels);
+    auto tempFullView = resource::createImageView(*bindless.resourceCtx, tempImage, format, vk::ImageAspectFlagBits::eColor, passResources.fullscreenMipLevels);
+    resource::transitionImageLayout(*bindless.resourceCtx, nullptr, tempImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal, 0, passResources.fullscreenMipLevels);
     passResources.tempBlurTextureIndex = bindless.descriptorSet->allocateTexture(std::move(tempImage), std::move(tempMemory), std::move(tempFullView), "internal/blur_temp", false, width, height);
 
     // HDR composite target seeded from colorResolve via copy, so it needs TransferDst.
@@ -596,14 +596,14 @@ void Renderer::createColorResolveResources(uint32_t width, uint32_t height) {
     }
     vk::raii::Image lumImage = nullptr;
     vk::raii::DeviceMemory lumMemory = nullptr;
-    bindless.resourceManager->createImage(width, height, passResources.fullscreenMipLevels, vk::SampleCountFlagBits::e1, vk::Format::eR16Sfloat, vk::ImageTiling::eOptimal,
+    resource::createImage(*bindless.resourceCtx, width, height, passResources.fullscreenMipLevels, vk::SampleCountFlagBits::e1, vk::Format::eR16Sfloat, vk::ImageTiling::eOptimal,
                                  vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst,
                                  vk::MemoryPropertyFlagBits::eDeviceLocal, lumImage, lumMemory);
     vk::ImageViewCreateInfo lumMip0Info{.image = lumImage, .viewType = vk::ImageViewType::e2D, .format = vk::Format::eR16Sfloat,
                                         .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1}};
     avgLumMip0View = vk::raii::ImageView(gpu.getDevice().getDevice(), lumMip0Info);
-    auto lumFullView = bindless.resourceManager->createImageView(lumImage, vk::Format::eR16Sfloat, vk::ImageAspectFlagBits::eColor, passResources.fullscreenMipLevels);
-    bindless.resourceManager->transitionImageLayout(nullptr, lumImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal, 0, passResources.fullscreenMipLevels);
+    auto lumFullView = resource::createImageView(*bindless.resourceCtx, lumImage, vk::Format::eR16Sfloat, vk::ImageAspectFlagBits::eColor, passResources.fullscreenMipLevels);
+    resource::transitionImageLayout(*bindless.resourceCtx, nullptr, lumImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal, 0, passResources.fullscreenMipLevels);
     avgLumTextureIndex = bindless.descriptorSet->allocateTexture(std::move(lumImage), std::move(lumMemory), std::move(lumFullView), "internal/avg_luminance", false, width, height);
 
     // 1x1 ping-pong adapted-luminance targets (created once; persist across resizes for adaptation state).
@@ -633,7 +633,7 @@ void Renderer::createHiZResources(uint32_t width, uint32_t height) {
     // Create mipmapped R32Sfloat image
     vk::raii::Image image = nullptr;
     vk::raii::DeviceMemory memory = nullptr;
-    bindless.resourceManager->createImage(width, height, passResources.hiZMipLevels, vk::SampleCountFlagBits::e1, vk::Format::eR32Sfloat, vk::ImageTiling::eOptimal,
+    resource::createImage(*bindless.resourceCtx, width, height, passResources.hiZMipLevels, vk::SampleCountFlagBits::e1, vk::Format::eR32Sfloat, vk::ImageTiling::eOptimal,
                                  vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
                                  vk::MemoryPropertyFlagBits::eDeviceLocal, image, memory);
 
@@ -647,8 +647,8 @@ void Renderer::createHiZResources(uint32_t width, uint32_t height) {
     }
 
     // Create a full-chain view for sampling
-    auto fullView = bindless.resourceManager->createImageView(image, vk::Format::eR32Sfloat, vk::ImageAspectFlagBits::eColor, passResources.hiZMipLevels);
-    bindless.resourceManager->transitionImageLayout(nullptr, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal, 0, passResources.hiZMipLevels);
+    auto fullView = resource::createImageView(*bindless.resourceCtx, image, vk::Format::eR32Sfloat, vk::ImageAspectFlagBits::eColor, passResources.hiZMipLevels);
+    resource::transitionImageLayout(*bindless.resourceCtx, nullptr, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal, 0, passResources.hiZMipLevels);
     passResources.hiZTextureIndex = bindless.descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(fullView), "internal/hiZ", false, width, height);
 
     // Hi-Z pipeline (only created once)
@@ -686,7 +686,7 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
 
     tracing::startTrace("record shadow pass");
     
-    bindless.resourceManager->transitionImageLayout(&cmd, *bindless.descriptorSet->getTextureResource(scene.shadowAtlas.textureIndex).image, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
+    resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *bindless.descriptorSet->getTextureResource(scene.shadowAtlas.textureIndex).image, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
     uint32_t shadowSlot = 0;
     for (auto& [lightId, light] : scene.lights) {
         if (light.castsShadows != 1) continue;
@@ -700,7 +700,7 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
         if (light.type == LightType::Point) light.shadowDirty = false;
         shadowSlot++;
     }
-    bindless.resourceManager->transitionImageLayout(&cmd, *bindless.descriptorSet->getTextureResource(scene.shadowAtlas.textureIndex).image, vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+    resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *bindless.descriptorSet->getTextureResource(scene.shadowAtlas.textureIndex).image, vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
 
     tracing::endTrace("record shadow pass");
    
@@ -733,7 +733,7 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
 
     recordOverlayPass(cmd, imageIndex);
 
-    bindless.resourceManager->transitionImageLayout(&cmd, gpu.getSwapchain().getSwapChainImages()[imageIndex], vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::ePresentSrcKHR);
+    resource::transitionImageLayout(*bindless.resourceCtx, &cmd, gpu.getSwapchain().getSwapChainImages()[imageIndex], vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::ePresentSrcKHR);
     cmd.end();
 }
 
@@ -836,7 +836,7 @@ void Renderer::recordHiZPass(vk::raii::CommandBuffer& cmd) {
     uint32_t h = hiZRes.height;
 
     // Transition depth resolve to shader read for sampling
-    bindless.resourceManager->transitionImageLayout(&cmd, *bindless.descriptorSet->getTextureResource(gpu.getSwapchain().getDepthResolveIndex()).image,
+    resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *bindless.descriptorSet->getTextureResource(gpu.getSwapchain().getDepthResolveIndex()).image,
         vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
 
     for (uint32_t mip = 0; mip < passResources.hiZMipLevels; ++mip) {
@@ -844,7 +844,7 @@ void Renderer::recordHiZPass(vk::raii::CommandBuffer& cmd) {
         uint32_t mipH = std::max(1u, h >> mip);
 
         // Transition this mip to color attachment
-        bindless.resourceManager->transitionImageLayout(&cmd, *hiZRes.image,
+        resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *hiZRes.image,
             vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal, mip, 1);
 
         HiZPushConstants hizPC;
@@ -868,18 +868,18 @@ void Renderer::recordHiZPass(vk::raii::CommandBuffer& cmd) {
         drawFullscreenPass(cmd, pipeline, *hiZMipViews[mip], mipExtent, hizPC);
 
         // Transition this mip back to shader read
-        bindless.resourceManager->transitionImageLayout(&cmd, *hiZRes.image,
+        resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *hiZRes.image,
             vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, mip, 1);
     }
     // hiZ empty space calculation pass?
 
     // Transition depth resolve back to depth attachment
-    bindless.resourceManager->transitionImageLayout(&cmd, *bindless.descriptorSet->getTextureResource(gpu.getSwapchain().getDepthResolveIndex()).image,
+    resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *bindless.descriptorSet->getTextureResource(gpu.getSwapchain().getDepthResolveIndex()).image,
         vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
 }
 
 void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) {
-    bindless.resourceManager->transitionImageLayouts(cmd, {
+    resource::transitionImageLayouts(cmd, {
         {gpu.getSwapchain().getSwapChainImages()[imageIndex],                            vk::ImageLayout::eUndefined,              vk::ImageLayout::eColorAttachmentOptimal},
         {gpu.getSwapchain().getColorImage(),                                             vk::ImageLayout::eUndefined,              vk::ImageLayout::eColorAttachmentOptimal},
         {gpu.getSwapchain().getDepthImage(),                                             vk::ImageLayout::eUndefined,              vk::ImageLayout::eDepthStencilAttachmentOptimal},
@@ -1002,7 +1002,7 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
 
     // --- Lit geometry pass (2 color attachments: color + roughness/metallic) ---
     auto& colorResolve = bindless.descriptorSet->getTextureResource(passResources.colorResolveTextureIndex);
-    bindless.resourceManager->transitionImageLayout(&cmd, *colorResolve.image,
+    resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *colorResolve.image,
         vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
 
     vk::RenderingAttachmentInfo colorAttachment = {.imageView = gpu.getSwapchain().getColorImageView(),
@@ -1091,19 +1091,19 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
 
     // Transition: color resolve to shader readable, roughness-metal to shader readable for SSR.
     // colorResolve is copied into the HDR composite target by recordResolveToCompositeCopy().
-    bindless.resourceManager->transitionImageLayouts(cmd, {
+    resource::transitionImageLayouts(cmd, {
         {*colorResolve.image,                                                            vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal},
         {*bindless.descriptorSet->getTextureResource(passResources.roughnessMetalTextureIndex).image,  vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal},
     });
 
     // Generate normal mips inline for SSR pre-filtering
     auto& normalRes = bindless.descriptorSet->getTextureResource(passResources.normalTextureIndex);
-    bindless.resourceManager->generateMipmaps(*normalRes.image, vk::Format::eR8G8B8A8Unorm,
+    resource::generateMipmaps(*bindless.resourceCtx, *normalRes.image, vk::Format::eR8G8B8A8Unorm,
         static_cast<int32_t>(normalRes.width), static_cast<int32_t>(normalRes.height),
         normalMipLevels, 1, &cmd, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
 
     // Transition motion vecs to shader read only
-    bindless.resourceManager->transitionImageLayout(&cmd, *bindless.descriptorSet->getTextureResource(passResources.motionVectorTextureIndex).image,
+    resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *bindless.descriptorSet->getTextureResource(passResources.motionVectorTextureIndex).image,
                                            vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
 }
 
@@ -1116,7 +1116,7 @@ void Renderer::recordBillboardBlendPass(vk::raii::CommandBuffer& cmd, uint32_t i
 
     // Depth test is done in-shader by sampling the resolved depth, so make it shader-readable.
     auto& depthResolveTex = bindless.descriptorSet->getTextureResource(gpu.getSwapchain().getDepthResolveIndex());
-    bindless.resourceManager->transitionImageLayout(&cmd, *depthResolveTex.image,
+    resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *depthResolveTex.image,
         vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
 
     vk::RenderingAttachmentInfo colorAttachment = {.imageView = *bindless.descriptorSet->getTextureResource(passResources.compositeColorTextureIndex).imageView,
@@ -1183,7 +1183,7 @@ void Renderer::recordBillboardBlendPass(vk::raii::CommandBuffer& cmd, uint32_t i
 
     cmd.endRendering();
 
-    bindless.resourceManager->transitionImageLayout(&cmd, *depthResolveTex.image,
+    resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *depthResolveTex.image,
         vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
 
 }
@@ -1194,7 +1194,7 @@ void Renderer::recordResolveToCompositeCopy(vk::raii::CommandBuffer& cmd) {
     auto& composite = bindless.descriptorSet->getTextureResource(passResources.compositeColorTextureIndex);
     auto extent = gpu.getSwapchain().getSwapChainExtent();
 
-    bindless.resourceManager->transitionImageLayouts(cmd, {
+    resource::transitionImageLayouts(cmd, {
         {*colorResolve.image, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eTransferSrcOptimal},
         {*composite.image,    vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eTransferDstOptimal},
     });
@@ -1208,7 +1208,7 @@ void Renderer::recordResolveToCompositeCopy(vk::raii::CommandBuffer& cmd) {
                   *composite.image, vk::ImageLayout::eTransferDstOptimal,
                   copyRegion);
 
-    bindless.resourceManager->transitionImageLayouts(cmd, {
+    resource::transitionImageLayouts(cmd, {
         {*colorResolve.image, vk::ImageLayout::eTransferSrcOptimal, vk::ImageLayout::eShaderReadOnlyOptimal},
         {*composite.image,    vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eColorAttachmentOptimal},
     });
@@ -1221,14 +1221,14 @@ uint32_t Renderer::recordAutoExposure(vk::raii::CommandBuffer& cmd) {
     auto& avgLum = bindless.descriptorSet->getTextureResource(avgLumTextureIndex);
 
     // 1. Extract log2(luminance) of the lit scene into avgLum mip 0.
-    bindless.resourceManager->transitionImageLayout(&cmd, *avgLum.image,
+    resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *avgLum.image,
         vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal, 0, 1);
     drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[lumExtractPipelineIndex],
         *avgLumMip0View, extent,
         LumExtractPushConstants{.inputTextureIndex = passResources.colorResolveTextureIndex, .samplerIndex = passResources.defaultSamplerIndex});
 
     // 2. Box-average down to 1x1 (the geometric mean, since values are log2). Leaves all mips shader-readable.
-    bindless.resourceManager->generateMipmaps(*avgLum.image, vk::Format::eR16Sfloat,
+    resource::generateMipmaps(*bindless.resourceCtx, *avgLum.image, vk::Format::eR16Sfloat,
         avgLum.width, avgLum.height, passResources.fullscreenMipLevels, 1, &cmd,
         vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
 
@@ -1240,7 +1240,7 @@ uint32_t Renderer::recordAutoExposure(vk::raii::CommandBuffer& cmd) {
     float dt = std::clamp(gpu.time - autoExposurePrevTime, 0.0f, 0.1f);
     autoExposurePrevTime = gpu.time;
 
-    bindless.resourceManager->transitionImageLayout(&cmd, *writeTex.image,
+    resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *writeTex.image,
         vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
     drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[exposureAdaptPipelineIndex],
         *writeTex.imageView, vk::Extent2D{1, 1},
@@ -1253,7 +1253,7 @@ uint32_t Renderer::recordAutoExposure(vk::raii::CommandBuffer& cmd) {
             .speed = features.tonemap.adaptationSpeed,
             .initialized = adaptInitialized ? 1u : 0u,
         });
-    bindless.resourceManager->transitionImageLayout(&cmd, *writeTex.image,
+    resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *writeTex.image,
         vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
 
     adaptFlip = 1 - adaptFlip;
@@ -1271,7 +1271,7 @@ void Renderer::recordTonemapPass(vk::raii::CommandBuffer& cmd, uint32_t imageInd
     }
 
     // Composite finished as a color attachment; make it sampleable, then resolve to the swapchain.
-    bindless.resourceManager->transitionImageLayout(&cmd, *composite.image,
+    resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *composite.image,
         vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
 
     drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[tonemapPipelineIndex],
@@ -1521,11 +1521,11 @@ void Renderer::createOrResizeRenderTarget(uint32_t& index, uint32_t width, uint3
     }
     vk::raii::Image image = nullptr;
     vk::raii::DeviceMemory memory = nullptr;
-    bindless.resourceManager->createImage(width, height, 1, vk::SampleCountFlagBits::e1, format, vk::ImageTiling::eOptimal,
+    resource::createImage(*bindless.resourceCtx, width, height, 1, vk::SampleCountFlagBits::e1, format, vk::ImageTiling::eOptimal,
                                  vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled | extraUsage,
                                  vk::MemoryPropertyFlagBits::eDeviceLocal, image, memory, 1);
-    auto view = bindless.resourceManager->createImageView(image, format, vk::ImageAspectFlagBits::eColor);
-    bindless.resourceManager->transitionImageLayout(nullptr, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal);
+    auto view = resource::createImageView(*bindless.resourceCtx, image, format, vk::ImageAspectFlagBits::eColor);
+    resource::transitionImageLayout(*bindless.resourceCtx, nullptr, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal);
     index = bindless.descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(view), debugName, false, width, height);
 }
 
@@ -1537,12 +1537,12 @@ void Renderer::createOrResize3DStorageImage(uint32_t& textureIndex, uint32_t& st
 
     vk::raii::Image image = nullptr;
     vk::raii::DeviceMemory memory = nullptr;
-    bindless.resourceManager->create3DImage(width, height, depth, 1, vk::SampleCountFlagBits::e1, format, vk::ImageTiling::eOptimal,
+    resource::create3DImage(*bindless.resourceCtx, width, height, depth, 1, vk::SampleCountFlagBits::e1, format, vk::ImageTiling::eOptimal,
                                  vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled | extraUsage,
                                  vk::MemoryPropertyFlagBits::eDeviceLocal, image, memory, 1);
-    auto view = bindless.resourceManager->create3DImageView(image, format, vk::ImageAspectFlagBits::eColor);
+    auto view = resource::create3DImageView(*bindless.resourceCtx, image, format, vk::ImageAspectFlagBits::eColor);
     // Sampled slot reads it in eShaderReadOnlyOptimal; compute passes transition to eGeneral before writing.
-    bindless.resourceManager->transitionImageLayout(nullptr, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal);
+    resource::transitionImageLayout(*bindless.resourceCtx, nullptr, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal);
 
     // Register the same view twice: once sampled (owns image/memory/view), once as a storage descriptor.
     vk::ImageView rawView = *view;
@@ -1552,11 +1552,11 @@ void Renderer::createOrResize3DStorageImage(uint32_t& textureIndex, uint32_t& st
 
 void Renderer::createOrResizeMSAATarget(Image& target, uint32_t width, uint32_t height, vk::Format format) {
     target.view = nullptr; // destroy view before image
-    bindless.resourceManager->createImage(width, height, 1, gpu.getMsaaSamples(),format, vk::ImageTiling::eOptimal,
+    resource::createImage(*bindless.resourceCtx, width, height, 1, gpu.getMsaaSamples(),format, vk::ImageTiling::eOptimal,
                                  vk::ImageUsageFlagBits::eTransientAttachment | vk::ImageUsageFlagBits::eColorAttachment,
                                  vk::MemoryPropertyFlagBits::eDeviceLocal, target.image, target.memory);
-    target.view = bindless.resourceManager->createImageView(target.image, format, vk::ImageAspectFlagBits::eColor, 1);
-    bindless.resourceManager->transitionImageLayout(nullptr, target.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
+    target.view = resource::createImageView(*bindless.resourceCtx, target.image, format, vk::ImageAspectFlagBits::eColor, 1);
+    resource::transitionImageLayout(*bindless.resourceCtx, nullptr, target.image, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
 }
 
 void Renderer::setFullscreenViewport(vk::raii::CommandBuffer& cmd, vk::Extent2D extent) {

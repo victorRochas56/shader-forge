@@ -9,11 +9,11 @@ void RenderPass::resize(uint32_t& index, uint32_t width, uint32_t height, vk::Fo
     }
     vk::raii::Image image = nullptr;
     vk::raii::DeviceMemory memory = nullptr;
-    bindless.resourceManager->createImage(width, height, 1, vk::SampleCountFlagBits::e1, format, vk::ImageTiling::eOptimal,
+    resource::createImage(*bindless.resourceCtx, width, height, 1, vk::SampleCountFlagBits::e1, format, vk::ImageTiling::eOptimal,
                                  vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled | extraUsage,
                                  vk::MemoryPropertyFlagBits::eDeviceLocal, image, memory, 1);
-    auto view = bindless.resourceManager->createImageView(image, format, vk::ImageAspectFlagBits::eColor);
-    bindless.resourceManager->transitionImageLayout(nullptr, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal);
+    auto view = resource::createImageView(*bindless.resourceCtx, image, format, vk::ImageAspectFlagBits::eColor);
+    resource::transitionImageLayout(*bindless.resourceCtx, nullptr, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal);
     index = bindless.descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(view), debugName, false, width, height);
 }
 
@@ -25,12 +25,12 @@ void RenderPass::resize3DStorageImage(uint32_t& textureIndex, uint32_t& storageI
 
     vk::raii::Image image = nullptr;
     vk::raii::DeviceMemory memory = nullptr;
-    bindless.resourceManager->create3DImage(width, height, depth, 1, vk::SampleCountFlagBits::e1, format, vk::ImageTiling::eOptimal,
+    resource::create3DImage(*bindless.resourceCtx, width, height, depth, 1, vk::SampleCountFlagBits::e1, format, vk::ImageTiling::eOptimal,
                                  vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled,
                                  vk::MemoryPropertyFlagBits::eDeviceLocal, image, memory, 1);
-    auto view = bindless.resourceManager->create3DImageView(image, format, vk::ImageAspectFlagBits::eColor);
+    auto view = resource::create3DImageView(*bindless.resourceCtx, image, format, vk::ImageAspectFlagBits::eColor);
     // Resting layout is sampled; compute passes transition to eGeneral before writing, then back.
-    bindless.resourceManager->transitionImageLayout(nullptr, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal);
+    resource::transitionImageLayout(*bindless.resourceCtx, nullptr, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal);
 
     vk::ImageView rawView = *view;
     textureIndex = bindless.descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(view), debugName, false, width, height);
@@ -56,14 +56,14 @@ void blurAttachment(BindlessSystem& bindless, vk::raii::CommandBuffer& cmd, uint
     vk::Extent2D extent{width, height};
 
     // Horizontal blur (source -> temp)
-    bindless.resourceManager->transitionImageLayout(&cmd, *tempTexture.image, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
+    resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *tempTexture.image, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
     drawFullscreenPass(cmd, blurPipeline, *tempTexture.imageView, extent,
         BlurPushConstants{.inputTextureIndex = sourceTextureIndex, .samplerIndex = samplerIndex, .isHorizontal = 1, .blurRadius = blurRadius, .resolution = glm::uvec2(width, height)});
-    bindless.resourceManager->transitionImageLayout(&cmd, *tempTexture.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+    resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *tempTexture.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
 
     // Vertical blur (temp -> source)
-    bindless.resourceManager->transitionImageLayout(&cmd, *sourceTexture.image, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
+    resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *sourceTexture.image, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
     drawFullscreenPass(cmd, blurPipeline, *sourceTexture.imageView, extent,
         BlurPushConstants{.inputTextureIndex = tempTextureIndex, .samplerIndex = samplerIndex, .isHorizontal = 0, .blurRadius = blurRadius, .resolution = glm::uvec2(width, height)});
-    bindless.resourceManager->transitionImageLayout(&cmd, *sourceTexture.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+    resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *sourceTexture.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
 }

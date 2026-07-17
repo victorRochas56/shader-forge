@@ -52,11 +52,11 @@ public:
                 bindless.descriptorSet->getDescriptorSet(), vk::Format::eUndefined);
         }
         if (*depthImage == VK_NULL_HANDLE) {
-            bindless.resourceManager->createImage(SIZE, SIZE, 1, vk::SampleCountFlagBits::e1, vk::Format::eD32Sfloat,
+            resource::createImage(*bindless.resourceCtx, SIZE, SIZE, 1, vk::SampleCountFlagBits::e1, vk::Format::eD32Sfloat,
                 vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eDepthStencilAttachment,
                 vk::MemoryPropertyFlagBits::eDeviceLocal, depthImage, depthMemory, 1);
-            depthView = bindless.resourceManager->createImageView(depthImage, vk::Format::eD32Sfloat, vk::ImageAspectFlagBits::eDepth);
-            bindless.resourceManager->transitionImageLayout(nullptr, *depthImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal);
+            depthView = resource::createImageView(*bindless.resourceCtx, depthImage, vk::Format::eD32Sfloat, vk::ImageAspectFlagBits::eDepth);
+            resource::transitionImageLayout(*bindless.resourceCtx, nullptr, *depthImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal);
         }
         resize(scratchAIndex, SIZE, SIZE, COLOR_FORMAT, "internal/matThumbScratchA");
         resize(scratchBIndex, SIZE, SIZE, COLOR_FORMAT, "internal/matThumbScratchB");
@@ -155,8 +155,8 @@ public:
         vk::Image     sbImage = *bindless.descriptorSet->getTextureResource(scratchBIndex).image;
         vk::ImageView saView  = *bindless.descriptorSet->getTextureResource(scratchAIndex).imageView;
         vk::ImageView sbView  = *bindless.descriptorSet->getTextureResource(scratchBIndex).imageView;
-        bindless.resourceManager->transitionImageLayout(&cmd, saImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
-        bindless.resourceManager->transitionImageLayout(&cmd, sbImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
+        resource::transitionImageLayout(*bindless.resourceCtx, &cmd, saImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
+        resource::transitionImageLayout(*bindless.resourceCtx, &cmd, sbImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
 
         bindPipeline(cmd, *bindless.pipelineManager->getBeforeGeoPipelines()[pipelineIndex]);
         cmd.bindIndexBuffer(bindless.descriptorSet->getVariableBuffer(shared.indexBufferIndex), 0, vk::IndexType::eUint32);
@@ -168,7 +168,7 @@ public:
         for (uint32_t i = 0; i < count; i++) {
             vk::Image     targetImage = *bindless.descriptorSet->getTextureResource(materials[i].thumbnailTextureIndex).image;
             vk::ImageView targetView  = *bindless.descriptorSet->getTextureResource(materials[i].thumbnailTextureIndex).imageView;
-            bindless.resourceManager->transitionImageLayout(&cmd, targetImage, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
+            resource::transitionImageLayout(*bindless.resourceCtx, &cmd, targetImage, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
 
             vk::RenderingAttachmentInfo colorAttachments[3] = {
                 {.imageView = targetView, .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
@@ -198,7 +198,7 @@ public:
             cmd.drawIndexed(sphereIndexCount, 1, sphereIndexFirst, 0, 0);
             cmd.endRendering();
 
-            bindless.resourceManager->transitionImageLayout(&cmd, targetImage, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+            resource::transitionImageLayout(*bindless.resourceCtx, &cmd, targetImage, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
             tracing::endTrace("material thumb pass");
         }
     }

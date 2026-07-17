@@ -18,8 +18,8 @@
 class Swapchain {
 
   public:
-    Swapchain(Device& device, ResourceManager& resourceManager, DescriptorSet& descriptorSet, vk::raii::SurfaceKHR& surface, vk::SampleCountFlagBits msaaSamples)
-        : msaaSamples(msaaSamples), resourceManager(resourceManager), descriptorSet(descriptorSet), device(device), surface(surface) {}
+    Swapchain(Device& device, resource::Context& resourceCtx, DescriptorSet& descriptorSet, vk::raii::SurfaceKHR& surface, vk::SampleCountFlagBits msaaSamples)
+        : msaaSamples(msaaSamples), resourceCtx(resourceCtx), descriptorSet(descriptorSet), device(device), surface(surface) {}
 
     void create(GLFWwindow& window, bool& useVsync) {
         auto surfaceCapabilities = device.getPhysicalDevice().getSurfaceCapabilitiesKHR(*surface);
@@ -94,7 +94,7 @@ class Swapchain {
 
   private:
     Device& device;
-    ResourceManager& resourceManager;
+    resource::Context& resourceCtx;
     DescriptorSet& descriptorSet;
     vk::raii::SurfaceKHR& surface;
     vk::SampleCountFlagBits msaaSamples;
@@ -162,28 +162,28 @@ class Swapchain {
     void createColorResources() {
         // MSAA color target is HDR; resolves into colorResolve.
         vk::Format colorFormat = hdrColorFormat;
-        resourceManager.createImage(swapChainExtent.width, swapChainExtent.height, 1, msaaSamples, colorFormat, vk::ImageTiling::eOptimal,
-                                    vk::ImageUsageFlagBits::eTransientAttachment | vk::ImageUsageFlagBits::eColorAttachment, vk::MemoryPropertyFlagBits::eDeviceLocal, colorImage,
-                                    colorImageMemory);
-        colorImageView = resourceManager.createImageView(colorImage, colorFormat, vk::ImageAspectFlagBits::eColor, 1);
-        resourceManager.transitionImageLayout(nullptr, colorImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
+        resource::createImage(resourceCtx, swapChainExtent.width, swapChainExtent.height, 1, msaaSamples, colorFormat, vk::ImageTiling::eOptimal,
+                              vk::ImageUsageFlagBits::eTransientAttachment | vk::ImageUsageFlagBits::eColorAttachment, vk::MemoryPropertyFlagBits::eDeviceLocal, colorImage,
+                              colorImageMemory);
+        colorImageView = resource::createImageView(resourceCtx, colorImage, colorFormat, vk::ImageAspectFlagBits::eColor, 1);
+        resource::transitionImageLayout(resourceCtx, nullptr, colorImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eColorAttachmentOptimal);
     }
 
     void createDepthResources() {
         vk::Format depthFormat = findSupportedFormat({vk::Format::eD32Sfloat, vk::Format::eD32SfloatS8Uint, vk::Format::eD24UnormS8Uint}, vk::ImageTiling::eOptimal,
                                                      vk::FormatFeatureFlagBits::eDepthStencilAttachment, device);
 
-        resourceManager.createImage(swapChainExtent.width, swapChainExtent.height, 1, msaaSamples, depthFormat, vk::ImageTiling::eOptimal,
-                                    vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, depthImage,
-                                    depthImageMemory);
-        resourceManager.createImage(swapChainExtent.width, swapChainExtent.height, 1, vk::SampleCountFlagBits::e1, depthFormat, vk::ImageTiling::eOptimal,
-                                    vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, depthResolveImage,
-                                    depthResolveImageMemory);
+        resource::createImage(resourceCtx, swapChainExtent.width, swapChainExtent.height, 1, msaaSamples, depthFormat, vk::ImageTiling::eOptimal,
+                              vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, depthImage,
+                              depthImageMemory);
+        resource::createImage(resourceCtx, swapChainExtent.width, swapChainExtent.height, 1, vk::SampleCountFlagBits::e1, depthFormat, vk::ImageTiling::eOptimal,
+                              vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, depthResolveImage,
+                              depthResolveImageMemory);
 
-        depthImageView = resourceManager.createImageView(depthImage, depthFormat, vk::ImageAspectFlagBits::eDepth, 1);
-        depthResolveImageView = resourceManager.createImageView(depthResolveImage, depthFormat, vk::ImageAspectFlagBits::eDepth, 1);
-        resourceManager.transitionImageLayout(nullptr, depthImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal);
-        resourceManager.transitionImageLayout(nullptr, depthResolveImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal);
+        depthImageView = resource::createImageView(resourceCtx, depthImage, depthFormat, vk::ImageAspectFlagBits::eDepth, 1);
+        depthResolveImageView = resource::createImageView(resourceCtx, depthResolveImage, depthFormat, vk::ImageAspectFlagBits::eDepth, 1);
+        resource::transitionImageLayout(resourceCtx, nullptr, depthImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal);
+        resource::transitionImageLayout(resourceCtx, nullptr, depthResolveImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthStencilAttachmentOptimal);
 
         if (depthResolveIndex == 0xFFFFFFFF) {
             // First time: allocate new slot

@@ -47,7 +47,7 @@ public:
                 noiseData[i * 4 + 3] = 255;
             }
             auto [noiseImage, noiseMemory, noiseImageView] =
-                bindless.resourceManager->createTexture(noiseData.data(), 4, 4, vk::Format::eR8G8B8A8Unorm, vk::ImageType::e2D, vk::ImageViewType::e2D, vk::SampleCountFlagBits::e1, false);
+                resource::createTexture(*bindless.resourceCtx, noiseData.data(), 4, 4, vk::Format::eR8G8B8A8Unorm, vk::ImageType::e2D, vk::ImageViewType::e2D, vk::SampleCountFlagBits::e1, false);
             noiseTextureIndex = bindless.descriptorSet->allocateTexture(std::move(noiseImage), std::move(noiseMemory), std::move(noiseImageView), "internal/ssao_noise");
 
             // Noise sampler: repeat + nearest (tiled across screen)
@@ -92,7 +92,7 @@ public:
 
         // SSAO samples the resolved depth (single-sample), not the MSAA depth, so transition that one.
         auto& depthResolveTex = bindless.descriptorSet->getTextureResource(gpu.getSwapchain().getDepthResolveIndex());
-        bindless.resourceManager->transitionImageLayouts(cmd, {
+        resource::transitionImageLayouts(cmd, {
             {*depthResolveTex.image,  vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal},
             {*ssaoTexture.image,      vk::ImageLayout::eShaderReadOnlyOptimal,         vk::ImageLayout::eColorAttachmentOptimal},
         });
@@ -112,7 +112,7 @@ public:
             vk::AttachmentLoadOp::eClear, {1.0f, 1.0f, 1.0f, 1.0f});
 
         // Blur at SSAO resolution using the R8_UNORM-targeted blur pipeline.
-        bindless.resourceManager->transitionImageLayout(&cmd, *ssaoTexture.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+        resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *ssaoTexture.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
         blurAttachment(bindless, cmd, blurPipelineIndex, textureIndex, blurTextureIndex, ssaoExtent.width, ssaoExtent.height, 2.0f, shared.depthSamplerIndex);
 
         // Apply to the HDR composite at full resolution (sampler handles upscale)
@@ -121,7 +121,7 @@ public:
             vk::AttachmentLoadOp::eLoad);
 
         // Transition resolved depth back
-        bindless.resourceManager->transitionImageLayout(&cmd, *depthResolveTex.image, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
+        resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *depthResolveTex.image, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
         tracing::endTrace("ssao pass");
     }
 };

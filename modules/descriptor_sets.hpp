@@ -202,8 +202,8 @@ template <typename T> struct FixedBufferResource : FixedBufferResourceBase {
 
 class DescriptorSet {
   public:
-    DescriptorSet(Device& device, ResourceManager& resourceManager, vk::raii::CommandPool* commandPool)
-        : device(device), resourceManager(resourceManager), commandPool(commandPool) {}
+    DescriptorSet(Device& device, vk::raii::CommandPool* commandPool)
+        : device(device), commandPool(commandPool) {}
 
     void createDescriptorSet() {
         std::vector<vk::DescriptorSetLayoutBinding> layoutBindings;
@@ -733,7 +733,6 @@ class DescriptorSet {
 
   private:
     Device& device;
-    ResourceManager& resourceManager;
     vk::raii::CommandPool* commandPool;
 
     std::optional<vk::raii::DescriptorSetLayout> descriptorSetLayout;

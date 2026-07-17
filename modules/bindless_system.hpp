@@ -14,19 +14,19 @@
 #include "resources.hpp"
 
 /*
-BindlessSystem bundles the GPU-resource infrastructure: the ResourceManager that
-allocates raw Vulkan resources, the DescriptorSet that manages the bindless
-descriptor table, and the PipelineManager that compiles/caches pipelines.
+BindlessSystem bundles the GPU-resource infrastructure: the resource::Context that
+the functional resource module allocates raw Vulkan resources through, the
+DescriptorSet that manages the bindless descriptor table, and the PipelineManager
+that compiles/caches pipelines.
 
-These three objects are intertwined: DescriptorSet borrows ResourceManager,
-PipelineManager is built against DescriptorSet layouts, and the Swapchain
-(on GpuContext) needs both ResourceManager and DescriptorSet for its
-color/depth attachments. Initialization is split into two steps because
-PipelineManager needs the Swapchain to exist, while Swapchain needs
-ResourceManager + DescriptorSet:
+These objects are intertwined: PipelineManager is built against DescriptorSet
+layouts, and the Swapchain (on GpuContext) needs both the resource::Context and
+DescriptorSet for its color/depth attachments. Initialization is split into two
+steps because PipelineManager needs the Swapchain to exist, while Swapchain needs
+the resource::Context + DescriptorSet:
 
-    bindless.initResources(gpu);                       // RM + DS
-    gpu.initSwapchain(*bindless.resourceManager,
+    bindless.initResources(gpu);                       // Context + DS
+    gpu.initSwapchain(*bindless.resourceCtx,
                       *bindless.descriptorSet);        // swapchain object
     bindless.initPipelineManager(gpu);                 // PM (needs swapchain)
     // ... app-level buffer/pipeline setup on bindless.descriptorSet ...
@@ -42,13 +42,13 @@ class BindlessSystem {
     BindlessSystem(const BindlessSystem&) = delete;
     BindlessSystem& operator=(const BindlessSystem&) = delete;
 
-    std::unique_ptr<ResourceManager> resourceManager;
-    std::unique_ptr<DescriptorSet>   descriptorSet;
-    std::unique_ptr<PipelineManager> pipelineManager;
+    std::unique_ptr<resource::Context> resourceCtx;
+    std::unique_ptr<DescriptorSet>     descriptorSet;
+    std::unique_ptr<PipelineManager>   pipelineManager;
 
     void initResources(GpuContext& gpu) {
-        resourceManager = std::make_unique<ResourceManager>(gpu.getDevice(), gpu.getCommandPool());
-        descriptorSet   = std::make_unique<DescriptorSet>(gpu.getDevice(), *resourceManager, &gpu.getCommandPool());
+        resourceCtx   = std::make_unique<resource::Context>(gpu.getDevice(), gpu.getCommandPool());
+        descriptorSet = std::make_unique<DescriptorSet>(gpu.getDevice(), &gpu.getCommandPool());
     }
 
     void initPipelineManager(GpuContext& gpu) {

@@ -21,7 +21,7 @@
 #include "utils.hpp"
 
 // Forward declarations — only needed by initSwapchain() signature.
-class ResourceManager;
+// resource::Context is fully defined via swapchain.hpp -> resources.hpp above.
 class DescriptorSet;
 
 /*
@@ -29,13 +29,13 @@ GpuContext bundles the low-level Vulkan primitives that every subsystem
 needs: instance, surface, device, command pool, command buffers, sync
 objects, and the swapchain.
 
-It's split into two init steps because Swapchain depends on ResourceManager
+It's split into two init steps because Swapchain depends on the resource::Context
 and DescriptorSet (for color/depth attachments and the bindless depth-resolve
 slot), which live in BindlessSystem:
 
     gpu.initCore(window);                       // instance/device/pool/cmdbufs
     // ... build BindlessSystem using gpu ...
-    gpu.initSwapchain(resourceMgr, descSet);    // swapchain + sync
+    gpu.initSwapchain(resourceCtx, descSet);    // swapchain + sync
 
 Subsystems hold a GpuContext& (non-owning). App owns the GpuContext.
 */
@@ -60,8 +60,8 @@ class GpuContext {
     // Construct the Swapchain object. Does NOT call create() — that must be deferred
     // until after DescriptorSet::createDescriptorSet() has run, because Swapchain::create()
     // allocates a bindless slot for the depth-resolve texture.
-    void initSwapchain(ResourceManager& resourceManager, DescriptorSet& descriptorSet) {
-        swapchain = std::make_unique<Swapchain>(*device, resourceManager, descriptorSet, surface, msaaSamples);
+    void initSwapchain(resource::Context& resourceCtx, DescriptorSet& descriptorSet) {
+        swapchain = std::make_unique<Swapchain>(*device, resourceCtx, descriptorSet, surface, msaaSamples);
     }
 
     // Call after DescriptorSet::createDescriptorSet() is done. Creates swapchain images

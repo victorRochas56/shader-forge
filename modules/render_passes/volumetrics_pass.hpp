@@ -135,10 +135,10 @@ class VolumetricsPass : public RenderPass {
         auto& integratedTex   = bindless.descriptorSet->getTextureResource(integratedTexIndex);
 
         // Sampled (resting) -> General for the compute writes.
-        bindless.resourceManager->transitionImageLayout(&cmd, *mediaTex.image,        vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eGeneral);
-        bindless.resourceManager->transitionImageLayout(&cmd, *mediaPhaseTex.image,   vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eGeneral);
-        bindless.resourceManager->transitionImageLayout(&cmd, *scatterTex.image,      vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eGeneral);
-        bindless.resourceManager->transitionImageLayout(&cmd, *integratedTex.image,   vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eGeneral);
+        resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *mediaTex.image,        vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eGeneral);
+        resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *mediaPhaseTex.image,   vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eGeneral);
+        resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *scatterTex.image,      vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eGeneral);
+        resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *integratedTex.image,   vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eGeneral);
         // Note: the shadow atlas rests in eShaderReadOnlyOptimal (see createShadowAtlas / the shadow
         // pass transitions), matching its descriptor, and the DepthAttachment->ShaderReadOnly barrier
         // makes the cascade writes visible to this compute pass. Pass C can sample it directly.
@@ -256,10 +256,10 @@ class VolumetricsPass : public RenderPass {
 
         // Return to sampled resting layout. The General->ShaderReadOnly transition also serves as the
         // compute-write -> fragment-read barrier that the composite (E) depends on for integratedVol.
-        bindless.resourceManager->transitionImageLayout(&cmd, *integratedTex.image,   vk::ImageLayout::eGeneral, vk::ImageLayout::eShaderReadOnlyOptimal);
-        bindless.resourceManager->transitionImageLayout(&cmd, *scatterTex.image,      vk::ImageLayout::eGeneral, vk::ImageLayout::eShaderReadOnlyOptimal);
-        bindless.resourceManager->transitionImageLayout(&cmd, *mediaPhaseTex.image,   vk::ImageLayout::eGeneral, vk::ImageLayout::eShaderReadOnlyOptimal);
-        bindless.resourceManager->transitionImageLayout(&cmd, *mediaTex.image,        vk::ImageLayout::eGeneral, vk::ImageLayout::eShaderReadOnlyOptimal);
+        resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *integratedTex.image,   vk::ImageLayout::eGeneral, vk::ImageLayout::eShaderReadOnlyOptimal);
+        resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *scatterTex.image,      vk::ImageLayout::eGeneral, vk::ImageLayout::eShaderReadOnlyOptimal);
+        resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *mediaPhaseTex.image,   vk::ImageLayout::eGeneral, vk::ImageLayout::eShaderReadOnlyOptimal);
+        resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *mediaTex.image,        vk::ImageLayout::eGeneral, vk::ImageLayout::eShaderReadOnlyOptimal);
 
         tracing::endTrace("froxel build");
     }
