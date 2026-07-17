@@ -1,29 +1,29 @@
 import modules.common;
 import modules.pbr;
+import modules.particles;
 
 struct ParticleDrawPushConstants {
     float4x4  viewProjection; 
-    Particle*   particlesBDA; 
-    Light*      lightsBDA;    
+
+    Particle*   particlesBDA;
+    ParticleEmitter* emittersBDA;
+    
+    Light*      lightsBDA;
     uint  lightCount;
-    uint  particleOffset;     
-    uint  particleCount;      
-    uint  textureIndex;       
-    uint  numFrames;          
     uint  samplerIndex;       
+
     uint  depthTextureIndex;  
     uint  depthSamplerIndex;  
-    uint  flags;              
     uint2 resolution;         
-    float softRadius;
-    float nearPlane;
-    float farPlane;
+
     float3 cameraPos;         // world-space, for lit particles
+    float farPlane;
     float3 cameraForward;     // normalized look dir, for cascade selection
+    float nearPlane;
+    
     uint  shadowAtlasIndex;
+    uint  emitterIndex;
     float sphereRoundness;    // lit spherical-impostor bulge: 0 flat .. 1 sphere (>1 exaggerates)
-    float densityMin;         // volumetric self-shadow extinction: emitter densityRange (min,max)
-    float densityMax;
     float opacity;            // global transparency multiplier for the whole emitter
 };
 
@@ -48,6 +48,8 @@ struct PSInput {
 [shader("vertex")]
 PSInput vertMain(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID)
 {
+    ParticleEmitter* emitter = &particlePc.emittersBDA[particlePc.emitterIndex];
+
     static const float2 CORNERS[6] = {
         float2(-0.5, -0.5), float2( 0.5, -0.5), float2( 0.5,  0.5),
         float2(-0.5, -0.5), float2( 0.5,  0.5), float2(-0.5,  0.5),
@@ -57,7 +59,7 @@ PSInput vertMain(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID)
         float2(0, 0), float2(1, 1), float2(0, 1),
     };
 
-    Particle p = particlePc.particlesBDA[particlePc.particleOffset + instanceID];
+    Particle p = particlePc.particlesBDA[emitter.particleOffset + instanceID];
 
     PSInput o = {};
     // Dead slot: collapse all 3 verts of the triangle to one clip point -> zero area -> nothing
@@ -115,18 +117,19 @@ PSInput vertMain(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID)
 [shader("fragment")]
 float4 fragMain(PSInput input) : SV_Target
 {
-    Particle p = particlePc.particlesBDA[particlePc.particleOffset + input.instanceID];
+    ParticleEmitter* emitter = &particlePc.emittersBDA[particlePc.emitterIndex];
+    Particle p = particlePc.particlesBDA[emitter.particleOffset + input.instanceID];
 
     float2 uv = input.texCoord;
     // Animated atlas: advance the frame across the particle's lifetime. Assumes a horizontal strip
     // of numFrames cells (change the remap if the atlas is a grid).
-    if (particlePc.numFrames > 0) {
+    if (emitter.numFrames > 0) {
         float ageFrac = p.age / max(p.lifespan, 1e-4);
-        uint  frame   = min(uint(ageFrac * float(particlePc.numFrames)), particlePc.numFrames - 1);
-        uv.x = (uv.x + float(frame)) / float(particlePc.numFrames);
+        uint  frame   = min(uint(ageFrac * float(emitter.numFrames)), emitter.numFrames - 1);
+        uv.x = (uv.x + float(frame)) / float(emitter.numFrames);
     }
 
-    float4 outCol = textures[particlePc.textureIndex].Sample(samplers[particlePc.samplerIndex], uv);
+    float4 outCol = textures[emitter.textureIndex].Sample(samplers[particlePc.samplerIndex], uv);
 
     // Depth test (always on): sample the resolved scene depth at this pixel. Reverse-Z means a
     // larger stored value is nearer, so a particle whose fragment depth is smaller sits behind the
@@ -142,7 +145,7 @@ float4 fragMain(PSInput input) : SV_Target
     // A billboard has no real surface, so we light the whole quad at the
     // particle center (p.position) and fake a hemispherical normal that bulges
     // toward the camera from the quad UV -> the sprite reads like a lit sphere.
-    if((particlePc.flags & EMITTER_FLAG_LIT) != 0u) {
+    if((emitter.flags & EMITTER_FLAG_LIT) != 0u) {
         float3 albedo   = outCol.rgb;      // particle texture is the base color
         float3 worldPos = input.worldPos;  // per-corner world position
         float3 V        = normalize(particlePc.cameraPos - worldPos);
@@ -173,13 +176,13 @@ float4 fragMain(PSInput input) : SV_Target
 
         // Volumetric self-shadow setup: extinction from the emitter's density range (same age fade as
         // the froxel sphere injection), sphere radius = billboard half-extent (matches billboardScale=1).
-        bool  volumetric = (particlePc.flags & EMITTER_FLAG_VOLUMETRIC) != 0u;
+        bool  volumetric = (emitter.flags & EMITTER_FLAG_VOLUMETRIC) != 0u;
         float sphereR    = 0.5 * p.size;
         float volDensity = 0.0;
         if (volumetric) {
             float af      = p.age / max(p.lifespan, 1e-4);
             float ageFade = 1.0 - smoothstep(0.8, 1.0, af);
-            volDensity    = lerp(particlePc.densityMin, particlePc.densityMax, ageFade);
+            volDensity    = lerp(emitter.densityRange[0], emitter.densityRange[1], ageFade);
         }
 
         float3 Lo = float3(0.0);
@@ -269,10 +272,10 @@ float4 fragMain(PSInput input) : SV_Target
     // Soft particles: fade as the billboard approaches the scene surface in front of it. Linearize
     // the sampled reverse-Z depth to view-space distance and compare with the particle's view depth.
     float softFade = 1.0;
-    if ((particlePc.flags & EMITTER_FLAG_SOFT) != 0u && particlePc.softRadius > 0.0) {
+    if ((emitter.flags & EMITTER_FLAG_SOFT) != 0u && emitter.softRadius > 0.0) {
         float n = particlePc.nearPlane, f = particlePc.farPlane;
         float sceneLinear = n * f / (n + sceneDepth * (f - n));
-        softFade = saturate((sceneLinear - input.viewDepth) / particlePc.softRadius);
+        softFade = saturate((sceneLinear - input.viewDepth) / emitter.softRadius);
     }
 
     outCol.a *= particlePc.opacity * input.coverage * ageFade * softFade;

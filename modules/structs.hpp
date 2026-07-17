@@ -408,32 +408,29 @@ struct ParticleComputePushConstants {
 // (offsets in comments; verified against particle_draw.spv). Do not reorder
 // without re-checking the SPIR-V, or resolution/camera data will be misread.
 struct ParticleDrawPushConstants {
-    glm::mat4  viewProjection;     // 0
-    uint64_t   particlesBDA;       // 64  pool base address
-    uint64_t   lightsBDA;          // 72
-    uint32_t   lightCount;         // 80
-    uint32_t   particleOffset;     // 84  this emitter's base index into the pool
-    uint32_t   particleCount;      // 88  instances to draw (emitter ring capacity)
-    uint32_t   textureIndex;       // 92
-    uint32_t   numFrames;          // 96  atlas frames, 0 = static
-    uint32_t   samplerIndex;       // 100
-    uint32_t   depthTextureIndex;  // 104
-    uint32_t   depthSamplerIndex;  // 108
-    uint32_t   flags;              // 112 EMITTER_FLAG_*
-    uint32_t   _pad0;              // 116 aligns resolution (uvec2) to 120
-    glm::uvec2 resolution;         // 120
-    float      softRadius;         // 128 EMITTER_FLAG_SOFT depth-fade distance (view-space units)
-    float      nearPlane;          // 132 for linearizing the sampled scene depth
-    float      farPlane;           // 136
-    uint32_t   _pad1;              // 140 aligns cameraPos (vec3) to 144
-    glm::vec3  cameraPos;          // 144 world-space, for lit particles
-    uint32_t   _pad2;              // 156 aligns cameraForward (vec3) to 160
-    glm::vec3  cameraForward;      // 160 normalized look dir, for cascade selection
-    uint32_t   shadowAtlasIndex;   // 172
-    float      sphereRoundness;    // 176 lit spherical-impostor bulge: 0 flat .. 1 sphere (>1 exaggerates)
-    float      densityMin;         // 180 volumetric self-shadow extinction (emitter densityRange)
-    float      densityMax;         // 184
-    float      opacity;            // 188 global transparency multiplier for the emitter
+    glm::mat4  viewProjection;     
+
+    uint64_t   particlesBDA;       
+    uint64_t   emittersBDA;        
+    
+    uint64_t   lightsBDA;          
+    uint32_t   lightCount;         
+    uint32_t   samplerIndex;       
+    
+    uint32_t   depthTextureIndex;  
+    uint32_t   depthSamplerIndex;  
+    glm::uvec2 resolution;         
+        
+    glm::vec3  cameraPos;          
+    float      farPlane;           
+    
+    glm::vec3  cameraForward;      
+    float      nearPlane;          
+    
+    uint32_t   shadowAtlasIndex;   
+    uint32_t   emitterIndex;
+    float      sphereRoundness;    
+    float      opacity;            
 };
 
 struct SDF {

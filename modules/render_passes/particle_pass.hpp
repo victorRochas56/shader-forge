@@ -159,29 +159,20 @@ class ParticlePass : public RenderPass {
                 ParticleDrawPushConstants pc = {
                     .viewProjection    = scene.activeCamera.viewProjection,
                     .particlesBDA      = poolAddress,
+                    .emittersBDA       = bindless.descriptorSet->getFixedBuffers()[shared.buffers.emitterBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_EMITTERS * sizeof(GPUParticleEmitter),
                     .lightsBDA         = bindless.descriptorSet->getFixedBuffers()[shared.buffers.lightBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(GPULight),
                     .lightCount        = scene.getLightLoopBound(),
-                    .particleOffset    = emitter.particleOffset,
-                    .particleCount     = emitter.particleCapacity,
-                    .textureIndex      = emitter.textureIndex,
-                    .numFrames         = emitter.numFrames,
                     .samplerIndex      = shared.defaultSamplerIndex,
                     .depthTextureIndex = gpu.getSwapchain().getDepthResolveIndex(),
                     .depthSamplerIndex = shared.depthSamplerIndex,
-                    .flags             = (emitter.animated ? EMITTER_FLAG_ANIMATED : 0u) |
-                                         (emitter.lit ? EMITTER_FLAG_LIT : 0u) |
-                                         (emitter.volumetric ? EMITTER_FLAG_VOLUMETRIC : 0u) |
-                                         (emitter.softParticle ? EMITTER_FLAG_SOFT : 0u),
                     .resolution        = glm::uvec2(extent.width, extent.height),
-                    .softRadius        = emitter.softRadius,
-                    .nearPlane         = scene.activeCamera.nearPlane,
-                    .farPlane          = scene.activeCamera.farPlane,
                     .cameraPos         = scene.activeCamera.position,
+                    .farPlane          = scene.activeCamera.farPlane,
                     .cameraForward     = scene.activeCamera.getLookDir(),
+                    .nearPlane         = scene.activeCamera.nearPlane,
                     .shadowAtlasIndex  = scene.shadowAtlas.textureIndex,
+                    .emitterIndex      = id,
                     .sphereRoundness   = emitter.sphereRoundness,
-                    .densityMin        = emitter.densityRange.x,
-                    .densityMax        = emitter.densityRange.y,
                     .opacity           = emitter.opacity,
                 };
                 cmd.pushConstants<ParticleDrawPushConstants>(*pipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pc);
