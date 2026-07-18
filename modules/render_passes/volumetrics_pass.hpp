@@ -223,7 +223,7 @@ class VolumetricsPass : public RenderPass {
                 .particlesAddress = particlesBDA, .emittersAddress = emittersBDA,
                 .tileCountsAddress = tileCountsBDA, .tileListAddress = tileListBDA,
                 .mediaVolIndex = mediaStorageIndex, .tilesX = tilesX, .tilesY = tilesY, .maxPerTile = MAX_PARTICLES_PER_TILE,
-                .samplerIndex = shared.defaultSamplerIndex, .frame = gpu.totalFrames, ._padB = 0, ._padC = 0,
+                .samplerIndex = shared.defaultSamplerIndex, .frame = gpu.totalFrames, .mediaPhaseIndex = mediaPhaseStorageIndex, ._padC = 0,
                 .dims = fd, .nearZ = nearZ, .cameraPos = camPos, .gridFar = gridFar, .cameraForward = camFwd,
                 .billboardScale = billboardScale, .cameraRight = camRight, ._padD = 0.0f, .cameraUp = camUp, ._padE = 0.0f,
                 .invViewProjection = invVP,

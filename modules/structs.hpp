@@ -362,7 +362,6 @@ struct GPUParticleEmitter {
 
     float     speedMin;
     float     lifeTimeMin;
-
     float     speedMax;
     float     lifeTimeMax;
 
@@ -371,15 +370,18 @@ struct GPUParticleEmitter {
     float     drag;
 
     glm::vec2 densityRange;
+    float     phase;
     uint32_t  particleOffset;     // base index into the shared pool (Particle units)
+    
     uint32_t  particleCapacity;   // ring size = ceil(lifeTimeMax * rate), workgroup-rounded
-
     uint32_t  textureIndex;
     uint32_t  numFrames;          // atlas frame count when EMITTER_FLAG_ANIMATED, else 0
     uint32_t  flags;              // EMITTER_FLAG_*
+
     glm::vec2 sizeRandom;         // per-particle size range (min, max)
     float     softRadius;         // EMITTER_FLAG_SOFT: depth-fade distance (view-space units)
-    glm::vec2 _pad;               // pad to a 16-byte multiple (112 bytes total)
+    glm::vec2 emissiveRange;             
+    uint32_t  _pad;
 };
 
 // Per-emitter mutable state, owned exclusively by the GPU sim after CPU zero-init on creation.
@@ -555,7 +557,7 @@ struct FroxelGatherPushConstants {
     uint32_t   maxPerTile;           // 44
     uint32_t   samplerIndex;         // 48
     uint32_t   frame;                // 52
-    uint32_t   _padB;                // 56
+    uint32_t   mediaPhaseIndex;      // 56  R32F storage slot: density-weighted phase accumulator (write)
     uint32_t   _padC;                // 60
     glm::uvec3 dims;                 // 64
     float      nearZ;                // 76

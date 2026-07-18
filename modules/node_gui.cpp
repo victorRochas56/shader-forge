@@ -335,11 +335,11 @@ void showNodeEmitterInfo(Node& node, Scene& scene, BindlessSystem& bindless, con
         ImGui::Checkbox("Volumetric", &emitter.volumetric);
         if (emitter.volumetric) {
             ImGui::DragFloat2("Density Range", &emitter.densityRange.x, 0.01f, 0.0f, 1.0f);
+            ImGui::DragFloat("Phase", &emitter.volumePhase, 0.01f, 0.0f, 1.0f);
             // Sphere: view-independent radial density (correct when you're inside / fly through it).
             // Off = textured billboard (samples the sprite's alpha, but only reads right from outside).
             ImGui::Checkbox("Sphere (fly-through)", &emitter.volumetricSphere);
         }
-
         // Soft particles: depth-fade where the billboard meets scene geometry.
         ImGui::Checkbox("Soft Particles", &emitter.softParticle);
         if (emitter.softParticle)
@@ -356,11 +356,13 @@ void showNodeEmitterInfo(Node& node, Scene& scene, BindlessSystem& bindless, con
         }
         ImGui::SetNextItemWidth(200);
         ImGui::InputText("Texture", state.emitterTexBuffer, sizeof(state.emitterTexBuffer));
-        browseButton("emitterTex", state.emitterTexBuffer, sizeof(state.emitterTexBuffer));
+        browseButton("emitterTex", state.emitterTexBuffer, sizeof(state.emitterTexBuffer));        
         if (ImGui::Button("Apply Texture##emitter") && strlen(state.emitterTexBuffer) > 0) {
             try { emitter.textureIndex = scene.assetManager.loadTextureFromFile(state.emitterTexBuffer); }
             catch (...) {}
         }
+        ImGui::DragFloat2("Emissive Range", &emitter.emissiveRange.x, 0.01f, 0.0f, 10.0f);
+
     }
 }
 

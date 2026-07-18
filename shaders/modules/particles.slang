@@ -10,6 +10,7 @@ struct ParticleEmitter {
     float spreadAngle;
     float drag;
     float2 densityRange;
+    float phase;
 
     uint particleOffset;
     uint particleCapacity;
@@ -19,5 +20,6 @@ struct ParticleEmitter {
     uint flags;
     float2 sizeRandom; // per-particle size range (min, max)
     float softRadius;  // EMITTER_FLAG_SOFT depth-fade distance (unused here, keeps layout in sync)
-    float2 _pad;
+    float2 emissiveRange;
+    uint _pad;
 };

@@ -3,23 +3,12 @@
 // build of a tiled/clustered injection — it moves the heavy work off the per-particle thread so a
 // screen-filling particle only touches a handful of tiles (<= tilesX*tilesY) instead of millions of
 // froxels. Tile = FROXEL_TILE_SIZE x FROXEL_TILE_SIZE froxels in screen XY, spanning all Z.
-import modules.common;   // Particle
-import modules.froxel;   // froxelToWorld, viewZToSlice
+import modules.common;    // Particle
+import modules.froxel;    // froxelToWorld, viewZToSlice
+import modules.particles; // ParticleEmitter (layout must match GPUParticleEmitter)
 
 static const uint EMITTER_FLAG_VOLUMETRIC = 1u << 2;
 static const int  TILE_SIZE = 8; // must match FROXEL_TILE_SIZE in structs.hpp
-
-// Only the emitter fields the bin/gather passes read (layout must match GPUParticleEmitter).
-struct ParticleEmitter {
-    float3 position; float emissionRate;
-    float4 spawnRotation;
-    float speedMin; float lifetimeMin; float speedMax; float lifetimeMax;
-    float2 angularVelocityRandom; float spreadAngle; float drag;
-    float2 densityRange;
-    uint particleOffset; uint particleCapacity;
-    uint textureIndex; uint numFrames; uint flags;
-    float2 sizeRandom; float softRadius; float2 _pad;
-};
 
 struct FroxelBinPushConstants {
     Particle* particles;

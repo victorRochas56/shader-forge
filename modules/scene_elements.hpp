@@ -212,7 +212,7 @@ struct Light {
 
 struct ParticleEmitter {
     uint32_t nodeIndex;
-    uint32_t textureIndex;
+    uint32_t textureIndex = 0xFFFFFFFF;
     //offsets from the node it's attached to
     glm::vec3 positionOffset = glm::vec3(0);
     glm::quat rotationOffset = glm::quat(0,0,0,1);
@@ -241,7 +241,8 @@ struct ParticleEmitter {
     float sphereRoundness = 1.0f;   // lit: spherical-impostor bulge, 0 flat card .. 1 sphere (>1 exaggerates)
     float opacity = 1.0f;           // global transparency multiplier for the whole emitter
     glm::vec2 densityRange = glm::vec2(0,1.0f);
-
+    float volumePhase = 0.5f;
+    glm::vec2 emissiveRange = glm::vec2(1.0f,1.0f);             
     //=====Pool residency (assigned by Scene::addEmitter)=====//
     // Contiguous sub-range this emitter owns in the shared particle pool, run as a ring buffer.
     uint32_t particleOffset = 0;    // base index into the pool, in Particle units
@@ -274,6 +275,8 @@ struct ParticleEmitter {
         gpu.sizeRandom        = sizeRandom;
         gpu.softRadius        = softRadius;
         gpu.densityRange      = densityRange;
+        gpu.phase             = volumePhase;
+        gpu.emissiveRange     = emissiveRange;
         gpu.particleOffset    = particleOffset;
         gpu.particleCapacity  = particleCapacity;
         gpu.textureIndex      = textureIndex;

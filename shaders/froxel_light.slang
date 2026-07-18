@@ -4,8 +4,9 @@
 import modules.common;   // Light, LightType, calculateShadow, samplers/textures/shadowCmpSampler
 import modules.froxel;   // froxelToWorld, phaseHG
 
-// Per-froxel HG asymmetry g is the density-weighted average of each Volume's own `phase`, injected
-// into mediaPhase by pass A and normalized here. 0 = isotropic; >0 = forward scattering (god rays).
+// Per-froxel HG asymmetry g is the density-weighted average of each Volume's `phase` (injected by
+// pass A) and each volumetric particle's emitter `phase` (added by pass B gather), normalized here.
+// 0 = isotropic; >0 = forward scattering (god rays).
 
 struct FroxelLightPushConstants {
     Light* lights;
@@ -59,7 +60,7 @@ void lightScatterMain(uint3 id : SV_DispatchThreadID) {
     float3 inscatter = float3(0);
     // Only bother lighting froxels that actually hold media.
     if (media.a > 0.0) {
-        // Density-weighted per-volume phase; particle-only froxels (no phase written) fall to 0 (isotropic).
+        // Density-weighted phase from volumes (pass A) and particles (pass B), normalized by total density.
         float g = storageImagesR[lpc.mediaPhaseIndex][int3(id)] / max(media.a, 1e-5);
 
         float3 wpos   = froxelToWorld(id, lpc.dims, lpc.nearZ, lpc.gridFar, lpc.cameraPos, lpc.cameraForward, lpc.invViewProjection, froxelZJitter(id.xy,lpc.frame));

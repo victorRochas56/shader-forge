@@ -128,9 +128,11 @@ float4 fragMain(PSInput input) : SV_Target
         uint  frame   = min(uint(ageFrac * float(emitter.numFrames)), emitter.numFrames - 1);
         uv.x = (uv.x + float(frame)) / float(emitter.numFrames);
     }
-
-    float4 outCol = textures[emitter.textureIndex].Sample(samplers[particlePc.samplerIndex], uv);
-
+    float4 outCol = float4(2,2,2,0.2);;
+    if(emitter.textureIndex != 0xFFFFFFFF) {
+        outCol = textures[emitter.textureIndex].Sample(samplers[particlePc.samplerIndex], uv);
+    }
+    outCol *= lerp(emitter.emissiveRange[0], emitter.emissiveRange[1], outCol.toFloat());
     // Depth test (always on): sample the resolved scene depth at this pixel. Reverse-Z means a
     // larger stored value is nearer, so a particle whose fragment depth is smaller sits behind the
     // scene surface -> fully occluded, discard.
@@ -222,11 +224,14 @@ float4 fragMain(PSInput input) : SV_Target
                 if(currentLight.castsShadows == 1)
                     shadowV = calculateShadow(worldPos, particlePc.cameraPos, particlePc.cameraForward,
                                               N, L, currentLight, particlePc.shadowAtlasIndex);
-                float sndl  = dot(N, L);
+
+                float3 N1 = lerp(N,L,0.33-0.33*emitter.densityRange[1]);
+                float sndl1  = (0.5 * particlePc.sphereRoundness) * dot(N1, L) + 1.0 - pow(particlePc.sphereRoundness,0.2);
+                float sndl = max(sndl1,0.0);
                 float depth = max(-sndl, 0.0);                  // light-ray penetration, shadow side only
                 float tau   = (4.0 / 3.0) * sphereR * volDensity * depth * depth * depth;
                 float trans = exp(-tau);                        // 1 on the lit side -> 0 deep in shadow
-                float wrap  = sndl * 0.5 + 0.5;                 // soft wrap, no hard terminator
+                float wrap  = sndl * max(0.95,0.95*emitter.densityRange[1]) + max(0.05,0.05*emitter.densityRange[1]);// soft wrap, no hard terminator
                 Lo += (1.0 - shadowV) * albedo * radiance * (wrap * trans);
                 continue;
             }
@@ -278,6 +283,6 @@ float4 fragMain(PSInput input) : SV_Target
         softFade = saturate((sceneLinear - input.viewDepth) / emitter.softRadius);
     }
 
-    outCol.a *= particlePc.opacity * input.coverage * ageFade * softFade;
+    outCol.a *= particlePc.opacity  * input.coverage * ageFade * softFade;
     return outCol;
 }

@@ -153,7 +153,7 @@ float calculateDirectionalShadow(float3 fragWorldPos, float3 cameraPos, float3 c
     // Walk outward from the split-selected cascade; if the sample lands outside
     // a tile's bounds, try the next-larger cascade rather than returning lit.
     // This prevents block-shaped unshadowed regions on jittered volume samples
-    // near cascade XY edges.
+    // near cascade XY edges.   
     for (int c = cascadeIndex; c < int(light.numCascades); c++) {
         Cascade cascade = light.cascades[c];
 
@@ -206,7 +206,7 @@ float calculatePointShadow(float3 fragWorldPos, float3 geometricNormal, float3 L
     PointFace face = light.pointFaces[faceIndex];
 
     float NdotL = saturate(abs(dot(geometricNormal, L)));
-    float normalOffset = (1.0 - NdotL) * light.range / float(light.shadowResolution) * 3.0;
+    float normalOffset = (1.0 - NdotL) * light.range / float(light.shadowResolution);
     float3 biasedPos = fragWorldPos + geometricNormal * normalOffset;
 
     float4 fragPosLightSpace = mul(face.lightSpaceMatrix, float4(biasedPos, 1.0));
