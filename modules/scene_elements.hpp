@@ -241,7 +241,7 @@ struct ParticleEmitter {
     float sphereRoundness = 1.0f;   // lit: spherical-impostor bulge, 0 flat card .. 1 sphere (>1 exaggerates)
     float opacity = 1.0f;           // global transparency multiplier for the whole emitter
     glm::vec2 densityRange = glm::vec2(0,1.0f);
-    float volumePhase = 0.5f;
+    float volumePhase = 0.85f;
     glm::vec2 emissiveRange = glm::vec2(1.0f,1.0f);             
     //=====Pool residency (assigned by Scene::addEmitter)=====//
     // Contiguous sub-range this emitter owns in the shared particle pool, run as a ring buffer.

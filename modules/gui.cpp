@@ -527,13 +527,13 @@ void showScenesMenu(Scene& scene, BindlessSystem& bindless, RenderBuffers& buffe
     }
     ImGui::SameLine();
     if(ImGui::Button("Load Scene")){
-        sceneLoader.loadScene("scene.scn", scene, bindless,
+        sceneLoader.loadScene("scene.scn", scene, bindless, buffers,
                                buffers.modelMatrixBufferIndex,
                                buffers.lightBufferIndex);
     }
     ImGui::SameLine();
     if(ImGui::Button("Clear Scene")){
-        sceneLoader.clearScene(scene, bindless,
+        sceneLoader.clearScene(scene, bindless, buffers,
                                 buffers.modelMatrixBufferIndex,
                                 buffers.lightBufferIndex);
     }

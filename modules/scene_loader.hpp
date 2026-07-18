@@ -23,9 +23,10 @@ class SceneLoader {
     // to free GPU slots. The SceneGraph re-creates root from resources cached
     // at its own init(), so the loader doesn't need a renderer pointer.
     void clearScene(Scene& scene, BindlessSystem& bindless,
+                    const RenderBuffers& buffers,
                     uint32_t modelMatrixBufferIndex,
                     uint32_t lightBufferIndex) {
-        clearSceneInternal(scene, bindless, modelMatrixBufferIndex, lightBufferIndex);
+        clearSceneInternal(scene, bindless, buffers, modelMatrixBufferIndex, lightBufferIndex);
     }
 
     void saveScene(std::string filePath, Scene& scene) {
@@ -53,6 +54,7 @@ class SceneLoader {
     }
 
     void loadScene(std::string filePath, Scene& scene, BindlessSystem& bindless,
+                   const RenderBuffers& buffers,
                    uint32_t modelMatrixBufferIndex,
                    uint32_t lightBufferIndex) {
         std::cout << "Loading scene from: " << filePath << std::endl;
@@ -64,7 +66,7 @@ class SceneLoader {
         }
 
         // Clear existing scene (except root node)
-        clearSceneInternal(scene, bindless, modelMatrixBufferIndex, lightBufferIndex);
+        clearSceneInternal(scene, bindless, buffers, modelMatrixBufferIndex, lightBufferIndex);
 
         // Maps to track loaded resources
         std::unordered_map<uint32_t, uint32_t> materialIDToIndex; // materialID -> material index in scene
@@ -76,7 +78,7 @@ class SceneLoader {
             if (line == "Materials {") {
                 parseMaterialsSection(ifs, scene, materialIDToIndex);
             } else if (line == "Node {") {
-                parseNode(ifs, scene, bindless, lightBufferIndex, SceneGraph::ROOT_INDEX, materialIDToIndex);
+                parseNode(ifs, scene, bindless, buffers, lightBufferIndex, SceneGraph::ROOT_INDEX, materialIDToIndex);
             }
         }
 
@@ -125,6 +127,7 @@ class SceneLoader {
     }
 
     void clearSceneInternal(Scene& scene, BindlessSystem& bindless,
+                            const RenderBuffers& buffers,
                             uint32_t modelMatrixBufferIndex,
                             uint32_t lightBufferIndex) {
         // meshes and textures remain loaded in memory for reuse (TODO check on load for unused?)
@@ -158,6 +161,7 @@ class SceneLoader {
         scene.clearRenderList();
         scene.clearLights(bindless, lightBufferIndex);
         scene.clearVolumes();
+        scene.clearEmitters(bindless, buffers);
         scene.sceneGraph.reset();
         std::cout << "Scene cleared successfully!" << std::endl;
     }
@@ -334,6 +338,7 @@ class SceneLoader {
     }
 
     void parseNode(std::ifstream& ifs, Scene& scene, BindlessSystem& bindless,
+                   const RenderBuffers& buffers,
                    uint32_t lightBufferIndex,
                    uint32_t parentIndex, std::unordered_map<uint32_t, uint32_t>& materialIDToIndex) {
         std::string name = "Node";
@@ -347,8 +352,10 @@ class SceneLoader {
         std::vector<uint32_t> materialIDs;
         bool hasLight = false;
         bool hasVolume = false;
+        bool hasEmitter = false;
         Light light;
         Volume vol;
+        ParticleEmitter emitter;
 
         // Collect child node stream positions to parse after this node is created
         std::vector<std::streampos> childNodePositions;
@@ -374,6 +381,14 @@ class SceneLoader {
             }
 
             if (braceDepth > 0) continue; // inside a child block, skip for now
+
+            // Emitter is a nested block; consume it whole (including its own '}') so it
+            // doesn't disturb this node's brace tracking.
+            if (line == "Emitter {") {
+                emitter = parseEmitter(ifs, scene);
+                hasEmitter = true;
+                continue;
+            }
 
             std::string key, value;
             if (!parseKeyValue(line, key, value)) {
@@ -513,11 +528,102 @@ class SceneLoader {
             std::cout << "Added volume to node: " << name << std::endl;
         }
 
+        // and particle emitter (registers a pool sub-range + descriptor slot via Scene::addEmitter)
+        if (hasEmitter) {
+            Node& n = scene.sceneGraph.getNodes()[nodeIndex];
+            NodeOps::assignEmitter(n, emitter, scene, bindless, buffers);
+            std::cout << "Added emitter to node: " << name << std::endl;
+        }
+
         // Now parse child nodes recursively
         for (auto& pos : childNodePositions) {
             ifs.seekg(pos);
-            parseNode(ifs, scene, bindless, lightBufferIndex, nodeIndex, materialIDToIndex);
+            parseNode(ifs, scene, bindless, buffers, lightBufferIndex, nodeIndex, materialIDToIndex);
         }
+    }
+
+    ParticleEmitter parseEmitter(std::ifstream& ifs, Scene& scene) {
+        ParticleEmitter emitter;
+        std::string texturePath;
+
+        std::string line;
+        while (std::getline(ifs, line)) {
+            trim(line);
+
+            if (line == "}") {
+                break; // End of Emitter
+            }
+
+            std::string key, value;
+            if (!parseKeyValue(line, key, value)) {
+                continue;
+            }
+
+            if (key == "Texture") {
+                texturePath = value;
+            } else if (key == "PositionOffset") {
+                auto p = split(value, ',');
+                if (p.size() >= 3) emitter.positionOffset = glm::vec3(std::stof(p[0]), std::stof(p[1]), std::stof(p[2]));
+            } else if (key == "RotationOffset") {
+                auto p = split(value, ',');
+                if (p.size() >= 4) emitter.rotationOffset = glm::quat(std::stof(p[0]), std::stof(p[1]), std::stof(p[2]), std::stof(p[3])); // w,x,y,z
+            } else if (key == "EmissionRate") {
+                emitter.emissionRate = std::stof(value);
+            } else if (key == "LifeTime") {
+                auto p = split(value, ',');
+                if (p.size() >= 2) emitter.lifeTime = glm::vec2(std::stof(p[0]), std::stof(p[1]));
+            } else if (key == "SpreadAngle") {
+                emitter.spreadAngle = std::stof(value);
+            } else if (key == "SpeedMin") {
+                emitter.speedMin = std::stof(value);
+            } else if (key == "SpeedMax") {
+                emitter.speedMax = std::stof(value);
+            } else if (key == "AngularVelocity") {
+                auto p = split(value, ',');
+                if (p.size() >= 2) emitter.angularVelocityRandom = glm::vec2(std::stof(p[0]), std::stof(p[1]));
+            } else if (key == "Drag") {
+                emitter.drag = std::stof(value);
+            } else if (key == "SizeRandom") {
+                auto p = split(value, ',');
+                if (p.size() >= 2) emitter.sizeRandom = glm::vec2(std::stof(p[0]), std::stof(p[1]));
+            } else if (key == "Animated") {
+                emitter.animated = (std::stoi(value) != 0);
+            } else if (key == "NumFrames") {
+                emitter.numFrames = static_cast<uint8_t>(std::stoul(value));
+            } else if (key == "Lit") {
+                emitter.lit = (std::stoi(value) != 0);
+            } else if (key == "Volumetric") {
+                emitter.volumetric = (std::stoi(value) != 0);
+            } else if (key == "VolumetricSphere") {
+                emitter.volumetricSphere = (std::stoi(value) != 0);
+            } else if (key == "SoftParticle") {
+                emitter.softParticle = (std::stoi(value) != 0);
+            } else if (key == "SoftRadius") {
+                emitter.softRadius = std::stof(value);
+            } else if (key == "SphereRoundness") {
+                emitter.sphereRoundness = std::stof(value);
+            } else if (key == "Opacity") {
+                emitter.opacity = std::stof(value);
+            } else if (key == "DensityRange") {
+                auto p = split(value, ',');
+                if (p.size() >= 2) emitter.densityRange = glm::vec2(std::stof(p[0]), std::stof(p[1]));
+            } else if (key == "VolumePhase") {
+                emitter.volumePhase = std::stof(value);
+            } else if (key == "EmissiveRange") {
+                auto p = split(value, ',');
+                if (p.size() >= 2) emitter.emissiveRange = glm::vec2(std::stof(p[0]), std::stof(p[1]));
+            }
+        }
+
+        if (!texturePath.empty()) {
+            try {
+                emitter.textureIndex = scene.assetManager.loadTextureFromFile(texturePath);
+            } catch (const std::exception& e) {
+                std::cerr << "Failed to load emitter texture: " << texturePath << " - " << e.what() << std::endl;
+            }
+        }
+
+        return emitter;
     }
 
     void collectMaterials(Node& node, Scene& scene) {
@@ -635,6 +741,37 @@ class SceneLoader {
             // Center is derived from the node at stream time; write a 0,0,0 placeholder to keep the
             // legacy token slot in the format (it is discarded on load).
             ofs << indent << " Volume : " << vol.density << ";" << vol.phase << ";" << static_cast<uint32_t>(vol.shape) << ";" << "0,0,0" << ";" << vol.radius << ";" << vol.dimensions.x << "," << vol.dimensions.y << "," << vol.dimensions.z << std::endl;
+        }
+
+        if (node.particleIndex != 0xFFFFFFFF && scene.particleEmitters.contains(node.particleIndex)) {
+            const ParticleEmitter& em = scene.particleEmitters.at(node.particleIndex);
+            // Pool residency (particleOffset/particleCapacity) and nodeIndex are recomputed by
+            // Scene::addEmitter on load, so only the authored fields are written here.
+            ofs << indent << "  Emitter {" << std::endl;
+            ofs << indent << "    Texture : " << scene.assetManager.getTexturePathFromIndex(em.textureIndex) << std::endl;
+            ofs << indent << "    PositionOffset : " << em.positionOffset.x << "," << em.positionOffset.y << "," << em.positionOffset.z << std::endl;
+            ofs << indent << "    RotationOffset : " << em.rotationOffset.w << "," << em.rotationOffset.x << "," << em.rotationOffset.y << "," << em.rotationOffset.z << std::endl;
+            ofs << indent << "    EmissionRate : " << em.emissionRate << std::endl;
+            ofs << indent << "    LifeTime : " << em.lifeTime.x << "," << em.lifeTime.y << std::endl;
+            ofs << indent << "    SpreadAngle : " << em.spreadAngle << std::endl;
+            ofs << indent << "    SpeedMin : " << em.speedMin << std::endl;
+            ofs << indent << "    SpeedMax : " << em.speedMax << std::endl;
+            ofs << indent << "    AngularVelocity : " << em.angularVelocityRandom.x << "," << em.angularVelocityRandom.y << std::endl;
+            ofs << indent << "    Drag : " << em.drag << std::endl;
+            ofs << indent << "    SizeRandom : " << em.sizeRandom.x << "," << em.sizeRandom.y << std::endl;
+            ofs << indent << "    Animated : " << (em.animated ? 1 : 0) << std::endl;
+            ofs << indent << "    NumFrames : " << static_cast<uint32_t>(em.numFrames) << std::endl;
+            ofs << indent << "    Lit : " << (em.lit ? 1 : 0) << std::endl;
+            ofs << indent << "    Volumetric : " << (em.volumetric ? 1 : 0) << std::endl;
+            ofs << indent << "    VolumetricSphere : " << (em.volumetricSphere ? 1 : 0) << std::endl;
+            ofs << indent << "    SoftParticle : " << (em.softParticle ? 1 : 0) << std::endl;
+            ofs << indent << "    SoftRadius : " << em.softRadius << std::endl;
+            ofs << indent << "    SphereRoundness : " << em.sphereRoundness << std::endl;
+            ofs << indent << "    Opacity : " << em.opacity << std::endl;
+            ofs << indent << "    DensityRange : " << em.densityRange.x << "," << em.densityRange.y << std::endl;
+            ofs << indent << "    VolumePhase : " << em.volumePhase << std::endl;
+            ofs << indent << "    EmissiveRange : " << em.emissiveRange.x << "," << em.emissiveRange.y << std::endl;
+            ofs << indent << "  }" << std::endl;
         }
 
         // Write children

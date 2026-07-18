@@ -208,6 +208,22 @@ class Scene {
         particleEmitters.erase(it);
     }
 
+    // Free every emitter's pool sub-range and descriptor slot, then drop the map.
+    // Used on scene clear/reload so emitters don't orphan GPU slots.
+    void clearEmitters(BindlessSystem& bindless, const RenderBuffers& buffers) {
+        auto& ds = *bindless.descriptorSet;
+        GPUParticleEmitter disabled{};
+        disabled.emissionRate = 0.0f;
+        for (auto& [idx, emitter] : particleEmitters) {
+            ds.freeVariableBuffer(buffers.particlePoolBufferIndex, emitter.particleOffset * static_cast<uint32_t>(sizeof(Particle)));
+            for (uint32_t frame = 0; frame < MAX_FRAMES_IN_FLIGHT; frame++) {
+                ds.updateFixedBufferWithOffset<GPUParticleEmitter>(buffers.emitterBufferIndex, idx, disabled, frame);
+            }
+            ds.freeFixedBuffer(buffers.emitterBufferIndex, idx);
+        }
+        particleEmitters.clear();
+    }
+
     // Re-reserve an emitter's pool sub-range after an edit to emissionRate/lifeTime (the fields that
     // feed capacity()). Keeps the emitter's descriptor slot (so node.particleIndex stays valid); only
     // the variable-buffer range moves. No-op when the rounded capacity is unchanged.
