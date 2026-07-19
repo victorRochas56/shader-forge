@@ -1,5 +1,8 @@
 #pragma once
 #include "scene_elements.hpp"
+#include "node_ops.hpp"
+#include "scene.hpp"
+#include "renderer.hpp"
 
 #define GLM_DEPTH_ZERO_TO_ONE
 
@@ -28,3 +31,4 @@ Node::Node(uint32_t arrayIndex, bool internal, uint32_t parentIdx, glm::vec3 pos
 
     std::cout << "Created node " << arrayIndex << ", position=("<<position.x<<","<<position.y<<","<<position.z<<") " << ", scale=(" << scale.x << "," << scale.y << "," << scale.z << ")" << std::endl;
 }
+

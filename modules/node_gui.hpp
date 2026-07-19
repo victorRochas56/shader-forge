@@ -22,7 +22,7 @@ struct NodeGuiState {
 
 NodeGuiState& getNodeGuiState(uint32_t nodeIndex);
 
-void showNodeInfo(Node& node, Scene& scene, BindlessSystem& bindless, uint32_t lightBufferIndex, const RenderBuffers& buffers);
+void showNodeInfo(Node& node, Scene& scene, BindlessSystem& bindless, RenderBuffers& buffers);
 void showNodeMeshInfo(Node& node, Scene& scene);
 void showNodeMaterialDialog(Node& node, Scene& scene);
 void showNodeLightInfo(Node& node, Scene& scene, BindlessSystem& bindless, uint32_t lightBufferIndex);

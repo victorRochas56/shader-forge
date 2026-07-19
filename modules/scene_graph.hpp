@@ -56,6 +56,11 @@ class SceneGraph {
 
     uint32_t addNode(bool internal = false, uint32_t parentIndex = ROOT_INDEX, glm::vec3 position = glm::vec3(0.0f),
                      glm::quat rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f), glm::vec3 scale = glm::vec3(1.0f));
+    uint32_t addNode(Node node);
+    // Deep-copy an existing node (mesh, material, light, emitter) into a fresh node at the given
+    // relative position. Attachments are re-created bound to the new node so they track its
+    // transform instead of aliasing the source's GPU resources.
+    uint32_t duplicateNode(const Node& src, glm::vec3 relativePosition = glm::vec3(0.0f));
     void removeNode(uint32_t index);
     void syncDirtyNodes();
     // Fans out model-matrix writes across frames-in-flight; call post-fence inside the frame loop.

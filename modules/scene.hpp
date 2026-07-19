@@ -224,6 +224,8 @@ class Scene {
         particleEmitters.clear();
     }
 
+    const std::unordered_map<uint32_t, ParticleEmitter>& getEmitters() const { return particleEmitters; }
+
     // Re-reserve an emitter's pool sub-range after an edit to emissionRate/lifeTime (the fields that
     // feed capacity()). Keeps the emitter's descriptor slot (so node.particleIndex stays valid); only
     // the variable-buffer range moves. No-op when the rounded capacity is unchanged.

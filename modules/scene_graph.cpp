@@ -54,6 +54,59 @@ uint32_t SceneGraph::addNode(bool internal,uint32_t parentIndex, glm::vec3 posit
     return newIndex;
 }
 
+uint32_t SceneGraph::addNode(Node node) {
+    uint32_t newIndex;
+    if (!freeSlots.empty()) {
+        newIndex = freeSlots.front();
+        freeSlots.pop();
+        nodes[newIndex] = node;
+    } else {
+        newIndex = static_cast<uint32_t>(nodes.size());
+        nodes.push_back(node);
+        lastNode = newIndex;
+    }
+    Node& newNode = nodes[newIndex];
+    newNode.nodeIndex = newIndex;    
+    newNode.firstChild = 0;          
+    newNode.nextSibling = 0;
+    newNode.name = makeUniqueNodeName(newNode.name);  
+    linkChild(newNode.parentIndex, newIndex);         
+
+    Node& parent = nodes[newNode.parentIndex];
+    newNode.worldTransform = parent.worldTransform * newNode.localTransform;
+    allocateNodeGPU(newNode);
+    TransformSystem::updateAll(newNode, nodes, scene->assetManager.meshes, scene->getLightsMutable());
+    NodeOps::assignBillboard(newNode, {.textureIndex = buffers->nodeTextureIndex, .hidden = true, .screenSpaceSize = false, .size = 0.25f}, *scene);
+    return newIndex;
+}
+
+uint32_t SceneGraph::duplicateNode(const Node& src, glm::vec3 relativePosition) {
+    // Snapshot attachment handles before adding the copy: addNode re-creates the light/emitter,
+    // and we must read them off the source, not the fresh copy (whose handles we clear).
+    uint32_t srcLight = src.lightIndex;
+    uint32_t srcEmitter = src.particleIndex;
+
+    Node copy(src);
+    copy.lightIndex = MAX_LIGHTS;          // don't alias the source's GPU light...
+    copy.particleIndex = 0xFFFFFFFF;       // ...or its emitter pool
+    copy.relativePosition = relativePosition;
+
+    // addNode allocates a fresh model-matrix slot and recomputes world transform from
+    // relativePosition, so the node is at its final spot before attachments are baked.
+    uint32_t newIndex = addNode(copy);
+    Node& newNode = nodes[newIndex];
+
+    if (srcLight != MAX_LIGHTS) {
+        Light light = scene->getLights().at(srcLight);
+        NodeOps::assignLight(newNode, light, *scene, *bindless, buffers->lightBufferIndex);
+    }
+    if (srcEmitter != 0xFFFFFFFF) {
+        ParticleEmitter emitter = scene->getEmitters().at(srcEmitter);
+        NodeOps::assignEmitter(newNode, emitter, *scene, *bindless, *buffers);
+    }
+    return newIndex;
+}
+
 void SceneGraph::killNode(uint32_t idx) {
     Node& node = nodes[idx];
     if (!node.alive) return;

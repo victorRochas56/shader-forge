@@ -9,7 +9,7 @@ static std::unordered_map<uint32_t, NodeGuiState> guiStates;
 
 NodeGuiState& getNodeGuiState(uint32_t nodeIndex) { return guiStates[nodeIndex]; }
 
-void showNodeInfo(Node& node, Scene& scene, BindlessSystem& bindless, uint32_t lightBufferIndex, const RenderBuffers& buffers) {
+void showNodeInfo(Node& node, Scene& scene, BindlessSystem& bindless, RenderBuffers& buffers) {
     if (scene.sceneGraph.selectedNode == 0)
         return;
 
@@ -22,7 +22,16 @@ void showNodeInfo(Node& node, Scene& scene, BindlessSystem& bindless, uint32_t l
     if (state.changingMaterials) {
         showNodeMaterialDialog(node, scene);
     }
-    showNodeLightInfo(node, scene, bindless, lightBufferIndex);
+
+    if(ImGui::Button("Make 100!")) {
+        for(int i = 0; i < 10; i ++) {
+            for(int j = 0; j < 10; j++) {
+                scene.sceneGraph.duplicateNode(node, glm::vec3(i * 0.5f, 0.0f, j * 0.5f));
+            }
+        }
+    }
+
+    showNodeLightInfo(node, scene, bindless, buffers.lightBufferIndex);
     showNodeVolumeInfo(node, scene);
     showNodeEmitterInfo(node, scene, bindless, buffers);
     showNodeTransformInfo(node, scene);

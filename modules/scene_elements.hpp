@@ -23,6 +23,9 @@
 
 class Renderer; // forward declaration for free functions below
 class SceneGraph;
+class Scene;
+class BindlessSystem;
+struct RenderBuffers;
 
 class Node { // need to be able to hide nodes from tree for internal logic
   public:
