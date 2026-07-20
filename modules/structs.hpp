@@ -421,7 +421,7 @@ struct ParticleDrawPushConstants {
     
     uint32_t   depthTextureIndex;  
     uint32_t   depthSamplerIndex;  
-    glm::uvec2 resolution;         
+    glm::vec2  invResolution;         
         
     glm::vec3  cameraPos;          
     float      farPlane;           

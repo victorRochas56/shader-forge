@@ -165,7 +165,7 @@ class ParticlePass : public RenderPass {
                     .samplerIndex      = shared.defaultSamplerIndex,
                     .depthTextureIndex = gpu.getSwapchain().getDepthResolveIndex(),
                     .depthSamplerIndex = shared.depthSamplerIndex,
-                    .resolution        = glm::uvec2(extent.width, extent.height),
+                    .invResolution     = glm::vec2(1.0f /extent.width, 1.0f / extent.height),
                     .cameraPos         = scene.activeCamera.position,
                     .farPlane          = scene.activeCamera.farPlane,
                     .cameraForward     = scene.activeCamera.getLookDir(),

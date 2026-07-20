@@ -14,7 +14,7 @@ struct ParticleDrawPushConstants {
 
     uint  depthTextureIndex;  
     uint  depthSamplerIndex;  
-    uint2 resolution;         
+    float2 invResolution;         
 
     float3 cameraPos;         // world-space, for lit particles
     float farPlane;
@@ -91,7 +91,7 @@ PSInput vertMain(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID)
     // clamp the quad up to the floor and pay back the extra area in alpha (coverage) -> smooth fade
     // out with distance, no popping, roughly energy-preserving for additive/soft particles.
     float4 refClip    = mul(particlePc.viewProjection, float4(p.position + up * (0.5 * p.size), 1.0));
-    float2 refPix     = (refClip.xy / refClip.w - ndcCenter) * 0.5 * float2(particlePc.resolution);
+    float2 refPix     = (refClip.xy / refClip.w - ndcCenter) * 0.5 * 1.0f/particlePc.invResolution;
     float  halfPixels = length(refPix);
     const float MIN_PIXELS = 1.0;
     float coverage = 1.0;
@@ -117,6 +117,16 @@ PSInput vertMain(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID)
 [shader("fragment")]
 float4 fragMain(PSInput input) : SV_Target
 {
+    // fully transparent shortcut (can be the case for volumetric only particles)
+    if(particlePc.opacity == 0) discard;
+
+    // Depth test (always on): sample the resolved scene depth at this pixel. Reverse-Z means a
+    // larger stored value is nearer, so a particle whose fragment depth is smaller sits behind the
+    // scene surface -> fully occluded, discard.
+    float2 screenUV = input.position.xy * particlePc.invResolution;
+    float sceneDepth = textures[particlePc.depthTextureIndex].Sample(samplers[particlePc.depthSamplerIndex], screenUV).r;
+
+
     ParticleEmitter* emitter = &particlePc.emittersBDA[particlePc.emitterIndex];
     Particle p = particlePc.particlesBDA[emitter.particleOffset + input.instanceID];
 
@@ -128,34 +138,26 @@ float4 fragMain(PSInput input) : SV_Target
         uint  frame   = min(uint(ageFrac * float(emitter.numFrames)), emitter.numFrames - 1);
         uv.x = (uv.x + float(frame)) / float(emitter.numFrames);
     }
+
+    // discard here to avoid stalling scoreboard for on screen particles, most should be on screen anyways if reach here (otherwise clipped or cpu culled)
+    if (input.position.z < sceneDepth) discard;
+
     float4 outCol = float4(2,2,2,0.2);;
     if(emitter.textureIndex != 0xFFFFFFFF) {
         outCol = textures[emitter.textureIndex].Sample(samplers[particlePc.samplerIndex], uv);
     }
-    outCol *= lerp(emitter.emissiveRange[0], emitter.emissiveRange[1], outCol.toFloat());
-    // Depth test (always on): sample the resolved scene depth at this pixel. Reverse-Z means a
-    // larger stored value is nearer, so a particle whose fragment depth is smaller sits behind the
-    // scene surface -> fully occluded, discard.
-    uint depthW, depthH;
-    textures[particlePc.depthTextureIndex].GetDimensions(depthW, depthH);
-    float2 screenUV = input.position.xy / float2(depthW, depthH);
-    float sceneDepth = textures[particlePc.depthTextureIndex].Sample(samplers[particlePc.depthSamplerIndex], screenUV).r;
-    if (input.position.z < sceneDepth) discard;
-
 
     // --- Lit particles ------------------------------------------------------
     // A billboard has no real surface, so we light the whole quad at the
     // particle center (p.position) and fake a hemispherical normal that bulges
     // toward the camera from the quad UV -> the sprite reads like a lit sphere.
+    outCol *= lerp(emitter.emissiveRange[0], emitter.emissiveRange[1], outCol.toFloat());
+
     if((emitter.flags & EMITTER_FLAG_LIT) != 0u) {
-        float3 albedo   = outCol.rgb;      // particle texture is the base color
         float3 worldPos = input.worldPos;  // per-corner world position
         float3 V        = normalize(particlePc.cameraPos - worldPos);
-
         const float roughness = 0.8;       // particles aren't PBR surfaces; soft response
         const float metallic  = 0.0;
-        float3 F0 = lerp(float3(0.04), albedo, metallic);
-
         // Spherical-impostor normal: treat the sprite as the front hemisphere of a sphere. Build the
         // billboard tangent frame from the SAME basis the vertex shader used (cameraForward, not V --
         // V points toward the camera so cross(up0,V) yields -right and mirrors the shading). Rotate
@@ -186,6 +188,8 @@ float4 fragMain(PSInput input) : SV_Target
             float ageFade = 1.0 - smoothstep(0.8, 1.0, af);
             volDensity    = lerp(emitter.densityRange[0], emitter.densityRange[1], ageFade);
         }
+
+        float3 albedo   = outCol.rgb;      // particle texture is the base color
 
         float3 Lo = float3(0.0);
         for(int i = 0; i < particlePc.lightCount; i++) {
@@ -219,6 +223,7 @@ float4 fragMain(PSInput input) : SV_Target
             // side darkens smoothly and the shadow is "extruded" through the volume. N is the
             // roundness-blended normal, so sphereRoundness still shapes the spherical effect here.
             // Wrapped diffuse, no specular.
+
             if (volumetric) {
                 float shadowV = 0.0;
                 if(currentLight.castsShadows == 1)
@@ -244,6 +249,8 @@ float4 fragMain(PSInput input) : SV_Target
             float NdotV = max(dot(N, V), 0.001);
             float NdotL = max(NdotL_raw, 0.001);
             float HdotV = max(dot(H, V), 0.001);
+
+            float3 F0 = lerp(float3(0.04), albedo, metallic);
 
             float NDF  = DistributionGGX(N, H, roughness);
             float G    = GeometrySmith(N, V, L, roughness);
