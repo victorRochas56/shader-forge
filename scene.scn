@@ -1,6 +1,6 @@
 Materials {
   Material {
-    ID : 2277461067
+    ID : 2999882699
     Name : Material__25
     Shader : shaders/lit.spv
     MaterialFlags : 18
@@ -16,7 +16,7 @@ Materials {
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 1821207317
+    ID : 3432592053
     Name : Material__298
     Shader : shaders/lit.spv
     MaterialFlags : 18
@@ -32,7 +32,7 @@ Materials {
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 1528938579
+    ID : 3058220339
     Name : Material__47
     Shader : shaders/lit.spv
     MaterialFlags : 0
@@ -48,7 +48,7 @@ Materials {
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 406477841
+    ID : 222463409
     Name : leaves
     Shader : shaders/lit.spv
     MaterialFlags : 34
@@ -64,7 +64,7 @@ Materials {
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 614746809
+    ID : 3253183769
     Name : arch
     Shader : shaders/lit.spv
     MaterialFlags : 18
@@ -80,7 +80,7 @@ Materials {
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 1053501723
+    ID : 2791679051
     Name : bricks
     Shader : shaders/lit.spv
     MaterialFlags : 18
@@ -96,7 +96,7 @@ Materials {
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 1809675744
+    ID : 1845179392
     Name : ceiling
     Shader : shaders/lit.spv
     MaterialFlags : 18
@@ -112,7 +112,7 @@ Materials {
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 2118633142
+    ID : 1130442230
     Name : chain
     Shader : shaders/lit.spv
     MaterialFlags : 50
@@ -128,7 +128,7 @@ Materials {
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 1187283691
+    ID : 3579638603
     Name : column_a
     Shader : shaders/lit.spv
     MaterialFlags : 18
@@ -144,7 +144,7 @@ Materials {
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 2060164030
+    ID : 973302366
     Name : column_b
     Shader : shaders/lit.spv
     MaterialFlags : 18
@@ -160,7 +160,7 @@ Materials {
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 1607650321
+    ID : 3843024561
     Name : column_c
     Shader : shaders/lit.spv
     MaterialFlags : 18
@@ -176,7 +176,7 @@ Materials {
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 612443781
+    ID : 113638181
     Name : details
     Shader : shaders/lit.spv
     MaterialFlags : 18
@@ -192,7 +192,7 @@ Materials {
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 3679239336
+    ID : 3132280136
     Name : fabric_a
     Shader : shaders/lit.spv
     MaterialFlags : 18
@@ -208,7 +208,7 @@ Materials {
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 3143676014
+    ID : 2903500238
     Name : fabric_c
     Shader : shaders/lit.spv
     MaterialFlags : 18
@@ -224,7 +224,7 @@ Materials {
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 4266087415
+    ID : 17792663
     Name : fabric_d
     Shader : shaders/lit.spv
     MaterialFlags : 18
@@ -240,7 +240,7 @@ Materials {
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 4236800660
+    ID : 3941017396
     Name : fabric_e
     Shader : shaders/lit.spv
     MaterialFlags : 18
@@ -256,7 +256,7 @@ Materials {
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 3841919501
+    ID : 2231466989
     Name : fabric_f
     Shader : shaders/lit.spv
     MaterialFlags : 18
@@ -272,7 +272,7 @@ Materials {
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 2305632010
+    ID : 1982138986
     Name : fabric_g
     Shader : shaders/lit.spv
     MaterialFlags : 18
@@ -288,7 +288,7 @@ Materials {
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 2573212073
+    ID : 200057033
     Name : flagpole
     Shader : shaders/lit.spv
     MaterialFlags : 18
@@ -304,7 +304,7 @@ Materials {
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 1174763469
+    ID : 988835437
     Name : floor
     Shader : shaders/lit.spv
     MaterialFlags : 22
@@ -320,7 +320,7 @@ Materials {
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 874497237
+    ID : 560405877
     Name : leaf
     Shader : shaders/lit.spv
     MaterialFlags : 34
@@ -336,7 +336,7 @@ Materials {
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 1020040255
+    ID : 3486737823
     Name : roof
     Shader : shaders/lit.spv
     MaterialFlags : 18
@@ -352,7 +352,7 @@ Materials {
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 887205100
+    ID : 1766356108
     Name : vase
     Shader : shaders/lit.spv
     MaterialFlags : 18
@@ -368,7 +368,7 @@ Materials {
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 2145264931
+    ID : 3148706947
     Name : vase_hanging
     Shader : shaders/lit.spv
     MaterialFlags : 18
@@ -384,7 +384,7 @@ Materials {
     EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
   }
   Material {
-    ID : 2999023975
+    ID : 2363522183
     Name : vase_round
     Shader : shaders/lit.spv
     MaterialFlags : 18
@@ -415,7 +415,7 @@ Node {
     MeshName : sponza_236_sponza_236_column_b
     MeshEntry : 0
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_328_sponza_328_fabric_c
@@ -426,7 +426,7 @@ Node {
     MeshName : sponza_328_sponza_328_fabric_c
     MeshEntry : 1
     MeshScale : 0.01
-    MaterialID : 3143676014
+    MaterialID : 2903500238
   }
   Node {
     Name : sponza_329_sponza_329_fabric_g
@@ -437,7 +437,7 @@ Node {
     MeshName : sponza_329_sponza_329_fabric_g
     MeshEntry : 2
     MeshScale : 0.01
-    MaterialID : 2305632010
+    MaterialID : 1982138986
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -448,7 +448,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_261_sponza_261_flagpole
@@ -459,7 +459,7 @@ Node {
     MeshName : sponza_261_sponza_261_flagpole
     MeshEntry : 4
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_99_sponza_99_column_c
@@ -470,7 +470,7 @@ Node {
     MeshName : sponza_99_sponza_99_column_c
     MeshEntry : 5
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_99_sponza_99_column_c
@@ -481,7 +481,7 @@ Node {
     MeshName : sponza_99_sponza_99_column_c
     MeshEntry : 5
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_329_sponza_329_fabric_g
@@ -492,7 +492,7 @@ Node {
     MeshName : sponza_329_sponza_329_fabric_g
     MeshEntry : 2
     MeshScale : 0.01
-    MaterialID : 2305632010
+    MaterialID : 1982138986
   }
   Node {
     Name : sponza_328_sponza_328_fabric_c
@@ -503,7 +503,7 @@ Node {
     MeshName : sponza_328_sponza_328_fabric_c
     MeshEntry : 1
     MeshScale : 0.01
-    MaterialID : 3143676014
+    MaterialID : 2903500238
   }
   Node {
     Name : sponza_329_sponza_329_fabric_g
@@ -514,7 +514,7 @@ Node {
     MeshName : sponza_329_sponza_329_fabric_g
     MeshEntry : 2
     MeshScale : 0.01
-    MaterialID : 3841919501
+    MaterialID : 2231466989
   }
   Node {
     Name : sponza_329_sponza_329_fabric_g
@@ -525,7 +525,7 @@ Node {
     MeshName : sponza_329_sponza_329_fabric_g
     MeshEntry : 2
     MeshScale : 0.01
-    MaterialID : 3143676014
+    MaterialID : 2903500238
   }
   Node {
     Name : sponza_328_sponza_328_fabric_c
@@ -536,7 +536,7 @@ Node {
     MeshName : sponza_328_sponza_328_fabric_c
     MeshEntry : 1
     MeshScale : 0.01
-    MaterialID : 3841919501
+    MaterialID : 2231466989
   }
   Node {
     Name : sponza_329_sponza_329_fabric_g
@@ -547,7 +547,7 @@ Node {
     MeshName : sponza_329_sponza_329_fabric_g
     MeshEntry : 2
     MeshScale : 0.01
-    MaterialID : 3143676014
+    MaterialID : 2903500238
   }
   Node {
     Name : sponza_328_sponza_328_fabric_c
@@ -558,7 +558,7 @@ Node {
     MeshName : sponza_328_sponza_328_fabric_c
     MeshEntry : 1
     MeshScale : 0.01
-    MaterialID : 2305632010
+    MaterialID : 1982138986
   }
   Node {
     Name : sponza_329_sponza_329_fabric_g
@@ -569,7 +569,7 @@ Node {
     MeshName : sponza_329_sponza_329_fabric_g
     MeshEntry : 2
     MeshScale : 0.01
-    MaterialID : 3841919501
+    MaterialID : 2231466989
   }
   Node {
     Name : sponza_261_sponza_261_flagpole
@@ -580,7 +580,7 @@ Node {
     MeshName : sponza_261_sponza_261_flagpole
     MeshEntry : 4
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_150_sponza_150_column_b
@@ -591,7 +591,7 @@ Node {
     MeshName : sponza_150_sponza_150_column_b
     MeshEntry : 16
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_261_sponza_261_flagpole
@@ -602,7 +602,7 @@ Node {
     MeshName : sponza_261_sponza_261_flagpole
     MeshEntry : 4
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_156_sponza_156_column_b
@@ -613,7 +613,7 @@ Node {
     MeshName : sponza_156_sponza_156_column_b
     MeshEntry : 18
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -624,7 +624,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_266_sponza_266_flagpole
@@ -635,7 +635,7 @@ Node {
     MeshName : sponza_266_sponza_266_flagpole
     MeshEntry : 20
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_117_sponza_117_floor
@@ -646,7 +646,7 @@ Node {
     MeshName : sponza_117_sponza_117_floor
     MeshEntry : 21
     MeshScale : 0.01
-    MaterialID : 1174763469
+    MaterialID : 988835437
   }
   Node {
     Name : sponza_116_sponza_116_bricks
@@ -657,7 +657,7 @@ Node {
     MeshName : sponza_116_sponza_116_bricks
     MeshEntry : 22
     MeshScale : 0.01
-    MaterialID : 1053501723
+    MaterialID : 2791679051
   }
   Node {
     Name : sponza_115_sponza_115_column_c
@@ -668,7 +668,7 @@ Node {
     MeshName : sponza_115_sponza_115_column_c
     MeshEntry : 23
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_115_sponza_115_column_c_mirror
@@ -679,7 +679,7 @@ Node {
     MeshName : sponza_115_sponza_115_column_c_mirror
     MeshEntry : 24
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_99_sponza_99_column_c_mirror
@@ -690,7 +690,7 @@ Node {
     MeshName : sponza_99_sponza_99_column_c_mirror
     MeshEntry : 25
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_150_sponza_150_column_b_mirror
@@ -701,7 +701,7 @@ Node {
     MeshName : sponza_150_sponza_150_column_b_mirror
     MeshEntry : 26
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_223_sponza_223_column_b
@@ -712,7 +712,7 @@ Node {
     MeshName : sponza_223_sponza_223_column_b
     MeshEntry : 27
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_156_sponza_156_column_b_mirror
@@ -723,7 +723,7 @@ Node {
     MeshName : sponza_156_sponza_156_column_b_mirror
     MeshEntry : 28
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_229_sponza_229_column_b
@@ -734,7 +734,7 @@ Node {
     MeshName : sponza_229_sponza_229_column_b
     MeshEntry : 29
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -745,7 +745,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_119_sponza_119_column_a
@@ -756,7 +756,7 @@ Node {
     MeshName : sponza_119_sponza_119_column_a
     MeshEntry : 31
     MeshScale : 0.01
-    MaterialID : 1187283691
+    MaterialID : 3579638603
   }
   Node {
     Name : sponza_118_sponza_118_column_a
@@ -767,7 +767,7 @@ Node {
     MeshName : sponza_118_sponza_118_column_a
     MeshEntry : 32
     MeshScale : 0.01
-    MaterialID : 1187283691
+    MaterialID : 3579638603
   }
   Node {
     Name : sponza_75_sponza_75_bricks
@@ -778,7 +778,7 @@ Node {
     MeshName : sponza_75_sponza_75_bricks
     MeshEntry : 33
     MeshScale : 0.01
-    MaterialID : 1053501723
+    MaterialID : 2791679051
   }
   Node {
     Name : sponza_74_sponza_74_details
@@ -789,7 +789,7 @@ Node {
     MeshName : sponza_74_sponza_74_details
     MeshEntry : 34
     MeshScale : 0.01
-    MaterialID : 612443781
+    MaterialID : 113638181
   }
   Node {
     Name : sponza_115_sponza_115_column_c_mirror
@@ -800,7 +800,7 @@ Node {
     MeshName : sponza_115_sponza_115_column_c_mirror
     MeshEntry : 24
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_115_sponza_115_column_c
@@ -811,7 +811,7 @@ Node {
     MeshName : sponza_115_sponza_115_column_c
     MeshEntry : 23
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_71_sponza_71_details
@@ -822,7 +822,7 @@ Node {
     MeshName : sponza_71_sponza_71_details
     MeshEntry : 37
     MeshScale : 0.01
-    MaterialID : 612443781
+    MaterialID : 113638181
   }
   Node {
     Name : sponza_71_sponza_71_bricks
@@ -833,7 +833,7 @@ Node {
     MeshName : sponza_71_sponza_71_bricks
     MeshEntry : 38
     MeshScale : 0.01
-    MaterialID : 1053501723
+    MaterialID : 2791679051
   }
   Node {
     Name : sponza_70_sponza_70_details
@@ -844,7 +844,7 @@ Node {
     MeshName : sponza_70_sponza_70_details
     MeshEntry : 39
     MeshScale : 0.01
-    MaterialID : 612443781
+    MaterialID : 113638181
   }
   Node {
     Name : sponza_74_sponza_74_details_mirror
@@ -855,7 +855,7 @@ Node {
     MeshName : sponza_74_sponza_74_details_mirror
     MeshEntry : 40
     MeshScale : 0.01
-    MaterialID : 612443781
+    MaterialID : 113638181
   }
   Node {
     Name : sponza_71_sponza_71_details
@@ -866,7 +866,7 @@ Node {
     MeshName : sponza_71_sponza_71_details
     MeshEntry : 37
     MeshScale : 0.01
-    MaterialID : 612443781
+    MaterialID : 113638181
   }
   Node {
     Name : sponza_71_sponza_71_bricks_mirror
@@ -877,7 +877,7 @@ Node {
     MeshName : sponza_71_sponza_71_bricks_mirror
     MeshEntry : 42
     MeshScale : 0.01
-    MaterialID : 1053501723
+    MaterialID : 2791679051
   }
   Node {
     Name : sponza_90_sponza_90_column_c
@@ -888,7 +888,7 @@ Node {
     MeshName : sponza_90_sponza_90_column_c
     MeshEntry : 43
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_99_sponza_99_column_c
@@ -899,7 +899,7 @@ Node {
     MeshName : sponza_99_sponza_99_column_c
     MeshEntry : 5
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_99_sponza_99_column_c
@@ -910,7 +910,7 @@ Node {
     MeshName : sponza_99_sponza_99_column_c
     MeshEntry : 5
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_115_sponza_115_column_c_mirror
@@ -921,7 +921,7 @@ Node {
     MeshName : sponza_115_sponza_115_column_c_mirror
     MeshEntry : 24
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_115_sponza_115_column_c
@@ -932,7 +932,7 @@ Node {
     MeshName : sponza_115_sponza_115_column_c
     MeshEntry : 23
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_115_sponza_115_column_c
@@ -943,7 +943,7 @@ Node {
     MeshName : sponza_115_sponza_115_column_c
     MeshEntry : 23
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_343_sponza_343_vase_hanging
@@ -954,7 +954,7 @@ Node {
     MeshName : sponza_343_sponza_343_vase_hanging
     MeshEntry : 49
     MeshScale : 0.01
-    MaterialID : 2145264931
+    MaterialID : 3148706947
   }
   Node {
     Name : sponza_340_sponza_340_chain
@@ -965,7 +965,7 @@ Node {
     MeshName : sponza_340_sponza_340_chain
     MeshEntry : 50
     MeshScale : 0.01
-    MaterialID : 2118633142
+    MaterialID : 1130442230
   }
   Node {
     Name : sponza_340_sponza_340_chain
@@ -976,7 +976,7 @@ Node {
     MeshName : sponza_340_sponza_340_chain
     MeshEntry : 50
     MeshScale : 0.01
-    MaterialID : 2118633142
+    MaterialID : 1130442230
   }
   Node {
     Name : sponza_346_sponza_346_vase_hanging
@@ -987,7 +987,7 @@ Node {
     MeshName : sponza_346_sponza_346_vase_hanging
     MeshEntry : 52
     MeshScale : 0.01
-    MaterialID : 2145264931
+    MaterialID : 3148706947
   }
   Node {
     Name : sponza_347_sponza_347_vase_hanging
@@ -998,7 +998,7 @@ Node {
     MeshName : sponza_347_sponza_347_vase_hanging
     MeshEntry : 53
     MeshScale : 0.01
-    MaterialID : 2145264931
+    MaterialID : 3148706947
   }
   Node {
     Name : sponza_115_sponza_115_column_c_mirror
@@ -1009,7 +1009,7 @@ Node {
     MeshName : sponza_115_sponza_115_column_c_mirror
     MeshEntry : 24
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_346_sponza_346_vase_hanging
@@ -1020,7 +1020,7 @@ Node {
     MeshName : sponza_346_sponza_346_vase_hanging
     MeshEntry : 52
     MeshScale : 0.01
-    MaterialID : 2145264931
+    MaterialID : 3148706947
   }
   Node {
     Name : sponza_340_sponza_340_chain
@@ -1031,7 +1031,7 @@ Node {
     MeshName : sponza_340_sponza_340_chain
     MeshEntry : 50
     MeshScale : 0.01
-    MaterialID : 2118633142
+    MaterialID : 1130442230
   }
   Node {
     Name : sponza_340_sponza_340_chain
@@ -1042,7 +1042,7 @@ Node {
     MeshName : sponza_340_sponza_340_chain
     MeshEntry : 50
     MeshScale : 0.01
-    MaterialID : 2118633142
+    MaterialID : 1130442230
   }
   Node {
     Name : sponza_99_sponza_99_column_c_mirror
@@ -1053,7 +1053,7 @@ Node {
     MeshName : sponza_99_sponza_99_column_c_mirror
     MeshEntry : 25
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_99_sponza_99_column_c_mirror
@@ -1064,7 +1064,7 @@ Node {
     MeshName : sponza_99_sponza_99_column_c_mirror
     MeshEntry : 25
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -1075,7 +1075,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_156_sponza_156_column_b_mirror
@@ -1086,7 +1086,7 @@ Node {
     MeshName : sponza_156_sponza_156_column_b_mirror
     MeshEntry : 28
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -1097,7 +1097,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_185_sponza_185_column_b
@@ -1108,7 +1108,7 @@ Node {
     MeshName : sponza_185_sponza_185_column_b
     MeshEntry : 63
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -1119,7 +1119,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_150_sponza_150_column_b
@@ -1130,7 +1130,7 @@ Node {
     MeshName : sponza_150_sponza_150_column_b
     MeshEntry : 16
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_180_sponza_180_column_b
@@ -1141,7 +1141,7 @@ Node {
     MeshName : sponza_180_sponza_180_column_b
     MeshEntry : 66
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_181_sponza_181_column_b
@@ -1152,7 +1152,7 @@ Node {
     MeshName : sponza_181_sponza_181_column_b
     MeshEntry : 67
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -1163,7 +1163,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_150_sponza_150_column_b
@@ -1174,7 +1174,7 @@ Node {
     MeshName : sponza_150_sponza_150_column_b
     MeshEntry : 16
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_122_sponza_122_arch
@@ -1185,7 +1185,7 @@ Node {
     MeshName : sponza_122_sponza_122_arch
     MeshEntry : 70
     MeshScale : 0.01
-    MaterialID : 614746809
+    MaterialID : 3253183769
   }
   Node {
     Name : sponza_123_sponza_123_arch
@@ -1196,7 +1196,7 @@ Node {
     MeshName : sponza_123_sponza_123_arch
     MeshEntry : 71
     MeshScale : 0.01
-    MaterialID : 614746809
+    MaterialID : 3253183769
   }
   Node {
     Name : sponza_118_sponza_118_column_a
@@ -1207,7 +1207,7 @@ Node {
     MeshName : sponza_118_sponza_118_column_a
     MeshEntry : 32
     MeshScale : 0.01
-    MaterialID : 1187283691
+    MaterialID : 3579638603
   }
   Node {
     Name : sponza_118_sponza_118_column_a_mirror
@@ -1218,7 +1218,7 @@ Node {
     MeshName : sponza_118_sponza_118_column_a_mirror
     MeshEntry : 73
     MeshScale : 0.01
-    MaterialID : 1187283691
+    MaterialID : 3579638603
   }
   Node {
     Name : sponza_126_sponza_126_column_b
@@ -1229,7 +1229,7 @@ Node {
     MeshName : sponza_126_sponza_126_column_b
     MeshEntry : 74
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_127_sponza_127_column_b
@@ -1240,7 +1240,7 @@ Node {
     MeshName : sponza_127_sponza_127_column_b
     MeshEntry : 75
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -1251,7 +1251,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_150_sponza_150_column_b
@@ -1262,7 +1262,7 @@ Node {
     MeshName : sponza_150_sponza_150_column_b
     MeshEntry : 16
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -1273,7 +1273,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_207_sponza_207_column_b
@@ -1284,7 +1284,7 @@ Node {
     MeshName : sponza_207_sponza_207_column_b
     MeshEntry : 79
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -1295,7 +1295,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_150_sponza_150_column_b
@@ -1306,7 +1306,7 @@ Node {
     MeshName : sponza_150_sponza_150_column_b
     MeshEntry : 16
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -1317,7 +1317,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_203_sponza_203_column_b
@@ -1328,7 +1328,7 @@ Node {
     MeshName : sponza_203_sponza_203_column_b
     MeshEntry : 83
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_180_sponza_180_column_b_mirror
@@ -1339,7 +1339,7 @@ Node {
     MeshName : sponza_180_sponza_180_column_b_mirror
     MeshEntry : 84
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_223_sponza_223_column_b_mirror
@@ -1350,7 +1350,7 @@ Node {
     MeshName : sponza_223_sponza_223_column_b_mirror
     MeshEntry : 85
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_156_sponza_156_column_b_mirror
@@ -1361,7 +1361,7 @@ Node {
     MeshName : sponza_156_sponza_156_column_b_mirror
     MeshEntry : 28
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -1372,7 +1372,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_59_sponza_59_arch
@@ -1383,7 +1383,7 @@ Node {
     MeshName : sponza_59_sponza_59_arch
     MeshEntry : 88
     MeshScale : 0.01
-    MaterialID : 614746809
+    MaterialID : 3253183769
   }
   Node {
     Name : sponza_59_sponza_59_arch
@@ -1394,7 +1394,7 @@ Node {
     MeshName : sponza_59_sponza_59_arch
     MeshEntry : 88
     MeshScale : 0.01
-    MaterialID : 614746809
+    MaterialID : 3253183769
   }
   Node {
     Name : sponza_150_sponza_150_column_b
@@ -1405,7 +1405,7 @@ Node {
     MeshName : sponza_150_sponza_150_column_b
     MeshEntry : 16
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_53_sponza_53_arch
@@ -1416,7 +1416,7 @@ Node {
     MeshName : sponza_53_sponza_53_arch
     MeshEntry : 91
     MeshScale : 0.01
-    MaterialID : 614746809
+    MaterialID : 3253183769
   }
   Node {
     Name : sponza_52_sponza_52_ceiling
@@ -1427,7 +1427,7 @@ Node {
     MeshName : sponza_52_sponza_52_ceiling
     MeshEntry : 92
     MeshScale : 0.01
-    MaterialID : 1809675744
+    MaterialID : 1845179392
   }
   Node {
     Name : sponza_53_sponza_53_arch
@@ -1438,7 +1438,7 @@ Node {
     MeshName : sponza_53_sponza_53_arch
     MeshEntry : 91
     MeshScale : 0.01
-    MaterialID : 614746809
+    MaterialID : 3253183769
   }
   Node {
     Name : sponza_52_sponza_52_ceiling
@@ -1449,7 +1449,7 @@ Node {
     MeshName : sponza_52_sponza_52_ceiling
     MeshEntry : 92
     MeshScale : 0.01
-    MaterialID : 1809675744
+    MaterialID : 1845179392
   }
   Node {
     Name : sponza_59_sponza_59_arch
@@ -1460,7 +1460,7 @@ Node {
     MeshName : sponza_59_sponza_59_arch
     MeshEntry : 88
     MeshScale : 0.01
-    MaterialID : 614746809
+    MaterialID : 3253183769
   }
   Node {
     Name : sponza_59_sponza_59_arch
@@ -1471,7 +1471,7 @@ Node {
     MeshName : sponza_59_sponza_59_arch
     MeshEntry : 88
     MeshScale : 0.01
-    MaterialID : 614746809
+    MaterialID : 3253183769
   }
   Node {
     Name : sponza_59_sponza_59_arch
@@ -1482,7 +1482,7 @@ Node {
     MeshName : sponza_59_sponza_59_arch
     MeshEntry : 88
     MeshScale : 0.01
-    MaterialID : 614746809
+    MaterialID : 3253183769
   }
   Node {
     Name : sponza_52_sponza_52_ceiling
@@ -1493,7 +1493,7 @@ Node {
     MeshName : sponza_52_sponza_52_ceiling
     MeshEntry : 92
     MeshScale : 0.01
-    MaterialID : 1809675744
+    MaterialID : 1845179392
   }
   Node {
     Name : sponza_282_sponza_282_fabric_e
@@ -1504,7 +1504,7 @@ Node {
     MeshName : sponza_282_sponza_282_fabric_e
     MeshEntry : 99
     MeshScale : 0.01
-    MaterialID : 4236800660
+    MaterialID : 3941017396
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -1515,7 +1515,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -1526,7 +1526,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_282_sponza_282_fabric_e
@@ -1537,7 +1537,7 @@ Node {
     MeshName : sponza_282_sponza_282_fabric_e
     MeshEntry : 99
     MeshScale : 0.01
-    MaterialID : 4266087415
+    MaterialID : 17792663
   }
   Node {
     Name : sponza_150_sponza_150_column_b
@@ -1548,7 +1548,7 @@ Node {
     MeshName : sponza_150_sponza_150_column_b
     MeshEntry : 16
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_218_sponza_218_column_b
@@ -1559,7 +1559,7 @@ Node {
     MeshName : sponza_218_sponza_218_column_b
     MeshEntry : 104
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -1570,7 +1570,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_214_sponza_214_column_b
@@ -1581,7 +1581,7 @@ Node {
     MeshName : sponza_214_sponza_214_column_b
     MeshEntry : 106
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -1592,7 +1592,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_150_sponza_150_column_b
@@ -1603,7 +1603,7 @@ Node {
     MeshName : sponza_150_sponza_150_column_b
     MeshEntry : 16
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -1614,7 +1614,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -1625,7 +1625,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_156_sponza_156_column_b
@@ -1636,7 +1636,7 @@ Node {
     MeshName : sponza_156_sponza_156_column_b
     MeshEntry : 18
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_223_sponza_223_column_b
@@ -1647,7 +1647,7 @@ Node {
     MeshName : sponza_223_sponza_223_column_b
     MeshEntry : 27
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_180_sponza_180_column_b
@@ -1658,7 +1658,7 @@ Node {
     MeshName : sponza_180_sponza_180_column_b
     MeshEntry : 66
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_261_sponza_261_flagpole
@@ -1669,7 +1669,7 @@ Node {
     MeshName : sponza_261_sponza_261_flagpole
     MeshEntry : 4
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_28_sponza_28_column_c
@@ -1680,7 +1680,7 @@ Node {
     MeshName : sponza_28_sponza_28_column_c
     MeshEntry : 115
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_29_sponza_29_column_c
@@ -1691,7 +1691,7 @@ Node {
     MeshName : sponza_29_sponza_29_column_c
     MeshEntry : 116
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_29_sponza_29_column_c
@@ -1702,7 +1702,7 @@ Node {
     MeshName : sponza_29_sponza_29_column_c
     MeshEntry : 116
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_28_sponza_28_column_c_mirror
@@ -1713,7 +1713,7 @@ Node {
     MeshName : sponza_28_sponza_28_column_c_mirror
     MeshEntry : 118
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_29_sponza_29_column_c
@@ -1724,7 +1724,7 @@ Node {
     MeshName : sponza_29_sponza_29_column_c
     MeshEntry : 116
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_29_sponza_29_column_c_mirror
@@ -1735,7 +1735,7 @@ Node {
     MeshName : sponza_29_sponza_29_column_c_mirror
     MeshEntry : 120
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_28_sponza_28_column_c_mirror
@@ -1746,7 +1746,7 @@ Node {
     MeshName : sponza_28_sponza_28_column_c_mirror
     MeshEntry : 118
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_29_sponza_29_column_c
@@ -1757,7 +1757,7 @@ Node {
     MeshName : sponza_29_sponza_29_column_c
     MeshEntry : 116
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_20_sponza_20_arch
@@ -1768,7 +1768,7 @@ Node {
     MeshName : sponza_20_sponza_20_arch
     MeshEntry : 123
     MeshScale : 0.01
-    MaterialID : 614746809
+    MaterialID : 3253183769
   }
   Node {
     Name : sponza_20_sponza_20_arch_mirror
@@ -1779,7 +1779,7 @@ Node {
     MeshName : sponza_20_sponza_20_arch_mirror
     MeshEntry : 124
     MeshScale : 0.01
-    MaterialID : 614746809
+    MaterialID : 3253183769
   }
   Node {
     Name : sponza_261_sponza_261_flagpole_mirror
@@ -1790,7 +1790,7 @@ Node {
     MeshName : sponza_261_sponza_261_flagpole_mirror
     MeshEntry : 125
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_261_sponza_261_flagpole_mirror
@@ -1801,7 +1801,7 @@ Node {
     MeshName : sponza_261_sponza_261_flagpole_mirror
     MeshEntry : 125
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_159_sponza_159_column_b
@@ -1812,7 +1812,7 @@ Node {
     MeshName : sponza_159_sponza_159_column_b
     MeshEntry : 127
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_180_sponza_180_column_b
@@ -1823,7 +1823,7 @@ Node {
     MeshName : sponza_180_sponza_180_column_b
     MeshEntry : 66
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -1834,7 +1834,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_152_sponza_152_column_b
@@ -1845,7 +1845,7 @@ Node {
     MeshName : sponza_152_sponza_152_column_b
     MeshEntry : 130
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -1856,7 +1856,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_266_sponza_266_flagpole_mirror
@@ -1867,7 +1867,7 @@ Node {
     MeshName : sponza_266_sponza_266_flagpole_mirror
     MeshEntry : 132
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_223_sponza_223_column_b_mirror
@@ -1878,7 +1878,7 @@ Node {
     MeshName : sponza_223_sponza_223_column_b_mirror
     MeshEntry : 85
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_266_sponza_266_flagpole_mirror
@@ -1889,7 +1889,7 @@ Node {
     MeshName : sponza_266_sponza_266_flagpole_mirror
     MeshEntry : 132
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_266_sponza_266_flagpole_mirror
@@ -1900,7 +1900,7 @@ Node {
     MeshName : sponza_266_sponza_266_flagpole_mirror
     MeshEntry : 132
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_150_sponza_150_column_b
@@ -1911,7 +1911,7 @@ Node {
     MeshName : sponza_150_sponza_150_column_b
     MeshEntry : 16
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_261_sponza_261_flagpole
@@ -1922,7 +1922,7 @@ Node {
     MeshName : sponza_261_sponza_261_flagpole
     MeshEntry : 4
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_99_sponza_99_column_c_mirror
@@ -1933,7 +1933,7 @@ Node {
     MeshName : sponza_99_sponza_99_column_c_mirror
     MeshEntry : 25
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_306_sponza_306_flagpole
@@ -1944,7 +1944,7 @@ Node {
     MeshName : sponza_306_sponza_306_flagpole
     MeshEntry : 139
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_261_sponza_261_flagpole_mirror
@@ -1955,7 +1955,7 @@ Node {
     MeshName : sponza_261_sponza_261_flagpole_mirror
     MeshEntry : 125
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_261_sponza_261_flagpole_mirror
@@ -1966,7 +1966,7 @@ Node {
     MeshName : sponza_261_sponza_261_flagpole_mirror
     MeshEntry : 125
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_261_sponza_261_flagpole
@@ -1977,7 +1977,7 @@ Node {
     MeshName : sponza_261_sponza_261_flagpole
     MeshEntry : 4
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_276_sponza_276_leaf
@@ -1988,7 +1988,7 @@ Node {
     MeshName : sponza_276_sponza_276_leaf
     MeshEntry : 143
     MeshScale : 0.01
-    MaterialID : 874497237
+    MaterialID : 560405877
   }
   Node {
     Name : sponza_306_sponza_306_flagpole_mirror
@@ -1999,7 +1999,7 @@ Node {
     MeshName : sponza_306_sponza_306_flagpole_mirror
     MeshEntry : 144
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_306_sponza_306_flagpole_mirror
@@ -2010,7 +2010,7 @@ Node {
     MeshName : sponza_306_sponza_306_flagpole_mirror
     MeshEntry : 144
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_261_sponza_261_flagpole_mirror
@@ -2021,7 +2021,7 @@ Node {
     MeshName : sponza_261_sponza_261_flagpole_mirror
     MeshEntry : 125
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_277_sponza_277_leaf
@@ -2032,7 +2032,7 @@ Node {
     MeshName : sponza_277_sponza_277_leaf
     MeshEntry : 147
     MeshScale : 0.01
-    MaterialID : 874497237
+    MaterialID : 560405877
   }
   Node {
     Name : sponza_261_sponza_261_flagpole
@@ -2043,7 +2043,7 @@ Node {
     MeshName : sponza_261_sponza_261_flagpole
     MeshEntry : 4
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_306_sponza_306_flagpole_mirror
@@ -2054,7 +2054,7 @@ Node {
     MeshName : sponza_306_sponza_306_flagpole_mirror
     MeshEntry : 144
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -2065,7 +2065,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_150_sponza_150_column_b
@@ -2076,7 +2076,7 @@ Node {
     MeshName : sponza_150_sponza_150_column_b
     MeshEntry : 16
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -2087,7 +2087,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_156_sponza_156_column_b_mirror
@@ -2098,7 +2098,7 @@ Node {
     MeshName : sponza_156_sponza_156_column_b_mirror
     MeshEntry : 28
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_223_sponza_223_column_b_mirror
@@ -2109,7 +2109,7 @@ Node {
     MeshName : sponza_223_sponza_223_column_b_mirror
     MeshEntry : 85
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_180_sponza_180_column_b_mirror
@@ -2120,7 +2120,7 @@ Node {
     MeshName : sponza_180_sponza_180_column_b_mirror
     MeshEntry : 84
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_05_sponza_05_bricks
@@ -2131,7 +2131,7 @@ Node {
     MeshName : sponza_05_sponza_05_bricks
     MeshEntry : 156
     MeshScale : 0.01
-    MaterialID : 1053501723
+    MaterialID : 2791679051
   }
   Node {
     Name : sponza_06_sponza_06_bricks
@@ -2142,7 +2142,7 @@ Node {
     MeshName : sponza_06_sponza_06_bricks
     MeshEntry : 157
     MeshScale : 0.01
-    MaterialID : 1053501723
+    MaterialID : 2791679051
   }
   Node {
     Name : sponza_07_sponza_07_arch
@@ -2153,7 +2153,7 @@ Node {
     MeshName : sponza_07_sponza_07_arch
     MeshEntry : 158
     MeshScale : 0.01
-    MaterialID : 614746809
+    MaterialID : 3253183769
   }
   Node {
     Name : sponza_00_sponza_00_leaf
@@ -2164,7 +2164,7 @@ Node {
     MeshName : sponza_00_sponza_00_leaf
     MeshEntry : 159
     MeshScale : 0.01
-    MaterialID : 874497237
+    MaterialID : 560405877
   }
   Node {
     Name : sponza_01_sponza_01_vase_round
@@ -2175,7 +2175,7 @@ Node {
     MeshName : sponza_01_sponza_01_vase_round
     MeshEntry : 160
     MeshScale : 0.01
-    MaterialID : 2999023975
+    MaterialID : 2363522183
   }
   Node {
     Name : sponza_01_sponza_01_Material__57
@@ -2186,7 +2186,7 @@ Node {
     MeshName : sponza_01_sponza_01_Material__57
     MeshEntry : 161
     MeshScale : 0.01
-    MaterialID : 406477841
+    MaterialID : 222463409
   }
   Node {
     Name : sponza_03_sponza_03_Material__298
@@ -2197,7 +2197,7 @@ Node {
     MeshName : sponza_03_sponza_03_Material__298
     MeshEntry : 162
     MeshScale : 0.01
-    MaterialID : 1821207317
+    MaterialID : 3432592053
   }
   Node {
     Name : sponza_08_sponza_08_ceiling
@@ -2208,7 +2208,7 @@ Node {
     MeshName : sponza_08_sponza_08_ceiling
     MeshEntry : 163
     MeshScale : 0.01
-    MaterialID : 1809675744
+    MaterialID : 1845179392
   }
   Node {
     Name : sponza_09_sponza_09_column_a
@@ -2219,7 +2219,7 @@ Node {
     MeshName : sponza_09_sponza_09_column_a
     MeshEntry : 164
     MeshScale : 0.01
-    MaterialID : 1187283691
+    MaterialID : 3579638603
   }
   Node {
     Name : sponza_150_sponza_150_column_b
@@ -2230,7 +2230,7 @@ Node {
     MeshName : sponza_150_sponza_150_column_b
     MeshEntry : 16
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -2241,7 +2241,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_135_sponza_135_column_b
@@ -2252,7 +2252,7 @@ Node {
     MeshName : sponza_135_sponza_135_column_b
     MeshEntry : 167
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_134_sponza_134_column_b
@@ -2263,7 +2263,7 @@ Node {
     MeshName : sponza_134_sponza_134_column_b
     MeshEntry : 168
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_137_sponza_137_column_b
@@ -2274,7 +2274,7 @@ Node {
     MeshName : sponza_137_sponza_137_column_b
     MeshEntry : 169
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_180_sponza_180_column_b
@@ -2285,7 +2285,7 @@ Node {
     MeshName : sponza_180_sponza_180_column_b
     MeshEntry : 66
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_127_sponza_127_column_b
@@ -2296,7 +2296,7 @@ Node {
     MeshName : sponza_127_sponza_127_column_b
     MeshEntry : 75
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_126_sponza_126_column_b
@@ -2307,7 +2307,7 @@ Node {
     MeshName : sponza_126_sponza_126_column_b
     MeshEntry : 74
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_127_sponza_127_column_b
@@ -2318,7 +2318,7 @@ Node {
     MeshName : sponza_127_sponza_127_column_b
     MeshEntry : 75
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_132_sponza_132_column_b
@@ -2329,7 +2329,7 @@ Node {
     MeshName : sponza_132_sponza_132_column_b
     MeshEntry : 174
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -2340,7 +2340,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_150_sponza_150_column_b
@@ -2351,7 +2351,7 @@ Node {
     MeshName : sponza_150_sponza_150_column_b
     MeshEntry : 16
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -2362,7 +2362,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_240_sponza_240_column_b
@@ -2373,7 +2373,7 @@ Node {
     MeshName : sponza_240_sponza_240_column_b
     MeshEntry : 178
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_126_sponza_126_column_b
@@ -2384,7 +2384,7 @@ Node {
     MeshName : sponza_126_sponza_126_column_b
     MeshEntry : 74
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_246_sponza_246_column_b
@@ -2395,7 +2395,7 @@ Node {
     MeshName : sponza_246_sponza_246_column_b
     MeshEntry : 180
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_223_sponza_223_column_b_mirror
@@ -2406,7 +2406,7 @@ Node {
     MeshName : sponza_223_sponza_223_column_b_mirror
     MeshEntry : 85
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_156_sponza_156_column_b_mirror
@@ -2417,7 +2417,7 @@ Node {
     MeshName : sponza_156_sponza_156_column_b_mirror
     MeshEntry : 28
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_132_sponza_132_column_b_mirror
@@ -2428,7 +2428,7 @@ Node {
     MeshName : sponza_132_sponza_132_column_b_mirror
     MeshEntry : 183
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_127_sponza_127_column_b
@@ -2439,7 +2439,7 @@ Node {
     MeshName : sponza_127_sponza_127_column_b
     MeshEntry : 75
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_17_sponza_17_arch
@@ -2450,7 +2450,7 @@ Node {
     MeshName : sponza_17_sponza_17_arch
     MeshEntry : 185
     MeshScale : 0.01
-    MaterialID : 614746809
+    MaterialID : 3253183769
   }
   Node {
     Name : sponza_09_sponza_09_column_a
@@ -2461,7 +2461,7 @@ Node {
     MeshName : sponza_09_sponza_09_column_a
     MeshEntry : 164
     MeshScale : 0.01
-    MaterialID : 1187283691
+    MaterialID : 3579638603
   }
   Node {
     Name : sponza_09_sponza_09_column_a
@@ -2472,7 +2472,7 @@ Node {
     MeshName : sponza_09_sponza_09_column_a
     MeshEntry : 164
     MeshScale : 0.01
-    MaterialID : 1187283691
+    MaterialID : 3579638603
   }
   Node {
     Name : sponza_09_sponza_09_column_a_mirror
@@ -2483,7 +2483,7 @@ Node {
     MeshName : sponza_09_sponza_09_column_a_mirror
     MeshEntry : 188
     MeshScale : 0.01
-    MaterialID : 1187283691
+    MaterialID : 3579638603
   }
   Node {
     Name : sponza_09_sponza_09_column_a_mirror
@@ -2494,7 +2494,7 @@ Node {
     MeshName : sponza_09_sponza_09_column_a_mirror
     MeshEntry : 188
     MeshScale : 0.01
-    MaterialID : 1187283691
+    MaterialID : 3579638603
   }
   Node {
     Name : sponza_09_sponza_09_column_a_mirror
@@ -2505,7 +2505,7 @@ Node {
     MeshName : sponza_09_sponza_09_column_a_mirror
     MeshEntry : 188
     MeshScale : 0.01
-    MaterialID : 1187283691
+    MaterialID : 3579638603
   }
   Node {
     Name : sponza_09_sponza_09_column_a
@@ -2516,7 +2516,7 @@ Node {
     MeshName : sponza_09_sponza_09_column_a
     MeshEntry : 164
     MeshScale : 0.01
-    MaterialID : 1187283691
+    MaterialID : 3579638603
   }
   Node {
     Name : sponza_09_sponza_09_column_a
@@ -2527,7 +2527,7 @@ Node {
     MeshName : sponza_09_sponza_09_column_a
     MeshEntry : 164
     MeshScale : 0.01
-    MaterialID : 1187283691
+    MaterialID : 3579638603
   }
   Node {
     Name : sponza_08_sponza_08_ceiling
@@ -2538,7 +2538,7 @@ Node {
     MeshName : sponza_08_sponza_08_ceiling
     MeshEntry : 163
     MeshScale : 0.01
-    MaterialID : 1809675744
+    MaterialID : 1845179392
   }
   Node {
     Name : sponza_18_sponza_18_floor
@@ -2549,7 +2549,7 @@ Node {
     MeshName : sponza_18_sponza_18_floor
     MeshEntry : 194
     MeshScale : 0.01
-    MaterialID : 1174763469
+    MaterialID : 988835437
   }
   Node {
     Name : sponza_127_sponza_127_column_b
@@ -2560,7 +2560,7 @@ Node {
     MeshName : sponza_127_sponza_127_column_b
     MeshEntry : 75
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_126_sponza_126_column_b_mirror
@@ -2571,7 +2571,7 @@ Node {
     MeshName : sponza_126_sponza_126_column_b_mirror
     MeshEntry : 196
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_127_sponza_127_column_b
@@ -2582,7 +2582,7 @@ Node {
     MeshName : sponza_127_sponza_127_column_b
     MeshEntry : 75
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_132_sponza_132_column_b
@@ -2593,7 +2593,7 @@ Node {
     MeshName : sponza_132_sponza_132_column_b
     MeshEntry : 174
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_127_sponza_127_column_b
@@ -2604,7 +2604,7 @@ Node {
     MeshName : sponza_127_sponza_127_column_b
     MeshEntry : 75
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_134_sponza_134_column_b
@@ -2615,7 +2615,7 @@ Node {
     MeshName : sponza_134_sponza_134_column_b
     MeshEntry : 168
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_135_sponza_135_column_b
@@ -2626,7 +2626,7 @@ Node {
     MeshName : sponza_135_sponza_135_column_b
     MeshEntry : 167
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_257_sponza_257_Material__47
@@ -2637,7 +2637,7 @@ Node {
     MeshName : sponza_257_sponza_257_Material__47
     MeshEntry : 202
     MeshScale : 0.01
-    MaterialID : 1528938579
+    MaterialID : 3058220339
   }
   Node {
     Name : sponza_258_sponza_258_bricks
@@ -2648,7 +2648,7 @@ Node {
     MeshName : sponza_258_sponza_258_bricks
     MeshEntry : 203
     MeshScale : 0.01
-    MaterialID : 1053501723
+    MaterialID : 2791679051
   }
   Node {
     Name : sponza_266_sponza_266_flagpole_mirror
@@ -2659,7 +2659,7 @@ Node {
     MeshName : sponza_266_sponza_266_flagpole_mirror
     MeshEntry : 132
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_132_sponza_132_column_b
@@ -2670,7 +2670,7 @@ Node {
     MeshName : sponza_132_sponza_132_column_b
     MeshEntry : 174
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_127_sponza_127_column_b
@@ -2681,7 +2681,7 @@ Node {
     MeshName : sponza_127_sponza_127_column_b
     MeshEntry : 75
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_340_sponza_340_chain
@@ -2692,7 +2692,7 @@ Node {
     MeshName : sponza_340_sponza_340_chain
     MeshEntry : 50
     MeshScale : 0.01
-    MaterialID : 2118633142
+    MaterialID : 1130442230
   }
   Node {
     Name : sponza_59_sponza_59_arch_mirror
@@ -2703,7 +2703,7 @@ Node {
     MeshName : sponza_59_sponza_59_arch_mirror
     MeshEntry : 208
     MeshScale : 0.01
-    MaterialID : 614746809
+    MaterialID : 3253183769
   }
   Node {
     Name : sponza_59_sponza_59_arch_mirror
@@ -2714,7 +2714,7 @@ Node {
     MeshName : sponza_59_sponza_59_arch_mirror
     MeshEntry : 208
     MeshScale : 0.01
-    MaterialID : 614746809
+    MaterialID : 3253183769
   }
   Node {
     Name : sponza_59_sponza_59_arch
@@ -2725,7 +2725,7 @@ Node {
     MeshName : sponza_59_sponza_59_arch
     MeshEntry : 88
     MeshScale : 0.01
-    MaterialID : 614746809
+    MaterialID : 3253183769
   }
   Node {
     Name : sponza_59_sponza_59_arch_mirror
@@ -2736,7 +2736,7 @@ Node {
     MeshName : sponza_59_sponza_59_arch_mirror
     MeshEntry : 208
     MeshScale : 0.01
-    MaterialID : 614746809
+    MaterialID : 3253183769
   }
   Node {
     Name : sponza_66_sponza_66_bricks
@@ -2747,7 +2747,7 @@ Node {
     MeshName : sponza_66_sponza_66_bricks
     MeshEntry : 212
     MeshScale : 0.01
-    MaterialID : 1053501723
+    MaterialID : 2791679051
   }
   Node {
     Name : sponza_07_sponza_07_arch
@@ -2758,7 +2758,7 @@ Node {
     MeshName : sponza_07_sponza_07_arch
     MeshEntry : 158
     MeshScale : 0.01
-    MaterialID : 614746809
+    MaterialID : 3253183769
   }
   Node {
     Name : sponza_59_sponza_59_arch_mirror
@@ -2769,7 +2769,7 @@ Node {
     MeshName : sponza_59_sponza_59_arch_mirror
     MeshEntry : 208
     MeshScale : 0.01
-    MaterialID : 614746809
+    MaterialID : 3253183769
   }
   Node {
     Name : sponza_59_sponza_59_arch_mirror
@@ -2780,7 +2780,7 @@ Node {
     MeshName : sponza_59_sponza_59_arch_mirror
     MeshEntry : 208
     MeshScale : 0.01
-    MaterialID : 614746809
+    MaterialID : 3253183769
   }
   Node {
     Name : sponza_68_sponza_68_bricks
@@ -2791,7 +2791,7 @@ Node {
     MeshName : sponza_68_sponza_68_bricks
     MeshEntry : 216
     MeshScale : 0.01
-    MaterialID : 1053501723
+    MaterialID : 2791679051
   }
   Node {
     Name : sponza_69_sponza_69_bricks
@@ -2802,7 +2802,7 @@ Node {
     MeshName : sponza_69_sponza_69_bricks
     MeshEntry : 217
     MeshScale : 0.01
-    MaterialID : 1053501723
+    MaterialID : 2791679051
   }
   Node {
     Name : sponza_225_sponza_225_column_b
@@ -2813,7 +2813,7 @@ Node {
     MeshName : sponza_225_sponza_225_column_b
     MeshEntry : 218
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_340_sponza_340_chain
@@ -2824,7 +2824,7 @@ Node {
     MeshName : sponza_340_sponza_340_chain
     MeshEntry : 50
     MeshScale : 0.01
-    MaterialID : 2118633142
+    MaterialID : 1130442230
   }
   Node {
     Name : sponza_180_sponza_180_column_b_mirror
@@ -2835,7 +2835,7 @@ Node {
     MeshName : sponza_180_sponza_180_column_b_mirror
     MeshEntry : 84
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_150_sponza_150_column_b
@@ -2846,7 +2846,7 @@ Node {
     MeshName : sponza_150_sponza_150_column_b
     MeshEntry : 16
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_340_sponza_340_chain
@@ -2857,7 +2857,7 @@ Node {
     MeshName : sponza_340_sponza_340_chain
     MeshEntry : 50
     MeshScale : 0.01
-    MaterialID : 2118633142
+    MaterialID : 1130442230
   }
   Node {
     Name : sponza_340_sponza_340_chain
@@ -2868,7 +2868,7 @@ Node {
     MeshName : sponza_340_sponza_340_chain
     MeshEntry : 50
     MeshScale : 0.01
-    MaterialID : 2118633142
+    MaterialID : 1130442230
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -2879,7 +2879,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_346_sponza_346_vase_hanging
@@ -2890,7 +2890,7 @@ Node {
     MeshName : sponza_346_sponza_346_vase_hanging
     MeshEntry : 52
     MeshScale : 0.01
-    MaterialID : 2145264931
+    MaterialID : 3148706947
   }
   Node {
     Name : sponza_346_sponza_346_vase_hanging
@@ -2901,7 +2901,7 @@ Node {
     MeshName : sponza_346_sponza_346_vase_hanging
     MeshEntry : 52
     MeshScale : 0.01
-    MaterialID : 2145264931
+    MaterialID : 3148706947
   }
   Node {
     Name : sponza_340_sponza_340_chain
@@ -2912,7 +2912,7 @@ Node {
     MeshName : sponza_340_sponza_340_chain
     MeshEntry : 50
     MeshScale : 0.01
-    MaterialID : 2118633142
+    MaterialID : 1130442230
   }
   Node {
     Name : sponza_347_sponza_347_vase_hanging
@@ -2923,7 +2923,7 @@ Node {
     MeshName : sponza_347_sponza_347_vase_hanging
     MeshEntry : 53
     MeshScale : 0.01
-    MaterialID : 2145264931
+    MaterialID : 3148706947
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -2934,7 +2934,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_340_sponza_340_chain
@@ -2945,7 +2945,7 @@ Node {
     MeshName : sponza_340_sponza_340_chain
     MeshEntry : 50
     MeshScale : 0.01
-    MaterialID : 2118633142
+    MaterialID : 1130442230
   }
   Node {
     Name : sponza_353_sponza_353_vase_hanging
@@ -2956,7 +2956,7 @@ Node {
     MeshName : sponza_353_sponza_353_vase_hanging
     MeshEntry : 231
     MeshScale : 0.01
-    MaterialID : 2145264931
+    MaterialID : 3148706947
   }
   Node {
     Name : sponza_343_sponza_343_vase_hanging_mirror
@@ -2967,7 +2967,7 @@ Node {
     MeshName : sponza_343_sponza_343_vase_hanging_mirror
     MeshEntry : 232
     MeshScale : 0.01
-    MaterialID : 2145264931
+    MaterialID : 3148706947
   }
   Node {
     Name : sponza_99_sponza_99_column_c_mirror
@@ -2978,7 +2978,7 @@ Node {
     MeshName : sponza_99_sponza_99_column_c_mirror
     MeshEntry : 25
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_306_sponza_306_flagpole
@@ -2989,7 +2989,7 @@ Node {
     MeshName : sponza_306_sponza_306_flagpole
     MeshEntry : 139
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_99_sponza_99_column_c_mirror
@@ -3000,7 +3000,7 @@ Node {
     MeshName : sponza_99_sponza_99_column_c_mirror
     MeshEntry : 25
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_156_sponza_156_column_b_mirror
@@ -3011,7 +3011,7 @@ Node {
     MeshName : sponza_156_sponza_156_column_b_mirror
     MeshEntry : 28
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_90_sponza_90_column_c
@@ -3022,7 +3022,7 @@ Node {
     MeshName : sponza_90_sponza_90_column_c
     MeshEntry : 43
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_261_sponza_261_flagpole
@@ -3033,7 +3033,7 @@ Node {
     MeshName : sponza_261_sponza_261_flagpole
     MeshEntry : 4
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_150_sponza_150_column_b_mirror
@@ -3044,7 +3044,7 @@ Node {
     MeshName : sponza_150_sponza_150_column_b_mirror
     MeshEntry : 26
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_150_sponza_150_column_b
@@ -3055,7 +3055,7 @@ Node {
     MeshName : sponza_150_sponza_150_column_b
     MeshEntry : 16
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -3066,7 +3066,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_196_sponza_196_column_b
@@ -3077,7 +3077,7 @@ Node {
     MeshName : sponza_196_sponza_196_column_b
     MeshEntry : 242
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -3088,7 +3088,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_150_sponza_150_column_b
@@ -3099,7 +3099,7 @@ Node {
     MeshName : sponza_150_sponza_150_column_b
     MeshEntry : 16
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -3110,7 +3110,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_192_sponza_192_column_b
@@ -3121,7 +3121,7 @@ Node {
     MeshName : sponza_192_sponza_192_column_b
     MeshEntry : 246
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_180_sponza_180_column_b
@@ -3132,7 +3132,7 @@ Node {
     MeshName : sponza_180_sponza_180_column_b
     MeshEntry : 66
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_223_sponza_223_column_b_mirror
@@ -3143,7 +3143,7 @@ Node {
     MeshName : sponza_223_sponza_223_column_b_mirror
     MeshEntry : 85
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_306_sponza_306_flagpole
@@ -3154,7 +3154,7 @@ Node {
     MeshName : sponza_306_sponza_306_flagpole
     MeshEntry : 139
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_261_sponza_261_flagpole_mirror
@@ -3165,7 +3165,7 @@ Node {
     MeshName : sponza_261_sponza_261_flagpole_mirror
     MeshEntry : 125
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_261_sponza_261_flagpole
@@ -3176,7 +3176,7 @@ Node {
     MeshName : sponza_261_sponza_261_flagpole
     MeshEntry : 4
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_90_sponza_90_column_c_mirror
@@ -3187,7 +3187,7 @@ Node {
     MeshName : sponza_90_sponza_90_column_c_mirror
     MeshEntry : 252
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_99_sponza_99_column_c
@@ -3198,7 +3198,7 @@ Node {
     MeshName : sponza_99_sponza_99_column_c
     MeshEntry : 5
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_150_sponza_150_column_b
@@ -3209,7 +3209,7 @@ Node {
     MeshName : sponza_150_sponza_150_column_b
     MeshEntry : 16
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -3220,7 +3220,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_90_sponza_90_column_c_mirror
@@ -3231,7 +3231,7 @@ Node {
     MeshName : sponza_90_sponza_90_column_c_mirror
     MeshEntry : 252
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_101_sponza_101_column_c
@@ -3242,7 +3242,7 @@ Node {
     MeshName : sponza_101_sponza_101_column_c
     MeshEntry : 257
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_90_sponza_90_column_c_mirror
@@ -3253,7 +3253,7 @@ Node {
     MeshName : sponza_90_sponza_90_column_c_mirror
     MeshEntry : 252
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_90_sponza_90_column_c_mirror
@@ -3264,7 +3264,7 @@ Node {
     MeshName : sponza_90_sponza_90_column_c_mirror
     MeshEntry : 252
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -3275,7 +3275,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_156_sponza_156_column_b
@@ -3286,7 +3286,7 @@ Node {
     MeshName : sponza_156_sponza_156_column_b
     MeshEntry : 18
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -3297,7 +3297,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_150_sponza_150_column_b
@@ -3308,7 +3308,7 @@ Node {
     MeshName : sponza_150_sponza_150_column_b
     MeshEntry : 16
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_90_sponza_90_column_c
@@ -3319,7 +3319,7 @@ Node {
     MeshName : sponza_90_sponza_90_column_c
     MeshEntry : 43
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_90_sponza_90_column_c
@@ -3330,7 +3330,7 @@ Node {
     MeshName : sponza_90_sponza_90_column_c
     MeshEntry : 43
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_223_sponza_223_column_b_mirror
@@ -3341,7 +3341,7 @@ Node {
     MeshName : sponza_223_sponza_223_column_b_mirror
     MeshEntry : 85
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_180_sponza_180_column_b
@@ -3352,7 +3352,7 @@ Node {
     MeshName : sponza_180_sponza_180_column_b
     MeshEntry : 66
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_52_sponza_52_ceiling
@@ -3363,7 +3363,7 @@ Node {
     MeshName : sponza_52_sponza_52_ceiling
     MeshEntry : 92
     MeshScale : 0.01
-    MaterialID : 1809675744
+    MaterialID : 1845179392
   }
   Node {
     Name : sponza_53_sponza_53_arch
@@ -3374,7 +3374,7 @@ Node {
     MeshName : sponza_53_sponza_53_arch
     MeshEntry : 91
     MeshScale : 0.01
-    MaterialID : 614746809
+    MaterialID : 3253183769
   }
   Node {
     Name : sponza_52_sponza_52_ceiling_mirror
@@ -3385,7 +3385,7 @@ Node {
     MeshName : sponza_52_sponza_52_ceiling_mirror
     MeshEntry : 270
     MeshScale : 0.01
-    MaterialID : 1809675744
+    MaterialID : 1845179392
   }
   Node {
     Name : sponza_53_sponza_53_arch_mirror
@@ -3396,7 +3396,7 @@ Node {
     MeshName : sponza_53_sponza_53_arch_mirror
     MeshEntry : 271
     MeshScale : 0.01
-    MaterialID : 614746809
+    MaterialID : 3253183769
   }
   Node {
     Name : sponza_52_sponza_52_ceiling_mirror
@@ -3407,7 +3407,7 @@ Node {
     MeshName : sponza_52_sponza_52_ceiling_mirror
     MeshEntry : 270
     MeshScale : 0.01
-    MaterialID : 1809675744
+    MaterialID : 1845179392
   }
   Node {
     Name : sponza_53_sponza_53_arch_mirror
@@ -3418,7 +3418,7 @@ Node {
     MeshName : sponza_53_sponza_53_arch_mirror
     MeshEntry : 271
     MeshScale : 0.01
-    MaterialID : 614746809
+    MaterialID : 3253183769
   }
   Node {
     Name : sponza_52_sponza_52_ceiling_mirror
@@ -3429,7 +3429,7 @@ Node {
     MeshName : sponza_52_sponza_52_ceiling_mirror
     MeshEntry : 270
     MeshScale : 0.01
-    MaterialID : 1809675744
+    MaterialID : 1845179392
   }
   Node {
     Name : sponza_53_sponza_53_arch
@@ -3440,7 +3440,7 @@ Node {
     MeshName : sponza_53_sponza_53_arch
     MeshEntry : 91
     MeshScale : 0.01
-    MaterialID : 614746809
+    MaterialID : 3253183769
   }
   Node {
     Name : sponza_52_sponza_52_ceiling
@@ -3451,7 +3451,7 @@ Node {
     MeshName : sponza_52_sponza_52_ceiling
     MeshEntry : 92
     MeshScale : 0.01
-    MaterialID : 1809675744
+    MaterialID : 1845179392
   }
   Node {
     Name : sponza_53_sponza_53_arch_mirror
@@ -3462,7 +3462,7 @@ Node {
     MeshName : sponza_53_sponza_53_arch_mirror
     MeshEntry : 271
     MeshScale : 0.01
-    MaterialID : 614746809
+    MaterialID : 3253183769
   }
   Node {
     Name : sponza_346_sponza_346_vase_hanging
@@ -3473,7 +3473,7 @@ Node {
     MeshName : sponza_346_sponza_346_vase_hanging
     MeshEntry : 52
     MeshScale : 0.01
-    MaterialID : 2145264931
+    MaterialID : 3148706947
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -3484,7 +3484,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_282_sponza_282_fabric_e
@@ -3495,7 +3495,7 @@ Node {
     MeshName : sponza_282_sponza_282_fabric_e
     MeshEntry : 99
     MeshScale : 0.01
-    MaterialID : 4236800660
+    MaterialID : 3941017396
   }
   Node {
     Name : sponza_170_sponza_170_column_b
@@ -3506,7 +3506,7 @@ Node {
     MeshName : sponza_170_sponza_170_column_b
     MeshEntry : 281
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_282_sponza_282_fabric_e
@@ -3517,7 +3517,7 @@ Node {
     MeshName : sponza_282_sponza_282_fabric_e
     MeshEntry : 99
     MeshScale : 0.01
-    MaterialID : 4236800660
+    MaterialID : 3941017396
   }
   Node {
     Name : sponza_282_sponza_282_fabric_e
@@ -3528,7 +3528,7 @@ Node {
     MeshName : sponza_282_sponza_282_fabric_e
     MeshEntry : 99
     MeshScale : 0.01
-    MaterialID : 3679239336
+    MaterialID : 3132280136
   }
   Node {
     Name : sponza_282_sponza_282_fabric_e
@@ -3539,7 +3539,7 @@ Node {
     MeshName : sponza_282_sponza_282_fabric_e
     MeshEntry : 99
     MeshScale : 0.01
-    MaterialID : 4266087415
+    MaterialID : 17792663
   }
   Node {
     Name : sponza_174_sponza_174_column_b
@@ -3550,7 +3550,7 @@ Node {
     MeshName : sponza_174_sponza_174_column_b
     MeshEntry : 285
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_281_sponza_281_leaf
@@ -3561,7 +3561,7 @@ Node {
     MeshName : sponza_281_sponza_281_leaf
     MeshEntry : 286
     MeshScale : 0.01
-    MaterialID : 874497237
+    MaterialID : 560405877
   }
   Node {
     Name : sponza_280_sponza_280_leaf
@@ -3572,7 +3572,7 @@ Node {
     MeshName : sponza_280_sponza_280_leaf
     MeshEntry : 287
     MeshScale : 0.01
-    MaterialID : 874497237
+    MaterialID : 560405877
   }
   Node {
     Name : sponza_223_sponza_223_column_b_mirror
@@ -3583,7 +3583,7 @@ Node {
     MeshName : sponza_223_sponza_223_column_b_mirror
     MeshEntry : 85
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_156_sponza_156_column_b
@@ -3594,7 +3594,7 @@ Node {
     MeshName : sponza_156_sponza_156_column_b
     MeshEntry : 18
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_282_sponza_282_fabric_e
@@ -3605,7 +3605,7 @@ Node {
     MeshName : sponza_282_sponza_282_fabric_e
     MeshEntry : 99
     MeshScale : 0.01
-    MaterialID : 4266087415
+    MaterialID : 17792663
   }
   Node {
     Name : sponza_282_sponza_282_fabric_e
@@ -3616,7 +3616,7 @@ Node {
     MeshName : sponza_282_sponza_282_fabric_e
     MeshEntry : 99
     MeshScale : 0.01
-    MaterialID : 3679239336
+    MaterialID : 3132280136
   }
   Node {
     Name : sponza_377_sponza_377_Material__25
@@ -3627,7 +3627,7 @@ Node {
     MeshName : sponza_377_sponza_377_Material__25
     MeshEntry : 292
     MeshScale : 0.01
-    MaterialID : 2277461067
+    MaterialID : 2999882699
   }
   Node {
     Name : sponza_03_sponza_03_Material__298
@@ -3638,7 +3638,7 @@ Node {
     MeshName : sponza_03_sponza_03_Material__298
     MeshEntry : 162
     MeshScale : 0.01
-    MaterialID : 1821207317
+    MaterialID : 3432592053
   }
   Node {
     Name : sponza_376_sponza_376_vase
@@ -3649,7 +3649,7 @@ Node {
     MeshName : sponza_376_sponza_376_vase
     MeshEntry : 294
     MeshScale : 0.01
-    MaterialID : 887205100
+    MaterialID : 1766356108
   }
   Node {
     Name : sponza_376_sponza_376_vase
@@ -3660,7 +3660,7 @@ Node {
     MeshName : sponza_376_sponza_376_vase
     MeshEntry : 294
     MeshScale : 0.01
-    MaterialID : 887205100
+    MaterialID : 1766356108
   }
   Node {
     Name : sponza_376_sponza_376_vase
@@ -3671,7 +3671,7 @@ Node {
     MeshName : sponza_376_sponza_376_vase
     MeshEntry : 294
     MeshScale : 0.01
-    MaterialID : 887205100
+    MaterialID : 1766356108
   }
   Node {
     Name : sponza_376_sponza_376_vase
@@ -3682,7 +3682,7 @@ Node {
     MeshName : sponza_376_sponza_376_vase
     MeshEntry : 294
     MeshScale : 0.01
-    MaterialID : 887205100
+    MaterialID : 1766356108
   }
   Node {
     Name : sponza_01_sponza_01_vase_round
@@ -3693,7 +3693,7 @@ Node {
     MeshName : sponza_01_sponza_01_vase_round
     MeshEntry : 160
     MeshScale : 0.01
-    MaterialID : 2999023975
+    MaterialID : 2363522183
   }
   Node {
     Name : sponza_372_sponza_372_Material__57
@@ -3704,7 +3704,7 @@ Node {
     MeshName : sponza_372_sponza_372_Material__57
     MeshEntry : 299
     MeshScale : 0.01
-    MaterialID : 406477841
+    MaterialID : 222463409
   }
   Node {
     Name : sponza_01_sponza_01_vase_round
@@ -3715,7 +3715,7 @@ Node {
     MeshName : sponza_01_sponza_01_vase_round
     MeshEntry : 160
     MeshScale : 0.01
-    MaterialID : 2999023975
+    MaterialID : 2363522183
   }
   Node {
     Name : sponza_372_sponza_372_Material__57
@@ -3726,7 +3726,7 @@ Node {
     MeshName : sponza_372_sponza_372_Material__57
     MeshEntry : 299
     MeshScale : 0.01
-    MaterialID : 406477841
+    MaterialID : 222463409
   }
   Node {
     Name : sponza_01_sponza_01_vase_round
@@ -3737,7 +3737,7 @@ Node {
     MeshName : sponza_01_sponza_01_vase_round
     MeshEntry : 160
     MeshScale : 0.01
-    MaterialID : 2999023975
+    MaterialID : 2363522183
   }
   Node {
     Name : sponza_372_sponza_372_Material__57
@@ -3748,7 +3748,7 @@ Node {
     MeshName : sponza_372_sponza_372_Material__57
     MeshEntry : 299
     MeshScale : 0.01
-    MaterialID : 406477841
+    MaterialID : 222463409
   }
   Node {
     Name : sponza_353_sponza_353_vase_hanging
@@ -3759,7 +3759,7 @@ Node {
     MeshName : sponza_353_sponza_353_vase_hanging
     MeshEntry : 231
     MeshScale : 0.01
-    MaterialID : 2145264931
+    MaterialID : 3148706947
   }
   Node {
     Name : sponza_379_sponza_379_bricks
@@ -3770,7 +3770,7 @@ Node {
     MeshName : sponza_379_sponza_379_bricks
     MeshEntry : 305
     MeshScale : 0.01
-    MaterialID : 1053501723
+    MaterialID : 2791679051
   }
   Node {
     Name : sponza_377_sponza_377_Material__25
@@ -3781,7 +3781,7 @@ Node {
     MeshName : sponza_377_sponza_377_Material__25
     MeshEntry : 292
     MeshScale : 0.01
-    MaterialID : 2277461067
+    MaterialID : 2999882699
   }
   Node {
     Name : sponza_03_sponza_03_Material__298
@@ -3792,7 +3792,7 @@ Node {
     MeshName : sponza_03_sponza_03_Material__298
     MeshEntry : 162
     MeshScale : 0.01
-    MaterialID : 1821207317
+    MaterialID : 3432592053
   }
   Node {
     Name : sponza_123_sponza_123_arch_mirror
@@ -3803,7 +3803,7 @@ Node {
     MeshName : sponza_123_sponza_123_arch_mirror
     MeshEntry : 308
     MeshScale : 0.01
-    MaterialID : 614746809
+    MaterialID : 3253183769
   }
   Node {
     Name : sponza_261_sponza_261_flagpole
@@ -3814,7 +3814,7 @@ Node {
     MeshName : sponza_261_sponza_261_flagpole
     MeshEntry : 4
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_01_sponza_01_vase_round
@@ -3825,7 +3825,7 @@ Node {
     MeshName : sponza_01_sponza_01_vase_round
     MeshEntry : 160
     MeshScale : 0.01
-    MaterialID : 2999023975
+    MaterialID : 2363522183
   }
   Node {
     Name : sponza_01_sponza_01_Material__57
@@ -3836,7 +3836,7 @@ Node {
     MeshName : sponza_01_sponza_01_Material__57
     MeshEntry : 161
     MeshScale : 0.01
-    MaterialID : 406477841
+    MaterialID : 222463409
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -3847,7 +3847,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_261_sponza_261_flagpole_mirror
@@ -3858,7 +3858,7 @@ Node {
     MeshName : sponza_261_sponza_261_flagpole_mirror
     MeshEntry : 125
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -3869,7 +3869,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_306_sponza_306_flagpole_mirror
@@ -3880,7 +3880,7 @@ Node {
     MeshName : sponza_306_sponza_306_flagpole_mirror
     MeshEntry : 144
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -3891,7 +3891,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_163_sponza_163_column_b
@@ -3902,7 +3902,7 @@ Node {
     MeshName : sponza_163_sponza_163_column_b
     MeshEntry : 317
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -3913,7 +3913,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_150_sponza_150_column_b
@@ -3924,7 +3924,7 @@ Node {
     MeshName : sponza_150_sponza_150_column_b
     MeshEntry : 16
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_340_sponza_340_chain_mirror
@@ -3935,7 +3935,7 @@ Node {
     MeshName : sponza_340_sponza_340_chain_mirror
     MeshEntry : 320
     MeshScale : 0.01
-    MaterialID : 2118633142
+    MaterialID : 1130442230
   }
   Node {
     Name : sponza_246_sponza_246_column_b
@@ -3946,7 +3946,7 @@ Node {
     MeshName : sponza_246_sponza_246_column_b
     MeshEntry : 180
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_261_sponza_261_flagpole_mirror
@@ -3957,7 +3957,7 @@ Node {
     MeshName : sponza_261_sponza_261_flagpole_mirror
     MeshEntry : 125
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_261_sponza_261_flagpole
@@ -3968,7 +3968,7 @@ Node {
     MeshName : sponza_261_sponza_261_flagpole
     MeshEntry : 4
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_223_sponza_223_column_b
@@ -3979,7 +3979,7 @@ Node {
     MeshName : sponza_223_sponza_223_column_b
     MeshEntry : 27
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_180_sponza_180_column_b_mirror
@@ -3990,7 +3990,7 @@ Node {
     MeshName : sponza_180_sponza_180_column_b_mirror
     MeshEntry : 84
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_340_sponza_340_chain
@@ -4001,7 +4001,7 @@ Node {
     MeshName : sponza_340_sponza_340_chain
     MeshEntry : 50
     MeshScale : 0.01
-    MaterialID : 2118633142
+    MaterialID : 1130442230
   }
   Node {
     Name : sponza_347_sponza_347_vase_hanging
@@ -4012,7 +4012,7 @@ Node {
     MeshName : sponza_347_sponza_347_vase_hanging
     MeshEntry : 53
     MeshScale : 0.01
-    MaterialID : 2145264931
+    MaterialID : 3148706947
   }
   Node {
     Name : sponza_01_sponza_01_vase_round
@@ -4023,7 +4023,7 @@ Node {
     MeshName : sponza_01_sponza_01_vase_round
     MeshEntry : 160
     MeshScale : 0.01
-    MaterialID : 2999023975
+    MaterialID : 2363522183
   }
   Node {
     Name : sponza_01_sponza_01_Material__57
@@ -4034,7 +4034,7 @@ Node {
     MeshName : sponza_01_sponza_01_Material__57
     MeshEntry : 161
     MeshScale : 0.01
-    MaterialID : 406477841
+    MaterialID : 222463409
   }
   Node {
     Name : sponza_01_sponza_01_vase_round
@@ -4045,7 +4045,7 @@ Node {
     MeshName : sponza_01_sponza_01_vase_round
     MeshEntry : 160
     MeshScale : 0.01
-    MaterialID : 2999023975
+    MaterialID : 2363522183
   }
   Node {
     Name : sponza_01_sponza_01_Material__57
@@ -4056,7 +4056,7 @@ Node {
     MeshName : sponza_01_sponza_01_Material__57
     MeshEntry : 161
     MeshScale : 0.01
-    MaterialID : 406477841
+    MaterialID : 222463409
   }
   Node {
     Name : sponza_340_sponza_340_chain
@@ -4067,7 +4067,7 @@ Node {
     MeshName : sponza_340_sponza_340_chain
     MeshEntry : 50
     MeshScale : 0.01
-    MaterialID : 2118633142
+    MaterialID : 1130442230
   }
   Node {
     Name : sponza_343_sponza_343_vase_hanging_mirror
@@ -4078,7 +4078,7 @@ Node {
     MeshName : sponza_343_sponza_343_vase_hanging_mirror
     MeshEntry : 232
     MeshScale : 0.01
-    MaterialID : 2145264931
+    MaterialID : 3148706947
   }
   Node {
     Name : sponza_340_sponza_340_chain_mirror
@@ -4089,7 +4089,7 @@ Node {
     MeshName : sponza_340_sponza_340_chain_mirror
     MeshEntry : 320
     MeshScale : 0.01
-    MaterialID : 2118633142
+    MaterialID : 1130442230
   }
   Node {
     Name : sponza_346_sponza_346_vase_hanging
@@ -4100,7 +4100,7 @@ Node {
     MeshName : sponza_346_sponza_346_vase_hanging
     MeshEntry : 52
     MeshScale : 0.01
-    MaterialID : 2145264931
+    MaterialID : 3148706947
   }
   Node {
     Name : sponza_346_sponza_346_vase_hanging
@@ -4111,7 +4111,7 @@ Node {
     MeshName : sponza_346_sponza_346_vase_hanging
     MeshEntry : 52
     MeshScale : 0.01
-    MaterialID : 2145264931
+    MaterialID : 3148706947
   }
   Node {
     Name : sponza_01_sponza_01_vase_round
@@ -4122,7 +4122,7 @@ Node {
     MeshName : sponza_01_sponza_01_vase_round
     MeshEntry : 160
     MeshScale : 0.01
-    MaterialID : 2999023975
+    MaterialID : 2363522183
   }
   Node {
     Name : sponza_372_sponza_372_Material__57
@@ -4133,7 +4133,7 @@ Node {
     MeshName : sponza_372_sponza_372_Material__57
     MeshEntry : 299
     MeshScale : 0.01
-    MaterialID : 406477841
+    MaterialID : 222463409
   }
   Node {
     Name : sponza_346_sponza_346_vase_hanging
@@ -4144,7 +4144,7 @@ Node {
     MeshName : sponza_346_sponza_346_vase_hanging
     MeshEntry : 52
     MeshScale : 0.01
-    MaterialID : 2145264931
+    MaterialID : 3148706947
   }
   Node {
     Name : sponza_353_sponza_353_vase_hanging
@@ -4155,7 +4155,7 @@ Node {
     MeshName : sponza_353_sponza_353_vase_hanging
     MeshEntry : 231
     MeshScale : 0.01
-    MaterialID : 2145264931
+    MaterialID : 3148706947
   }
   Node {
     Name : sponza_343_sponza_343_vase_hanging
@@ -4166,7 +4166,7 @@ Node {
     MeshName : sponza_343_sponza_343_vase_hanging
     MeshEntry : 49
     MeshScale : 0.01
-    MaterialID : 2145264931
+    MaterialID : 3148706947
   }
   Node {
     Name : sponza_261_sponza_261_flagpole
@@ -4177,7 +4177,7 @@ Node {
     MeshName : sponza_261_sponza_261_flagpole
     MeshEntry : 4
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_261_sponza_261_flagpole_mirror
@@ -4188,7 +4188,7 @@ Node {
     MeshName : sponza_261_sponza_261_flagpole_mirror
     MeshEntry : 125
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_261_sponza_261_flagpole_mirror
@@ -4199,7 +4199,7 @@ Node {
     MeshName : sponza_261_sponza_261_flagpole_mirror
     MeshEntry : 125
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_306_sponza_306_flagpole
@@ -4210,7 +4210,7 @@ Node {
     MeshName : sponza_306_sponza_306_flagpole
     MeshEntry : 139
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_306_sponza_306_flagpole_mirror
@@ -4221,7 +4221,7 @@ Node {
     MeshName : sponza_306_sponza_306_flagpole_mirror
     MeshEntry : 144
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_261_sponza_261_flagpole
@@ -4232,7 +4232,7 @@ Node {
     MeshName : sponza_261_sponza_261_flagpole
     MeshEntry : 4
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_261_sponza_261_flagpole
@@ -4243,7 +4243,7 @@ Node {
     MeshName : sponza_261_sponza_261_flagpole
     MeshEntry : 4
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_261_sponza_261_flagpole_mirror
@@ -4254,7 +4254,7 @@ Node {
     MeshName : sponza_261_sponza_261_flagpole_mirror
     MeshEntry : 125
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_261_sponza_261_flagpole_mirror
@@ -4265,7 +4265,7 @@ Node {
     MeshName : sponza_261_sponza_261_flagpole_mirror
     MeshEntry : 125
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_306_sponza_306_flagpole_mirror
@@ -4276,7 +4276,7 @@ Node {
     MeshName : sponza_306_sponza_306_flagpole_mirror
     MeshEntry : 144
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_29_sponza_29_column_c_mirror
@@ -4287,7 +4287,7 @@ Node {
     MeshName : sponza_29_sponza_29_column_c_mirror
     MeshEntry : 120
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_29_sponza_29_column_c
@@ -4298,7 +4298,7 @@ Node {
     MeshName : sponza_29_sponza_29_column_c
     MeshEntry : 116
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_28_sponza_28_column_c_mirror
@@ -4309,7 +4309,7 @@ Node {
     MeshName : sponza_28_sponza_28_column_c_mirror
     MeshEntry : 118
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_29_sponza_29_column_c
@@ -4320,7 +4320,7 @@ Node {
     MeshName : sponza_29_sponza_29_column_c
     MeshEntry : 116
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_35_sponza_35_ceiling
@@ -4331,7 +4331,7 @@ Node {
     MeshName : sponza_35_sponza_35_ceiling
     MeshEntry : 356
     MeshScale : 0.01
-    MaterialID : 1809675744
+    MaterialID : 1845179392
   }
   Node {
     Name : sponza_34_sponza_34_bricks
@@ -4342,7 +4342,7 @@ Node {
     MeshName : sponza_34_sponza_34_bricks
     MeshEntry : 357
     MeshScale : 0.01
-    MaterialID : 1053501723
+    MaterialID : 2791679051
   }
   Node {
     Name : sponza_53_sponza_53_arch
@@ -4353,7 +4353,7 @@ Node {
     MeshName : sponza_53_sponza_53_arch
     MeshEntry : 91
     MeshScale : 0.01
-    MaterialID : 614746809
+    MaterialID : 3253183769
   }
   Node {
     Name : sponza_36_sponza_36_bricks
@@ -4364,7 +4364,7 @@ Node {
     MeshName : sponza_36_sponza_36_bricks
     MeshEntry : 359
     MeshScale : 0.01
-    MaterialID : 1053501723
+    MaterialID : 2791679051
   }
   Node {
     Name : sponza_53_sponza_53_arch_mirror
@@ -4375,7 +4375,7 @@ Node {
     MeshName : sponza_53_sponza_53_arch_mirror
     MeshEntry : 271
     MeshScale : 0.01
-    MaterialID : 614746809
+    MaterialID : 3253183769
   }
   Node {
     Name : sponza_52_sponza_52_ceiling_mirror
@@ -4386,7 +4386,7 @@ Node {
     MeshName : sponza_52_sponza_52_ceiling_mirror
     MeshEntry : 270
     MeshScale : 0.01
-    MaterialID : 1809675744
+    MaterialID : 1845179392
   }
   Node {
     Name : sponza_148_sponza_148_column_b
@@ -4397,7 +4397,7 @@ Node {
     MeshName : sponza_148_sponza_148_column_b
     MeshEntry : 362
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -4408,7 +4408,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_278_sponza_278_leaf
@@ -4419,7 +4419,7 @@ Node {
     MeshName : sponza_278_sponza_278_leaf
     MeshEntry : 364
     MeshScale : 0.01
-    MaterialID : 874497237
+    MaterialID : 560405877
   }
   Node {
     Name : sponza_281_sponza_281_leaf
@@ -4430,7 +4430,7 @@ Node {
     MeshName : sponza_281_sponza_281_leaf
     MeshEntry : 286
     MeshScale : 0.01
-    MaterialID : 874497237
+    MaterialID : 560405877
   }
   Node {
     Name : sponza_237_sponza_237_column_b
@@ -4441,7 +4441,7 @@ Node {
     MeshName : sponza_237_sponza_237_column_b
     MeshEntry : 3
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_141_sponza_141_column_b
@@ -4452,7 +4452,7 @@ Node {
     MeshName : sponza_141_sponza_141_column_b
     MeshEntry : 367
     MeshScale : 0.01
-    MaterialID : 2060164030
+    MaterialID : 973302366
   }
   Node {
     Name : sponza_266_sponza_266_flagpole_mirror
@@ -4463,7 +4463,7 @@ Node {
     MeshName : sponza_266_sponza_266_flagpole_mirror
     MeshEntry : 132
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_275_sponza_275_leaf
@@ -4474,7 +4474,7 @@ Node {
     MeshName : sponza_275_sponza_275_leaf
     MeshEntry : 369
     MeshScale : 0.01
-    MaterialID : 874497237
+    MaterialID : 560405877
   }
   Node {
     Name : sponza_266_sponza_266_flagpole
@@ -4485,7 +4485,7 @@ Node {
     MeshName : sponza_266_sponza_266_flagpole
     MeshEntry : 20
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_261_sponza_261_flagpole_mirror
@@ -4496,7 +4496,7 @@ Node {
     MeshName : sponza_261_sponza_261_flagpole_mirror
     MeshEntry : 125
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_266_sponza_266_flagpole_mirror
@@ -4507,7 +4507,7 @@ Node {
     MeshName : sponza_266_sponza_266_flagpole_mirror
     MeshEntry : 132
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_261_sponza_261_flagpole_mirror
@@ -4518,7 +4518,7 @@ Node {
     MeshName : sponza_261_sponza_261_flagpole_mirror
     MeshEntry : 125
     MeshScale : 0.01
-    MaterialID : 2573212073
+    MaterialID : 200057033
   }
   Node {
     Name : sponza_382_sponza_382_bricks
@@ -4529,7 +4529,7 @@ Node {
     MeshName : sponza_382_sponza_382_bricks
     MeshEntry : 374
     MeshScale : 0.01
-    MaterialID : 1053501723
+    MaterialID : 2791679051
   }
   Node {
     Name : sponza_380_sponza_380_roof
@@ -4540,7 +4540,7 @@ Node {
     MeshName : sponza_380_sponza_380_roof
     MeshEntry : 375
     MeshScale : 0.01
-    MaterialID : 1020040255
+    MaterialID : 3486737823
   }
   Node {
     Name : sponza_381_sponza_381_roof
@@ -4551,7 +4551,7 @@ Node {
     MeshName : sponza_381_sponza_381_roof
     MeshEntry : 376
     MeshScale : 0.01
-    MaterialID : 1020040255
+    MaterialID : 3486737823
   }
   Node {
     Name : sponza_340_sponza_340_chain
@@ -4562,7 +4562,7 @@ Node {
     MeshName : sponza_340_sponza_340_chain
     MeshEntry : 50
     MeshScale : 0.01
-    MaterialID : 2118633142
+    MaterialID : 1130442230
   }
   Node {
     Name : sponza_90_sponza_90_column_c
@@ -4573,7 +4573,7 @@ Node {
     MeshName : sponza_90_sponza_90_column_c
     MeshEntry : 43
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_340_sponza_340_chain
@@ -4584,7 +4584,7 @@ Node {
     MeshName : sponza_340_sponza_340_chain
     MeshEntry : 50
     MeshScale : 0.01
-    MaterialID : 2118633142
+    MaterialID : 1130442230
   }
   Node {
     Name : sponza_347_sponza_347_vase_hanging
@@ -4595,7 +4595,7 @@ Node {
     MeshName : sponza_347_sponza_347_vase_hanging
     MeshEntry : 53
     MeshScale : 0.01
-    MaterialID : 2145264931
+    MaterialID : 3148706947
   }
   Node {
     Name : sponza_90_sponza_90_column_c
@@ -4606,7 +4606,7 @@ Node {
     MeshName : sponza_90_sponza_90_column_c
     MeshEntry : 43
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_90_sponza_90_column_c
@@ -4617,7 +4617,7 @@ Node {
     MeshName : sponza_90_sponza_90_column_c
     MeshEntry : 43
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_101_sponza_101_column_c_mirror
@@ -4628,7 +4628,7 @@ Node {
     MeshName : sponza_101_sponza_101_column_c_mirror
     MeshEntry : 383
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_90_sponza_90_column_c_mirror
@@ -4639,7 +4639,7 @@ Node {
     MeshName : sponza_90_sponza_90_column_c_mirror
     MeshEntry : 252
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_99_sponza_99_column_c
@@ -4650,7 +4650,7 @@ Node {
     MeshName : sponza_99_sponza_99_column_c
     MeshEntry : 5
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_90_sponza_90_column_c
@@ -4661,7 +4661,7 @@ Node {
     MeshName : sponza_90_sponza_90_column_c
     MeshEntry : 43
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_101_sponza_101_column_c_mirror
@@ -4672,7 +4672,7 @@ Node {
     MeshName : sponza_101_sponza_101_column_c_mirror
     MeshEntry : 383
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_90_sponza_90_column_c_mirror
@@ -4683,7 +4683,7 @@ Node {
     MeshName : sponza_90_sponza_90_column_c_mirror
     MeshEntry : 252
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_101_sponza_101_column_c
@@ -4694,7 +4694,7 @@ Node {
     MeshName : sponza_101_sponza_101_column_c
     MeshEntry : 257
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_90_sponza_90_column_c_mirror
@@ -4705,7 +4705,7 @@ Node {
     MeshName : sponza_90_sponza_90_column_c_mirror
     MeshEntry : 252
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_90_sponza_90_column_c_mirror
@@ -4716,7 +4716,7 @@ Node {
     MeshName : sponza_90_sponza_90_column_c_mirror
     MeshEntry : 252
     MeshScale : 0.01
-    MaterialID : 1607650321
+    MaterialID : 3843024561
   }
   Node {
     Name : sponza_353_sponza_353_vase_hanging
@@ -4727,7 +4727,7 @@ Node {
     MeshName : sponza_353_sponza_353_vase_hanging
     MeshEntry : 231
     MeshScale : 0.01
-    MaterialID : 2145264931
+    MaterialID : 3148706947
   }
 }
 Node {
@@ -4742,5 +4742,37 @@ Node {
   Position : 0,1,0
   Rotation : 1,0,0,0
   Scale : 1,1,1
- Volume : 0.058;0.613;0;0,1,0;20;1,1,1
+ Volume : 0.01;0.613;0;0,0,0;20;1,1,1
+}
+Node {
+  Name : empty_398
+  Position : 11.1924,1.26392,4.03665
+  Rotation : 0.724461,-0.689235,0.00726091,-0.00763201
+  Scale : 1,1,1
+  Light : Point;10;4;1,0.448819,0;1;512
+  Emitter {
+    Texture : textures/smoke.png
+    PositionOffset : 0,0,0
+    RotationOffset : 0,0,0,1
+    EmissionRate : 5
+    LifeTime : 1,2
+    SpreadAngle : 30
+    SpeedMin : 0.4
+    SpeedMax : 0.8
+    AngularVelocity : 0,0
+    Drag : 0.01
+    SizeRandom : 1,1.5
+    Animated : 0
+    NumFrames : 0
+    Lit : 1
+    Volumetric : 1
+    VolumetricSphere : 0
+    SoftParticle : 1
+    SoftRadius : 1
+    SphereRoundness : 0.534
+    Opacity : 0.042
+    DensityRange : 0,0.43
+    VolumePhase : 0.6
+    EmissiveRange : 1,1
+  }
 }

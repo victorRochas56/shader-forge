@@ -177,6 +177,7 @@ class SceneGraph {
         }
     }
 
+    //TODO : figure out undo / redo stack infra
     void pushUndo(NodeOpType op, Node& node) {
         NodeOp nodeOp = NodeOp(op,node);
     }

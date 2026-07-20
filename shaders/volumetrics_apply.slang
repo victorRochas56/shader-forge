@@ -74,14 +74,19 @@ float4 fragMain(VSOutput input) : SV_Target {
     viewZ = clamp(viewZ, pc.nearZ, pc.gridFar);
     float slice = viewZToSlice(viewZ, pc.dims.z, pc.nearZ, pc.gridFar);
     float w = (slice + 0.5) / float(pc.dims.z); // fractional slice -> normalized texel-centered depth
+    // integratedVol[z] holds the accumulation at slab z's FAR edge (the integrate pass adds the whole
+    // slab before writing), so reading it for a surface at `slice` must shift one texel NEARER — else
+    // it returns a full slab of fog from behind the surface (fog peeking through thin geometry).
+    // (mediaVol/scatterVol are slab-centered, so those still sample at w below.)
+    float wInt = (slice - 0.5) / float(pc.dims.z);
 
     if (pc.debugMode != DBG_OFF) {
         SamplerState samp = samplers[pc.samplerIndex];
         float3 dbg = float3(0);
         if (pc.debugMode == DBG_INSCATTER) {
-            dbg = textures3D[pc.integratedTexIndex].SampleLevel(samp, float3(input.texCoord, w), 0).rgb;
+            dbg = textures3D[pc.integratedTexIndex].SampleLevel(samp, float3(input.texCoord, wInt), 0).rgb;
         } else if (pc.debugMode == DBG_TRANSMITTANCE) {
-            dbg = textures3D[pc.integratedTexIndex].SampleLevel(samp, float3(input.texCoord, w), 0).aaa;
+            dbg = textures3D[pc.integratedTexIndex].SampleLevel(samp, float3(input.texCoord, wInt), 0).aaa;
         } else if (pc.debugMode == DBG_SLICE) {
             dbg = heat(w);
         } else if (pc.debugMode == DBG_PHASE) {
@@ -110,15 +115,17 @@ float4 fragMain(VSOutput input) : SV_Target {
         return float4(dbg, 0.0); // a=0 -> overwrites the scene (blend: src + dst*a)
     }
 
-    // Per-pixel depth dither. The froxel passes jitter too (froxelZJitter), but that's seeded per
-    // column, so it can't go finer than one froxel (8x8 px at the default dims) — this breaks up the
-    // z-slice banding at pixel granularity. +-0.5 slice, in normalized w units.
+    // Per-pixel depth dither. The froxel passes jitter too (froxelZJitter, one-sided toward camera),
+    // but that's seeded per column, so it can't go finer than one froxel (8x8 px at the default dims)
+    // — this breaks up the z-slice banding at pixel granularity. +-0.5 slice, in normalized w units.
     uint seed = pcgHash(uint(input.position.x) | (uint(input.position.y) << 16));
     float jitter = (rand(seed) - 0.5) / float(pc.dims.z);
-    // defaultSampler is eRepeat, so clamp to the first/last texel centre: w+jitter straying outside
-    // [0,1] would wrap to the opposite end of the grid.
+    // defaultSampler is eRepeat, so clamp to the first/last texel centre: wInt+jitter straying outside
+    // [0,1] would wrap to the opposite end of the grid. Cap at the surface texel (upper) too: positive
+    // jitter must not sample integratedVol past the surface, bleeding occluded froxels through geometry.
     float halfTexel = 0.5 / float(pc.dims.z);
-    float wj = clamp(w + jitter, halfTexel, 1.0 - halfTexel);
+    float upper = clamp(wInt, halfTexel, 1.0 - halfTexel);   // valid, never inverts vs the lower bound
+    float wj = clamp(wInt + jitter, halfTexel, upper);
     float4 v = textures3D[pc.integratedTexIndex].SampleLevel(samplers[pc.samplerIndex], float3(input.texCoord, wj), 0);
     // v = (accumulated in-scatter, transmittance). rgb added, a scales the scene (see blend state).
     return float4(v.rgb, v.a);

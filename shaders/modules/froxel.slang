@@ -21,10 +21,13 @@ float viewZToSlice(float viewZ, uint D, float nearZ, float gridFar) {
     return float(D) * log(viewZ / nearZ) / log(gridFar / nearZ);
 }
 
-// Per-column depth jitter in slice units, to break up the banding from quantizing media into slab centers. 
+// Per-column depth jitter in slice units, to break up the banding from quantizing media into slab centers.
+// One-sided toward the camera ([-1, 0], never positive): a positive jitter lets an in-front froxel
+// sample density from behind the scene surface, which then composites in front of the occluding
+// geometry (bleed-through). Full slice of width is kept, just shifted to the near side.
 float froxelZJitter(uint2 coordXY, uint dt = 0) {
     uint seed = pcgHash(coordXY.x | (coordXY.y << 16) /*| dt*/);
-    return rand(seed) - 0.5;  // ±0.5 slice
+    return rand(seed) - 1.0;  // [-1, 0] slice, toward camera only
 }
 
 // Froxel cell center -> world position. Rebuilds the view ray for the cell's screen UV
