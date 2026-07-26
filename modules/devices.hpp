@@ -57,6 +57,7 @@ class Device {
                 bool supportsRequiredFeatures = features.template get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy &&
                                                 features.template get<vk::PhysicalDeviceFeatures2>().features.sampleRateShading &&
                                                 features.template get<vk::PhysicalDeviceFeatures2>().features.multiDrawIndirect &&
+                                                features.template get<vk::PhysicalDeviceFeatures2>().features.logicOp &&
                                                 features.template get<vk::PhysicalDeviceVulkan13Features>().synchronization2 &&
                                                 features.template get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering &&
                                                 features.template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState;
@@ -140,7 +141,8 @@ class Device {
                            vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>
             featureChain = {
                 {.features =
-                     {.sampleRateShading = true, .multiDrawIndirect = true, .drawIndirectFirstInstance = true, .fillModeNonSolid = true, .wideLines = true, .samplerAnisotropy = true, .shaderInt64 = true}}, // vk::PhysicalDeviceFeatures2
+                     // logicOp: fixed-function OR merge for the slicemap voxelization target (PipelineCategory::VOXELIZATION)
+                     {.sampleRateShading = true, .logicOp = true, .multiDrawIndirect = true, .drawIndirectFirstInstance = true, .fillModeNonSolid = true, .wideLines = true, .samplerAnisotropy = true, .shaderInt64 = true}}, // vk::PhysicalDeviceFeatures2
                 {.shaderDrawParameters = true},
                 {.shaderInt8 = true,
                  .descriptorIndexing = true,

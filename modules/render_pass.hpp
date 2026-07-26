@@ -49,6 +49,7 @@ enum PassId {
     PARTICLES,
     THUMBNAIL,
     MATERIAL_THUMBNAIL,
+    VOXELIZATION,
 };
 
 class RenderPass {
@@ -60,6 +61,11 @@ public:
     // resize() it's typically called once. Device must be idle. See FROXEL_VOLUMETRICS_PLAN.md prereq 1.
     void resize3DStorageImage(uint32_t& textureIndex, uint32_t& storageIndex, uint32_t width, uint32_t height, uint32_t depth,
                               vk::Format format, const char* debugName);
+    // 2D counterpart of resize3DStorageImage: storage+sampled, two bindless slots over one view.
+    // extraUsage adds flags the image needs beyond that — e.g. eColorAttachment when the same image is
+    // also rasterized into. Device must be idle.
+    void resize2DStorageImage(uint32_t& textureIndex, uint32_t& storageIndex, uint32_t width, uint32_t height,
+                              vk::Format format, const char* debugName, vk::ImageUsageFlags extraUsage = {});
     virtual void init(uint32_t width, uint32_t height) = 0;
     virtual void record(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) = 0;
 

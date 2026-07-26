@@ -23,7 +23,7 @@ BEFORE_GEOMETRY is only used by shadow rendering
 GEOMETRY is the main pass with 2 color attachments (color + roughness/metallic)
 POSTPROCESS are passes that process color attachments
 */
-enum class PipelineCategory { BEFORE_GEOMETRY, LIT_GEOMETRY, ALPHA_GEOMETRY, POSTPROCESS, POSTPROCESS_MULTIPLY, POSTPROCESS_ALPHA_BLEND, POSTPROCESS_VOLUMETRIC, SHADOW, DEPTH_PREPASS, THUMBNAIL, MATERIAL_THUMBNAIL };
+enum class PipelineCategory { BEFORE_GEOMETRY, LIT_GEOMETRY, ALPHA_GEOMETRY, POSTPROCESS, POSTPROCESS_MULTIPLY, POSTPROCESS_ALPHA_BLEND, POSTPROCESS_VOLUMETRIC, SHADOW, DEPTH_PREPASS, THUMBNAIL, MATERIAL_THUMBNAIL, VOXELIZATION };
 
 class PipelineManager;
 
@@ -89,7 +89,7 @@ class PipelineManager {
   public:
     PipelineManager(Device& device, Swapchain& swapchain, vk::SampleCountFlagBits msaaSamples) : device(device), swapchain(swapchain), msaaSamples(msaaSamples) {}
 
-    // colorAttachmentFormat is required. For POSTPROCESS* it sets the pipeline's color target format.
+    // colorAttachmentFormat is required. For POSTPROCESS* and VOXELIZATION it sets the pipeline's color target format.
     // For categories with a category-fixed format (SHADOW, DEPTH_PREPASS, LIT_GEOMETRY, BEFORE_GEOMETRY)
     // it is ignored — pass vk::Format::eUndefined.
     template <typename T>
@@ -509,6 +509,39 @@ class PipelineManager {
             pipeline->layout = vk::raii::PipelineLayout(device.getDevice(), pipelineLayoutInfo);
             break;
         }
+        // Slicemap voxelization. The target is a UINT 2D image where bit k of a texel marks occupancy
+        // of slice k along the sweep axis, so the fragment shader emits raw bits and overlapping
+        // triangles merge with a fixed-function OR — no atomics, no storage image. Depth test/write
+        // are forced off (every fragment must land) and there is no depth attachment.
+        case PipelineCategory::VOXELIZATION: {
+            assert(colorAttachmentFormat != vk::Format::eUndefined && "VOXELIZATION pipelines require an explicit UINT colorAttachmentFormat");
+            pipelineRenderingCreateInfo = {
+                .colorAttachmentCount = 1, .pColorAttachmentFormats = &pipeline->colorAttachmentFormat, .depthAttachmentFormat = vk::Format::eUndefined};
+            inputAssembly = {.topology = topology};
+            rasterizer = {.depthClampEnable = vk::False,
+                          .rasterizerDiscardEnable = vk::False,
+                          .polygonMode = vk::PolygonMode::eFill,
+                          .cullMode = cullMode,
+                          .frontFace = vk::FrontFace::eCounterClockwise,
+                          .depthBiasEnable = vk::False,
+                          .lineWidth = 1.0f};
+            multisampling = {.rasterizationSamples = vk::SampleCountFlagBits::e1, .sampleShadingEnable = vk::False};
+            depthStencil = {.depthTestEnable = vk::False,
+                            .depthWriteEnable = vk::False,
+                            .depthCompareOp = vk::CompareOp::eNever,
+                            .depthBoundsTestEnable = vk::False,
+                            .stencilTestEnable = vk::False};
+            // logicOp replaces blending outright — the two are mutually exclusive, so blendEnable stays false.
+            colorBlendAttachment = {.blendEnable = vk::False,
+                                    .colorWriteMask =
+                                        vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA};
+            colorBlending = {.logicOpEnable = vk::True, .logicOp = vk::LogicOp::eOr, .attachmentCount = 1, .pAttachments = &colorBlendAttachment};
+            pushConstantRange = {.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, .offset = 0, .size = sizeof(T)};
+            vk::PipelineLayoutCreateInfo pipelineLayoutInfo{
+                .setLayoutCount = 1, .pSetLayouts = &*setLayout, .pushConstantRangeCount = 1, .pPushConstantRanges = &pushConstantRange};
+            pipeline->layout = vk::raii::PipelineLayout(device.getDevice(), pipelineLayoutInfo);
+            break;
+        }
         default:
             throw std::range_error("invalid pipeline category specifier!");
         }
@@ -562,6 +595,7 @@ class PipelineManager {
         case PipelineCategory::DEPTH_PREPASS:
         case PipelineCategory::THUMBNAIL:
         case PipelineCategory::MATERIAL_THUMBNAIL:
+        case PipelineCategory::VOXELIZATION:
             return &beforeGeometryPipelines;
         case PipelineCategory::LIT_GEOMETRY:
         case PipelineCategory::ALPHA_GEOMETRY:

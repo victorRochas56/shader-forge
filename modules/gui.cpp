@@ -433,6 +433,16 @@ void showImageViewList(BindlessSystem& bindless, RenderFeatures& features) {
             if (ImGui::Button("Flip Y")){
                 vis.flags ^= ImageVisFlags::FLIP_VERTICAL;
             }
+            ImGui::SameLine();
+            if (ImGui::Button("Slicemap")){
+                vis.flags ^= ImageVisFlags::SLICEMAP;
+            }
+            if ((vis.flags & ImageVisFlags::SLICEMAP) != 0) {
+                ImGui::SameLine();
+                if (ImGui::Button("Single Slice")){
+                    vis.flags ^= ImageVisFlags::SLICEMAP_SLICE;
+                }
+            }
         }
         i++;
     }
@@ -459,7 +469,9 @@ void showToggles(RenderFeatures& f){
     if(ImGui::Button("Gizmos")){
         f.showGizmos = !f.showGizmos;
     }
-    ImGui::SliderInt("ImageMip", &f.imageVis.mipLevel, 0, 6);
+    // In slicemap mode the same field selects one of the 32 slices instead of a mip.
+    bool slicemap = (f.imageVis.flags & ImageVisFlags::SLICEMAP) != 0;
+    ImGui::SliderInt(slicemap ? "Slice" : "ImageMip", &f.imageVis.mipLevel, 0, slicemap ? 31 : 6);
     if(ImGui::Button("Depth Buffer")){
         f.imageVis.flags ^= ImageVisFlags::LINEARIZE;
     }

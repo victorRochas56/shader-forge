@@ -24,6 +24,11 @@ ConstantBuffer<PushConstants> pc;
 [[vk::binding(0,0)]]
 Texture2D textures[];
 
+// Same binding, uint view: integer-format targets (slicemaps) can't be read through the float alias,
+// and can't go through a filtering sampler at all — they're texel-loaded instead.
+[[vk::binding(0,0)]]
+Texture2D<uint> texturesUInt[];
+
 [[vk::binding(1,0)]]
 TextureCube cubemaps[];
 
@@ -71,6 +76,22 @@ float4 fragMain(VertexOutput input) : SV_Target0
 
     if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
         return float4(0.0, 0.0, 0.0, 1.0);
+    }
+
+    if (pc.flags & (1<<3)) { // SLICEMAP
+        uint width, height;
+        texturesUInt[pc.imageIndex].GetDimensions(width, height);
+        uint2 texel = uint2(uv * float2(width, height));
+        uint bits = texturesUInt[pc.imageIndex].Load(int3(texel, 0));
+
+        if (pc.flags & (1<<4)) { // SLICEMAP_SLICE — mipLevel scrubs one slice of the sweep axis
+            uint slice = (uint)clamp(pc.mipLevel, 0, 31);
+            float on = (((bits >> slice) & 1u) != 0u) ? 1.0 : 0.0;
+            return float4(on, on, on, 1.0);
+        }
+        // Occupancy down the sweep axis — reads as a top-down density map.
+        float density = countbits(bits) / 64.0;
+        return float4(density, density, density, 1.0);
     }
 
     float4 color = textures[pc.imageIndex].SampleLevel(samplers[pc.samplerIndex], uv, pc.mipLevel);

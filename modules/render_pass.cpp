@@ -37,6 +37,27 @@ void RenderPass::resize3DStorageImage(uint32_t& textureIndex, uint32_t& storageI
     storageIndex = bindless.descriptorSet->allocateStorageImage(rawView);
 }
 
+void RenderPass::resize2DStorageImage(uint32_t& textureIndex, uint32_t& storageIndex, uint32_t width, uint32_t height,
+                                      vk::Format format, const char* debugName, vk::ImageUsageFlags extraUsage) {
+    // Recycle old slots (device idle — init/resize only).
+    if (storageIndex != 0xFFFFFFFF) bindless.descriptorSet->freeStorageImage(storageIndex);
+    if (textureIndex != 0xFFFFFFFF) bindless.descriptorSet->freeTexture(textureIndex);
+
+    vk::raii::Image image = nullptr;
+    vk::raii::DeviceMemory memory = nullptr;
+    resource::createImage(*bindless.resourceCtx, width, height, 1, vk::SampleCountFlagBits::e1, format, vk::ImageTiling::eOptimal,
+                                 vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled | extraUsage,
+                                 vk::MemoryPropertyFlagBits::eDeviceLocal, image, memory, 1);
+    auto view = resource::createImageView(*bindless.resourceCtx, image, format, vk::ImageAspectFlagBits::eColor);
+    // Resting layout is sampled; writers transition to eGeneral (compute) or eColorAttachmentOptimal
+    // (rasterized) before writing, then back.
+    resource::transitionImageLayout(*bindless.resourceCtx, nullptr, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal);
+
+    vk::ImageView rawView = *view;
+    textureIndex = bindless.descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(view), debugName, false, width, height);
+    storageIndex = bindless.descriptorSet->allocateStorageImage(rawView);
+}
+
 void setFullscreenViewport(vk::raii::CommandBuffer& cmd, vk::Extent2D extent) {
     cmd.setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.0f, 1.0f));
     cmd.setScissor(0, vk::Rect2D({0, 0}, extent));

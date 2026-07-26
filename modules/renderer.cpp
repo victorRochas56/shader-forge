@@ -27,6 +27,7 @@
 #include "particle_pass.hpp"
 #include "thumbnail_pass.hpp"
 #include "material_thumbnail_pass.hpp"
+#include "voxelization_pass.hpp"
 
 // TODO clustered lights? (forward +)
 //      pass the N nearest lights to the lit shader
@@ -136,6 +137,8 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     passes.emplace(PassId::VOLUMETRICS,std::make_unique<VolumetricsPass>(gpu, bindless, scene, features, passResources));
     passes.emplace(PassId::THUMBNAIL,std::make_unique<ThumbnailPass>(gpu, bindless, scene, features, passResources));
     passes.emplace(PassId::MATERIAL_THUMBNAIL,std::make_unique<MaterialThumbnailPass>(gpu, bindless, scene, features, passResources));
+
+    passes.emplace(PassId::VOXELIZATION,std::make_unique<VoxelizationPass>(gpu, bindless, scene, features, passResources));
 
     createShadowAtlas(SHADOW_ATLAS_SIZE);
     createRoughnessMetalResources(startWidth, startHeight);

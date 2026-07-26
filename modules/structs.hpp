@@ -71,12 +71,26 @@ struct SkyBoxPushConstants {
     glm::mat4 invViewProjMatrix;
 };
 
+struct VoxelizationPushConstants {
+    glm::mat4 vpm;                // orthographic voxel-grid view-projection
+    glm::mat4 model;              // node world transform
+    uint64_t  vertexBufferAddress;
+    uint32_t  vertexStride;
+    uint32_t  vertexOffset;       // byte offset of this mesh in the shared vertex buffer
+    uint32_t  meshIndex;
+    uint32_t  padding;
+};
+
 enum ImageVisFlags : uint32_t 
 {
     IMAGE_VIS_NONE =    0,
     B_W_IMAGE =         1 << 0,
     FLIP_VERTICAL =     1 << 1,
     LINEARIZE =         1 << 2,
+    // Slicemap targets are R32_UINT bitmasks, so they're read through the uint alias of the texture
+    // binding and mapped to grey: occupancy count by default, one slice when SLICEMAP_SLICE is also set.
+    SLICEMAP =          1 << 3,
+    SLICEMAP_SLICE =    1 << 4,
 };
 
 inline ImageVisFlags operator|(ImageVisFlags a, ImageVisFlags b) {
