@@ -58,6 +58,7 @@ class Device {
                                                 features.template get<vk::PhysicalDeviceFeatures2>().features.sampleRateShading &&
                                                 features.template get<vk::PhysicalDeviceFeatures2>().features.multiDrawIndirect &&
                                                 features.template get<vk::PhysicalDeviceFeatures2>().features.logicOp &&
+                                                features.template get<vk::PhysicalDeviceFeatures2>().features.fragmentStoresAndAtomics &&
                                                 features.template get<vk::PhysicalDeviceVulkan13Features>().synchronization2 &&
                                                 features.template get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering &&
                                                 features.template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState;
@@ -141,8 +142,8 @@ class Device {
                            vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>
             featureChain = {
                 {.features =
-                     // logicOp: fixed-function OR merge for the slicemap voxelization target (PipelineCategory::VOXELIZATION)
-                     {.sampleRateShading = true, .logicOp = true, .multiDrawIndirect = true, .drawIndirectFirstInstance = true, .fillModeNonSolid = true, .wideLines = true, .samplerAnisotropy = true, .shaderInt64 = true}}, // vk::PhysicalDeviceFeatures2
+                     // fragmentStoresAndAtomics: voxelization scatters albedo/radiance from the fragment shader
+                     {.sampleRateShading = true, .logicOp = true, .multiDrawIndirect = true, .drawIndirectFirstInstance = true, .fillModeNonSolid = true, .wideLines = true, .samplerAnisotropy = true, .fragmentStoresAndAtomics = true, .shaderInt64 = true}}, // vk::PhysicalDeviceFeatures2
                 {.shaderDrawParameters = true},
                 {.shaderInt8 = true,
                  .descriptorIndexing = true,

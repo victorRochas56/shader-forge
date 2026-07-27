@@ -14,7 +14,9 @@
 #include "include/imgui_impl_glfw.h"
 #include "include/imgui_impl_vulkan.h"
 
+#include <array>
 #include <chrono>
+#include <iostream>
 
 #include <nlohmann/json.hpp>
 
@@ -112,6 +114,7 @@ class App {
             frameStart = std::chrono::steady_clock::now();
 
             glfwPollEvents();
+            std::chrono::steady_clock::time_point tPoll = std::chrono::steady_clock::now();
             InputManager::tickInputState();
 
             //gizmos are used in "immediate mode" so cleared every frame
@@ -119,7 +122,9 @@ class App {
             Gizmos::clearSDFBuffer();
 
 
+            std::chrono::steady_clock::time_point tPreGui = std::chrono::steady_clock::now();
             drawGui();
+            std::chrono::steady_clock::time_point tGui = std::chrono::steady_clock::now();
 
             for(auto& line : lines){
                 Gizmos::drawLine(line);
@@ -157,6 +162,7 @@ class App {
                 Manip::drawGizmos(*currentNode, scene.activeCamera);
             }
 
+            std::chrono::steady_clock::time_point tPreDraw = std::chrono::steady_clock::now();
             //main draw loop
             renderer.drawFrame();
 
@@ -165,6 +171,19 @@ class App {
             InputManager::endFrame();
 
             deltaTime = std::chrono::steady_clock::now() - frameStart;
+            // Companion to renderer.cpp's [slow frame]: splits a slow loop iteration into its phases.
+            static std::chrono::steady_clock::time_point lastLoopPrint{};
+            if (deltaTime.count() * 1000.0 > 200.0 && std::chrono::steady_clock::now() - lastLoopPrint > std::chrono::seconds(1)) {
+                lastLoopPrint = std::chrono::steady_clock::now();
+                auto ms = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
+                auto tEnd = std::chrono::steady_clock::now();
+                std::cout << "[slow loop] total " << ms(frameStart, tEnd)
+                          << "ms | pollEvents " << ms(frameStart, tPoll)
+                          << "ms | input/gizmoClear " << ms(tPoll, tPreGui)
+                          << "ms | gui " << ms(tPreGui, tGui)
+                          << "ms | manip/events/sync " << ms(tGui, tPreDraw)
+                          << "ms | drawFrame+ " << ms(tPreDraw, tEnd) << "ms" << std::endl;
+            }
             gpu.deltaTime = static_cast<float>(deltaTime.count());
             gpu.time += gpu.deltaTime;
             tracing::endTrace("frame time");
@@ -175,28 +194,59 @@ class App {
     } 
 
     void drawGui() {
+        // Per-window timing: [slow gui] names the window eating a slow drawGui (see [slow loop]).
+        using guiClk = std::chrono::steady_clock;
+        std::array<std::pair<const char*, guiClk::time_point>, 14> guiMarks;
+        size_t guiMarkCount = 0;
+        auto guiMark = [&](const char* name) { guiMarks[guiMarkCount++] = {name, guiClk::now()}; };
+        guiMark("start");
+
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
+        guiMark("newFrame");
 
         ImGui::Begin("node tree");
         traverseNodeTree(scene.sceneGraph.getRootNode(), 0, scene.sceneGraph.selectedNode, scene.sceneGraph);
         ImGui::End();
-        
+        guiMark("nodeTree");
+
         showNodeInfo(scene.sceneGraph.getNodes()[scene.sceneGraph.selectedNode], scene, bindless, renderer.buffers);
         if (InputManager::getInstance().contextMenuShown) {
             showActionMenu(0, gpu.getWindow(), scene.activeCamera, scene.sceneGraph, InputManager::getInstance().contextMenuPinX, InputManager::getInstance().contextMenuPinY);
         }
-        
+        guiMark("nodeInfo");
+
         showMaterialEditor(materialEditorState, scene, bindless);
+        guiMark("materialEditor");
         showImageViewList(bindless, renderer.features);
+        guiMark("imageViewList");
         showBufferAllocs(*bindless.descriptorSet,scene.assetManager,renderer.getIndirectCommands());
+        guiMark("bufferAllocs");
         showDebugWindow(renderer.culledCount,renderer.cullFovScale);
+        guiMark("debugWindow");
         showTraces();
+        guiMark("traces");
         showToggles(renderer.features);
+        guiMark("toggles");
         showScenesMenu(scene, bindless, renderer.buffers, sceneLoader);
+        guiMark("scenesMenu");
         showMeshList(scene, bindless, renderer.defaultAlbedoIndex);
+        guiMark("meshList");
         ImGui::Render();
+        guiMark("render");
+
+        auto guiMs = [](guiClk::time_point a, guiClk::time_point b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
+        if (guiMs(guiMarks[0].second, guiMarks[guiMarkCount - 1].second) > 200.0) {
+            static guiClk::time_point lastGuiPrint{};
+            if (guiClk::now() - lastGuiPrint > std::chrono::seconds(1)) {
+                lastGuiPrint = guiClk::now();
+                std::cout << "[slow gui]";
+                for (size_t i = 1; i < guiMarkCount; i++)
+                    std::cout << " | " << guiMarks[i].first << " " << guiMs(guiMarks[i - 1].second, guiMarks[i].second) << "ms";
+                std::cout << std::endl;
+            }
+        }
     }
 
     void cleanup() {

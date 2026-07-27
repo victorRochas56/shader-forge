@@ -18,6 +18,9 @@ struct RenderPassResources {
     uint32_t depthSamplerIndex = 0xFFFFFFFF;
     uint32_t defaultSamplerIndex = 0xFFFFFFFF;
     uint32_t shadowSamplerIndex = 0xFFFFFFFF;
+    // Trilinear, clamped, anisotropy off. For volume textures: defaultSampler is eRepeat, so a uvw
+    // that strays outside [0,1] wraps to the opposite face of the grid instead of clamping.
+    uint32_t volumeSamplerIndex = 0xFFFFFFFF;
 
     // Global geometry buffers, for passes that draw meshes (thumbnails).
     uint32_t vertexBufferIndex = 0xFFFFFFFF;

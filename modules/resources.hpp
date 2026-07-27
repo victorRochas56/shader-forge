@@ -110,9 +110,11 @@ inline vk::ImageMemoryBarrier2 buildBarrier(const vk::Image& image, const vk::Im
     }
 
     else if (oldLayout == vk::ImageLayout::eDepthStencilAttachmentOptimal && newLayout == vk::ImageLayout::eShaderReadOnlyOptimal) {
-        barrier.srcAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
+        // ColorAttachmentOutput in src: the MSAA depth *resolve* at endRendering counts as a
+        // color-attachment write, not a late-fragment-tests write.
+        barrier.srcAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite | vk::AccessFlagBits2::eColorAttachmentWrite;
         barrier.dstAccessMask = vk::AccessFlagBits2::eShaderRead;
-        barrier.srcStageMask = vk::PipelineStageFlagBits2::eLateFragmentTests;
+        barrier.srcStageMask = vk::PipelineStageFlagBits2::eLateFragmentTests | vk::PipelineStageFlagBits2::eColorAttachmentOutput;
         // Compute in dst: the shadow atlas is sampled by the froxel light pass (VolumetricsPass C)
         // from compute, so the depth writes must be visible there too — not just to fragment.
         barrier.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader | vk::PipelineStageFlagBits2::eComputeShader;
@@ -120,11 +122,13 @@ inline vk::ImageMemoryBarrier2 buildBarrier(const vk::Image& image, const vk::Im
     }
 
     else if (oldLayout == vk::ImageLayout::eShaderReadOnlyOptimal && newLayout == vk::ImageLayout::eDepthStencilAttachmentOptimal) {
+        // ColorAttachmentOutput in dst: the next write to a resolved depth image is the MSAA resolve
+        // at endRendering, which lands at ColorAttachmentOutput — not early-fragment-tests.
         barrier.srcAccessMask = vk::AccessFlagBits2::eShaderRead;
-        barrier.dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
+        barrier.dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite | vk::AccessFlagBits2::eColorAttachmentWrite;
         // Compute in src: next frame's shadow writes must wait for this frame's compute reads (WAR).
         barrier.srcStageMask = vk::PipelineStageFlagBits2::eFragmentShader | vk::PipelineStageFlagBits2::eComputeShader;
-        barrier.dstStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests;
+        barrier.dstStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eColorAttachmentOutput;
         barrier.subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eDepth, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1};
     }
 
@@ -132,19 +136,21 @@ inline vk::ImageMemoryBarrier2 buildBarrier(const vk::Image& image, const vk::Im
     // Includes the compute stage: the froxel light pass (VolumetricsPass C) samples the shadow
     // atlas from a compute shader, so its reads must be ordered after the depth writes.
     else if (oldLayout == vk::ImageLayout::eDepthStencilAttachmentOptimal && newLayout == vk::ImageLayout::eDepthReadOnlyOptimal) {
-        barrier.srcAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
+        // ColorAttachmentOutput in src: same MSAA-depth-resolve reasoning as the ShaderReadOnly case.
+        barrier.srcAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentWrite | vk::AccessFlagBits2::eColorAttachmentWrite;
         barrier.dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eShaderRead;
-        barrier.srcStageMask = vk::PipelineStageFlagBits2::eLateFragmentTests;
+        barrier.srcStageMask = vk::PipelineStageFlagBits2::eLateFragmentTests | vk::PipelineStageFlagBits2::eColorAttachmentOutput;
         barrier.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader | vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eComputeShader;
         barrier.subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eDepth, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1};
     }
 
     else if (oldLayout == vk::ImageLayout::eDepthReadOnlyOptimal && newLayout == vk::ImageLayout::eDepthStencilAttachmentOptimal) {
+        // ColorAttachmentOutput in dst: same MSAA-depth-resolve reasoning as the restore case above.
         barrier.srcAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eShaderRead;
-        barrier.dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
+        barrier.dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite | vk::AccessFlagBits2::eColorAttachmentWrite;
         // Compute in src: next frame's shadow writes must wait for this frame's compute reads (WAR).
         barrier.srcStageMask = vk::PipelineStageFlagBits2::eFragmentShader | vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eComputeShader;
-        barrier.dstStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests;
+        barrier.dstStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eColorAttachmentOutput;
         barrier.subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eDepth, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1};
     }
 
@@ -171,7 +177,9 @@ inline vk::ImageMemoryBarrier2 buildBarrier(const vk::Image& image, const vk::Im
     else if (oldLayout == vk::ImageLayout::eUndefined && newLayout == vk::ImageLayout::eColorAttachmentOptimal) {
         barrier.srcAccessMask = {};
         barrier.dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
-        barrier.srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe;
+        // ColorAttachmentOutput, not TopOfPipe: the swapchain acquire semaphore is waited at
+        // ColorAttachmentOutput, and the transition must chain after it.
+        barrier.srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
         barrier.dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
         barrier.subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1};
     }
@@ -241,9 +249,11 @@ inline vk::ImageMemoryBarrier2 buildBarrier(const vk::Image& image, const vk::Im
     }
 
     else if (oldLayout == vk::ImageLayout::eShaderReadOnlyOptimal && newLayout == vk::ImageLayout::eColorAttachmentOptimal) {
-        barrier.srcAccessMask = vk::AccessFlagBits2::eShaderRead;
+        // ColorAttachmentOutput in src: if no pass sampled the target since it was last rendered
+        // (a skipped post pass), the access to order against is the attachment write itself.
+        barrier.srcAccessMask = vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eColorAttachmentWrite;
         barrier.dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite;
-        barrier.srcStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+        barrier.srcStageMask = vk::PipelineStageFlagBits2::eFragmentShader | vk::PipelineStageFlagBits2::eColorAttachmentOutput;
         barrier.dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput;
         barrier.subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1};
     }
@@ -266,9 +276,11 @@ inline vk::ImageMemoryBarrier2 buildBarrier(const vk::Image& image, const vk::Im
     }
 
     else if (oldLayout == vk::ImageLayout::eShaderReadOnlyOptimal && newLayout == vk::ImageLayout::eTransferDstOptimal) {
-        barrier.srcAccessMask = vk::AccessFlagBits2::eShaderRead;
+        // ColorAttachmentOutput in src: thumbnails are rendered, then immediately transitioned for
+        // mip generation — the attachment write must finish before the transfer overwrites.
+        barrier.srcAccessMask = vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eColorAttachmentWrite;
         barrier.dstAccessMask = vk::AccessFlagBits2::eTransferWrite;
-        barrier.srcStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+        barrier.srcStageMask = vk::PipelineStageFlagBits2::eFragmentShader | vk::PipelineStageFlagBits2::eColorAttachmentOutput;
         barrier.dstStageMask = vk::PipelineStageFlagBits2::eTransfer;
     }
 
@@ -279,22 +291,23 @@ inline vk::ImageMemoryBarrier2 buildBarrier(const vk::Image& image, const vk::Im
         barrier.dstStageMask = vk::PipelineStageFlagBits2::eTransfer;
     }
 
-    // Sampled read (last frame's present) -> compute storage write. Used for compute output images.
+    // Sampled read -> compute storage access. Used for compute output images. Keeps the caller's
+    // subresource range — the voxel volume transitions its whole mip chain, not just level 0.
+    // Compute in src: the voxel cube extract samples the volume from compute (WAR).
     else if (oldLayout == vk::ImageLayout::eShaderReadOnlyOptimal && newLayout == vk::ImageLayout::eGeneral) {
         barrier.srcAccessMask = vk::AccessFlagBits2::eShaderRead;
-        barrier.dstAccessMask = vk::AccessFlagBits2::eShaderStorageWrite;
-        barrier.srcStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+        barrier.dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite;
+        barrier.srcStageMask = vk::PipelineStageFlagBits2::eFragmentShader | vk::PipelineStageFlagBits2::eComputeShader;
         barrier.dstStageMask = vk::PipelineStageFlagBits2::eComputeShader;
-        barrier.subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1};
     }
 
-    // Compute storage write -> fragment sampled read. Used after a compute output dispatch.
+    // Compute storage write -> sampled read. Used after a compute output dispatch. Compute in dst:
+    // the voxel cube extract samples from compute.
     else if (oldLayout == vk::ImageLayout::eGeneral && newLayout == vk::ImageLayout::eShaderReadOnlyOptimal) {
         barrier.srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite;
         barrier.dstAccessMask = vk::AccessFlagBits2::eShaderRead;
         barrier.srcStageMask = vk::PipelineStageFlagBits2::eComputeShader;
-        barrier.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
-        barrier.subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1};
+        barrier.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader | vk::PipelineStageFlagBits2::eComputeShader;
     }
 
     else {
@@ -449,13 +462,16 @@ inline void create3DImage(const Context& ctx, uint32_t width, uint32_t height, u
     return vk::raii::ImageView(ctx.device.getDevice(), viewInfo);
 }
 
-// 3D view over a whole volume (single mip/layer). Used for froxel volumes bound as both
-// RWTexture3D (storage) and Texture3D (sampled).
-[[nodiscard]] inline vk::raii::ImageView create3DImageView(const Context& ctx, vk::raii::Image& image, vk::Format format, vk::ImageAspectFlags aspectFlags) {
+// 3D view over a volume. Used for froxel volumes bound as both RWTexture3D (storage) and Texture3D
+// (sampled). Defaults to a single-mip view; the voxel grid passes levelCount for the sampled
+// full-chain view and one baseMipLevel per level for the storage views the downsample writes through
+// (an RWTexture3D binding must resolve to exactly one mip).
+[[nodiscard]] inline vk::raii::ImageView create3DImageView(const Context& ctx, vk::raii::Image& image, vk::Format format, vk::ImageAspectFlags aspectFlags,
+                                                           uint32_t baseMipLevel = 0, uint32_t levelCount = 1) {
     vk::ImageViewCreateInfo viewInfo{.image = image,
                                      .viewType = vk::ImageViewType::e3D,
                                      .format = format,
-                                     .subresourceRange = {.aspectMask = aspectFlags, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1}};
+                                     .subresourceRange = {.aspectMask = aspectFlags, .baseMipLevel = baseMipLevel, .levelCount = levelCount, .baseArrayLayer = 0, .layerCount = 1}};
     return vk::raii::ImageView(ctx.device.getDevice(), viewInfo);
 }
 
