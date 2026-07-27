@@ -71,14 +71,79 @@ struct SkyBoxPushConstants {
     glm::mat4 invViewProjMatrix;
 };
 
+// Mirror of VoxelizationPushConstants in shaders/voxelization.slang.
+// 176 bytes — above the 128-byte Vulkan floor, so this needs maxPushConstantsSize >= 256 (NVIDIA
+// has it, most AMD/Intel report 128). To get back under, fold vpm*model into one mvp on the CPU.
 struct VoxelizationPushConstants {
-    glm::mat4 vpm;                // orthographic voxel-grid view-projection
-    glm::mat4 model;              // node world transform
+    glm::mat4 vpm;                  // orthographic voxel-grid view-projection
+    glm::mat4 model;                // node world transform
     uint64_t  vertexBufferAddress;
+    uint64_t  voxelAlbedoAddress;   // uint[res^3], luma-keyed packed RGB, InterlockedMax
+    uint64_t  voxelRadianceAddress; // uint[res^3], same encoding
     uint32_t  vertexStride;
-    uint32_t  vertexOffset;       // byte offset of this mesh in the shared vertex buffer
-    uint32_t  meshIndex;
+    uint32_t  vertexOffset;         // byte offset of this mesh in the shared vertex buffer
+    uint32_t  albedoTextureIndex;   // node material's albedo, bindless sampled slot
+    uint32_t  samplerIndex;
+    uint32_t  voxelResolution;      // cubic grid side; index = x + res*(y + res*z)
     uint32_t  padding;
+};
+
+// Mirror of VoxelResolvePushConstants in shaders/voxel_resolve.slang. Shared by both entry points:
+// resolveMain unpacks the atomic buffers into mip 0, downsampleMain folds src -> dst one level down.
+// Both mips are addressed as storage slots rather than sampled — the 2x2x2 fold wants exact texel
+// fetches, and it sidesteps needing the image in a sampleable layout while it's being written.
+struct VoxelResolvePushConstants {
+    uint64_t voxelAlbedoAddress;   // unused by downsampleMain
+    uint64_t voxelRadianceAddress; // unused by downsampleMain
+    uint32_t dstStorageIndex;      // RWTexture3D<float4> slot being written
+    uint32_t srcStorageIndex;      // RWTexture3D<float4> slot being read (unused by resolveMain)
+    uint32_t dstResolution;        // side length of the destination mip
+    uint32_t voxelResolution;      // mip-0 side length, for indexing the atomic buffers
+};
+
+// Keep in sync with the VOXDBG_* constants in shaders/voxel_debug.slang.
+enum class VoxelDebugMode : uint32_t { Radiance = 0, Occupancy = 1, Albedo = 2, Depth = 3 };
+
+struct VoxelDebugSettings {
+    // Kill switch for the whole per-frame voxel build (clear/raster/resolve/mips), independent of the
+    // debug views. For bisecting frame cost: if fps doesn't recover with this off, the cost isn't voxel code.
+    bool           voxelizeScene = true;
+    bool           enabled  = false;
+    bool           drawCubes = false; // cubes via voxel_cubes.slang instead of the fullscreen ray march
+    VoxelDebugMode mode     = VoxelDebugMode::Radiance; // ray-march only; cubes always show radiance
+    uint32_t       mipLevel = 0;      // which level of the chain to visualize — good for eyeballing the fold
+    float          alphaScale = 1.0f; // ray-march: raise to make a sparse grid readable
+    float          cubeThreshold = 0.05f; // cubes: min coverage for a voxel to get a cube
+    // Runaway guard for grazing rays. A full diagonal of a 128^3 grid is ~222 steps, so 256 covers the
+    // worst honest case; this is a full-res per-pixel march, so it is the most expensive thing here.
+    uint32_t       maxSteps = 256;
+};
+
+// Mirror of VoxelCubePushConstants in shaders/voxel_cubes.slang. Shared by extractMain and the cube
+// draw — one struct because two push-constant blocks in one module would collide.
+struct VoxelCubePushConstants {
+    glm::mat4 gridToClip;            // cameraVP * voxelCamInvVPM
+    uint64_t  instanceBufferAddress;
+    uint64_t  indirectBufferAddress;
+    uint32_t  volumeTexIndex;
+    uint32_t  mipLevel;
+    uint32_t  mipRes;
+    float     threshold;
+};
+
+// Mirror of VoxelDebugPushConstants in shaders/voxel_debug.slang. 112 bytes.
+struct VoxelDebugPushConstants {
+    glm::mat4 camNdcToGrid;  // voxelVPM * inverse(cameraViewProjection)
+    glm::vec3 cameraPosGrid; // camera position in grid UVW
+    uint32_t  mipLevel;
+    uint32_t  volumeTexIndex;
+    uint32_t  samplerIndex;
+    uint32_t  depthTexIndex;
+    uint32_t  depthSamplerIndex;
+    uint32_t  resolution;
+    uint32_t  mode;
+    uint32_t  maxSteps;
+    float     alphaScale;
 };
 
 enum ImageVisFlags : uint32_t 
@@ -183,6 +248,7 @@ struct RenderFeatures {
     SSRSettings ssr;
     VolumetricSettings volumetrics;
     TonemapSettings tonemap;
+    VoxelDebugSettings voxelDebug;
     bool showGizmos = true;
     bool showBBoxes = false;
 };

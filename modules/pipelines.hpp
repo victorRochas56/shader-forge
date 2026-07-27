@@ -89,9 +89,9 @@ class PipelineManager {
   public:
     PipelineManager(Device& device, Swapchain& swapchain, vk::SampleCountFlagBits msaaSamples) : device(device), swapchain(swapchain), msaaSamples(msaaSamples) {}
 
-    // colorAttachmentFormat is required. For POSTPROCESS* and VOXELIZATION it sets the pipeline's color target format.
+    // colorAttachmentFormat is required. For POSTPROCESS* it sets the pipeline's color target format.
     // For categories with a category-fixed format (SHADOW, DEPTH_PREPASS, LIT_GEOMETRY, BEFORE_GEOMETRY)
-    // it is ignored — pass vk::Format::eUndefined.
+    // or no attachments at all (VOXELIZATION) it is ignored — pass vk::Format::eUndefined.
     template <typename T>
     uint32_t createPipeline(PipelineCategory pipelineCategory, vk::PrimitiveTopology topology, vk::CullModeFlagBits cullMode, vk::Bool32 depthTestEnable,
                             vk::Bool32 depthWriteEnable, std::string shaderPath, vk::raii::DescriptorSetLayout& setLayout, vk::raii::DescriptorSet& descriptorSet,
@@ -116,6 +116,9 @@ class PipelineManager {
             bool srcChanged = std::filesystem::exists(slangSrc) && hasFileChanged(slangSrc, entry.first);
             if (!srcChanged && !modulesChanged) continue;
 
+            // Announce: each recompile is a seconds-long slangc run + device waitIdle. If this spams,
+            // something is repeatedly invalidating mtimes and it IS the frame stall.
+            std::cout << "[shader reload] recompiling " << slangSrc << (modulesChanged ? " (module change)" : "") << std::endl;
             if (!compileSlangToSpv(slangSrc, spvPath)) continue; // keep the working pipeline on a compile error
 
             // in-flight command buffers still reference these pipelines; destroying them mid-use is a device-lost
@@ -464,9 +467,11 @@ class PipelineManager {
                           .lineWidth = 1.0f};
             multisampling = {.rasterizationSamples = vk::SampleCountFlagBits::e1,
                              .sampleShadingEnable = vk::False};
+            // Reverse-Z compare, like the geometry passes. Only matters when a caller enables the
+            // test (voxel debug cubes) — every fullscreen pass passes depthTestEnable = False.
             depthStencil = {.depthTestEnable = (multiply || alphaBlend || volumetric) ? vk::False : depthTestEnable,
                             .depthWriteEnable = (multiply || alphaBlend || volumetric) ? vk::False : depthWriteEnable,
-                            .depthCompareOp = vk::CompareOp::eNever,
+                            .depthCompareOp = vk::CompareOp::eGreaterOrEqual,
                             .depthBoundsTestEnable = vk::False,
                             .stencilTestEnable = vk::False};
             if (alphaBlend) {
@@ -509,17 +514,16 @@ class PipelineManager {
             pipeline->layout = vk::raii::PipelineLayout(device.getDevice(), pipelineLayoutInfo);
             break;
         }
-        // Slicemap voxelization. The target is a UINT 2D image where bit k of a texel marks occupancy
-        // of slice k along the sweep axis, so the fragment shader emits raw bits and overlapping
-        // triangles merge with a fixed-function OR — no atomics, no storage image. Depth test/write
-        // are forced off (every fragment must land) and there is no depth attachment.
+        // Attachment-less voxelization. Nothing goes through the ROPs: the fragment shader scatters
+        // albedo/radiance into BDA storage buffers with atomics (needs fragmentStoresAndAtomics).
+        // renderArea alone drives coverage, so colorAttachmentFormat is ignored. Depth test/write are
+        // forced off — every fragment must land — and there is no depth attachment.
         case PipelineCategory::VOXELIZATION: {
-            assert(colorAttachmentFormat != vk::Format::eUndefined && "VOXELIZATION pipelines require an explicit UINT colorAttachmentFormat");
             pipelineRenderingCreateInfo = {
-                .colorAttachmentCount = 1, .pColorAttachmentFormats = &pipeline->colorAttachmentFormat, .depthAttachmentFormat = vk::Format::eUndefined};
+                .colorAttachmentCount = 0, .pColorAttachmentFormats = nullptr, .depthAttachmentFormat = vk::Format::eUndefined};
             inputAssembly = {.topology = topology};
             rasterizer = {.depthClampEnable = vk::False,
-                          .rasterizerDiscardEnable = vk::False,
+                          .rasterizerDiscardEnable = vk::False, // must stay false — the FS side effects are the output
                           .polygonMode = vk::PolygonMode::eFill,
                           .cullMode = cullMode,
                           .frontFace = vk::FrontFace::eCounterClockwise,
@@ -531,11 +535,7 @@ class PipelineManager {
                             .depthCompareOp = vk::CompareOp::eNever,
                             .depthBoundsTestEnable = vk::False,
                             .stencilTestEnable = vk::False};
-            // logicOp replaces blending outright — the two are mutually exclusive, so blendEnable stays false.
-            colorBlendAttachment = {.blendEnable = vk::False,
-                                    .colorWriteMask =
-                                        vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA};
-            colorBlending = {.logicOpEnable = vk::True, .logicOp = vk::LogicOp::eOr, .attachmentCount = 1, .pAttachments = &colorBlendAttachment};
+            colorBlending = {.logicOpEnable = vk::False, .attachmentCount = 0, .pAttachments = nullptr};
             pushConstantRange = {.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, .offset = 0, .size = sizeof(T)};
             vk::PipelineLayoutCreateInfo pipelineLayoutInfo{
                 .setLayoutCount = 1, .pSetLayouts = &*setLayout, .pushConstantRangeCount = 1, .pPushConstantRanges = &pushConstantRange};

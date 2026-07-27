@@ -53,7 +53,9 @@ inline void endTrace(std::string name) {
     }
     traces[name].end = std::chrono::high_resolution_clock::now();
     traces[name].updateDuration(samples);
-    scope--;
+    // Never wrap: an unbalanced end (e.g. after an early-return skipped its start) would push scope
+    // to ~4 billion, and every zone registered after that bakes the garbage in as its indent depth.
+    if (scope > 0) scope--;
 }
 
 inline auto& getTraces() { return traces; }

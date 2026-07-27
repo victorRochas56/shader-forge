@@ -133,7 +133,7 @@ class GpuContext {
         VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,   VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME,
         VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME, VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME};
 
-    static inline const std::vector<const char*> validationLayers = {/*"VK_LAYER_KHRONOS_validation"*/};
+    static inline const std::vector<const char*> validationLayers = {"VK_LAYER_KHRONOS_validation"};
 
     // --- init helpers --------------------------------------------------
     void createInstance() {
@@ -166,6 +166,15 @@ class GpuContext {
                                           .ppEnabledLayerNames = requiredLayers.data(),
                                           .enabledExtensionCount = static_cast<uint32_t>(requiredExtensions.size()),
                                           .ppEnabledExtensionNames = requiredExtensions.data()};
+#if DEBUG == 1
+        // Sync validation is a feature of VK_LAYER_KHRONOS_validation, not a layer of its own —
+        // enabled by chaining onto instance creation. Costly (~2-5x frame time); comment the pNext
+        // line out when not hunting a hazard.
+        constexpr std::array validationFeatureEnables = {vk::ValidationFeatureEnableEXT::eSynchronizationValidation};
+        vk::ValidationFeaturesEXT validationFeatures{.enabledValidationFeatureCount = static_cast<uint32_t>(validationFeatureEnables.size()),
+                                                     .pEnabledValidationFeatures = validationFeatureEnables.data()};
+        //createInfo.pNext = &validationFeatures;
+#endif
         instance = vk::raii::Instance(context, createInfo);
     }
 

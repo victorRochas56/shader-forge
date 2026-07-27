@@ -1,5 +1,6 @@
 #include "renderer.hpp"
 
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -162,6 +163,8 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
                                                          vk::CompareOp::eLessOrEqual, vk::BorderColor::eFloatOpaqueBlack);
     passResources.depthSamplerIndex = bindless.descriptorSet->allocateSampler(vk::Filter::eNearest, vk::SamplerMipmapMode::eNearest, vk::SamplerAddressMode::eClampToEdge, VK_FALSE, 16.0, VK_FALSE,
                                                        vk::CompareOp::eLessOrEqual, vk::BorderColor::eFloatOpaqueBlack);
+    passResources.volumeSamplerIndex = bindless.descriptorSet->allocateSampler(vk::Filter::eLinear, vk::SamplerMipmapMode::eLinear, vk::SamplerAddressMode::eClampToEdge, VK_FALSE, 1.0f, VK_FALSE,
+                                                       vk::CompareOp::eLessOrEqual, vk::BorderColor::eFloatOpaqueBlack);
     shadowSamplerIndex = bindless.descriptorSet->allocateSampler(vk::Filter::eNearest,
                                                         vk::SamplerMipmapMode::eNearest,
                                                         vk::SamplerAddressMode::eClampToBorder,
@@ -309,10 +312,17 @@ void Renderer::drawFrame() {
     #if TRACY_ENABLE
     ZoneScoped; // Tracy CPU zone for the whole frame
     #endif
+    // Slow-frame breakdown: fenceWait = GPU execution of a previous frame; record = command recording
+    // (+ command-time validation); submit/present = queue submit (+ sync validation's analysis).
+    using frameClk = std::chrono::steady_clock;
+    auto phaseMs = [](frameClk::time_point a, frameClk::time_point b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
+    frameClk::time_point tStart = frameClk::now();
+
     tracing::startTrace("draw frame");
     tracing::startTrace("wait for fences");
     gpu.getDevice().getDevice().waitForFences(*gpu.getInFlightFence(gpu.currentFrame), vk::True, UINT64_MAX);
     tracing::endTrace("wait for fences");
+    frameClk::time_point tFence = frameClk::now();
 
     // This slot's prior submission has retired — safe to destroy any textures it referenced.
     bindless.descriptorSet->processDeferredTextureFrees();
@@ -335,6 +345,7 @@ void Renderer::drawFrame() {
     if (result == vk::Result::eErrorOutOfDateKHR) {
         gpu.recreateSwapchain();
         handleSwapchainResize();
+        tracing::endTrace("draw frame"); // early return must not leak the zone — scope drifts otherwise
         return;
     }
     if (result != vk::Result::eSuccess && result != vk::Result::eSuboptimalKHR) {
@@ -348,6 +359,7 @@ void Renderer::drawFrame() {
         }
     }
     tracing::endTrace("wait image in flight");
+    frameClk::time_point tAcquire = frameClk::now();
 
     tracing::startTrace("reset fences");
     gpu.getImagesInFlight()[imageIndex] = *gpu.getInFlightFence(gpu.currentFrame);
@@ -386,6 +398,7 @@ void Renderer::drawFrame() {
     gpu.getCommandBuffer(gpu.currentFrame).reset();
     recordCommandBuffer(imageIndex);
     tracing::endTrace("record command buffer");
+    frameClk::time_point tRecord = frameClk::now();
 
     tracing::startTrace("submit & present");
     vk::PipelineStageFlags waitDestinationStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput);
@@ -419,11 +432,33 @@ void Renderer::drawFrame() {
         throw std::runtime_error("failed to present swap chain image!");
     }
     tracing::endTrace("submit & present");
-    
+    frameClk::time_point tPresent = frameClk::now();
+
     gpu.currentFrame = (gpu.currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
     gpu.totalFrames++;
     if(gpu.totalFrames % 60 == 0) {
         bindless.pipelineManager->checkForShaderUpdates();
+    }
+
+    // outsideFrame = time between the end of the previous drawFrame and the start of this one — the
+    // main loop (GUI, events, scene updates). A stall there never shows up in the phases.
+    frameClk::time_point tEnd = frameClk::now();
+    static frameClk::time_point lastFrameEnd{};
+    double outsideMs = (lastFrameEnd == frameClk::time_point{}) ? 0.0 : phaseMs(lastFrameEnd, tStart);
+    lastFrameEnd = tEnd;
+
+    if (phaseMs(tStart, tEnd) > 200.0 || outsideMs > 200.0) {
+        static frameClk::time_point lastSlowPrint{};
+        if (tEnd - lastSlowPrint > std::chrono::seconds(1)) {
+            lastSlowPrint = tEnd;
+            std::cout << "[slow frame] total " << phaseMs(tStart, tEnd)
+                      << "ms | fenceWait " << phaseMs(tStart, tFence)
+                      << "ms | acquire " << phaseMs(tFence, tAcquire)
+                      << "ms | record " << phaseMs(tAcquire, tRecord)
+                      << "ms | submit/present " << phaseMs(tRecord, tPresent)
+                      << "ms | shaderCheck " << phaseMs(tPresent, tEnd)
+                      << "ms | outsideFrame " << outsideMs << "ms" << std::endl;
+        }
     }
     tracing::endTrace("draw frame");
     #if TRACY_ENABLE
@@ -718,6 +753,10 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
         pass.second->record(cmd, imageIndex);
     }
     tracing::endTrace("record passes");
+
+    // Voxel grid overlay (features.voxelDebug). Separate from the loop because it draws over the HDR
+    // composite, so it has to run once every pass above has finished contributing to it.
+    static_cast<VoxelizationPass*>(passes.at(PassId::VOXELIZATION).get())->recordDebugOverlay(cmd);
 
     recordBillboardBlendPass(cmd, imageIndex);
 

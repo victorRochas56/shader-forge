@@ -624,21 +624,30 @@ class DescriptorSet {
         basePtr->frameOffsets[frameIndex] = offsetInElements * basePtr->elementSize;
     }
 
-    uint32_t createVariableBuffer(uint32_t maxSizeBytes = 1024 * 1024, vk::BufferUsageFlags usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress, bool perFrame = false, std::string name = "") {
+    // deviceLocal picks VRAM instead of the default persistently-mapped host-visible memory, and leaves
+    // mappedData null. Use it for buffers the GPU hammers and the CPU never touches — a shader doing
+    // per-fragment atomics on host-visible memory drives every one of them across PCIe. The CPU-upload
+    // helpers (allocateVariableBuffer / updateVariableBuffer / writeVariableBuffer) need the mapping, so
+    // a device-local buffer can only be filled GPU-side (fillBuffer, copies, shader writes).
+    uint32_t createVariableBuffer(uint32_t maxSizeBytes = 1024 * 1024, vk::BufferUsageFlags usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress, bool perFrame = false, std::string name = "", bool deviceLocal = false) {
         vk::BufferCreateInfo bufferInfo{.size = maxSizeBytes, .usage = usage, .sharingMode = vk::SharingMode::eExclusive};
 
         vk::raii::Buffer buffer(device.getDevice(), bufferInfo);
         vk::MemoryRequirements memRequirements = buffer.getMemoryRequirements();
-        uint32_t memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, device);
+        vk::MemoryPropertyFlags memProps = deviceLocal ? vk::MemoryPropertyFlags{vk::MemoryPropertyFlagBits::eDeviceLocal}
+                                                       : (vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+        uint32_t memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, memProps, device);
 
         vk::MemoryAllocateFlagsInfo allocFlags{.flags = vk::MemoryAllocateFlagBits::eDeviceAddress};
         vk::MemoryAllocateInfo allocInfo{.pNext = allocFlags, .allocationSize = memRequirements.size, .memoryTypeIndex = memoryTypeIndex};
 
         vk::raii::DeviceMemory memory(device.getDevice(), allocInfo);
         buffer.bindMemory(*memory, 0);
-        void* mappedData = memory.mapMemory(0, maxSizeBytes);
+        void* mappedData = deviceLocal ? nullptr : memory.mapMemory(0, maxSizeBytes);
 
-        variableBuffers.push_back(VariableBufferResource{getBufferAddress(device.getDevice(),buffer),std::move(buffer), std::move(memory), mappedData, maxSizeBytes, maxSizeBytes});
+        // Querying the address of a buffer without the BDA usage flag is invalid (the index buffer).
+        vk::DeviceAddress address = (usage & vk::BufferUsageFlagBits::eShaderDeviceAddress) ? getBufferAddress(device.getDevice(), buffer) : 0;
+        variableBuffers.push_back(VariableBufferResource{address,std::move(buffer), std::move(memory), mappedData, maxSizeBytes, maxSizeBytes});
         variableBuffers.back()->name = std::move(name);
         return variableBuffers.size() - 1;
     }

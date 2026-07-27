@@ -506,6 +506,36 @@ void showToggles(RenderFeatures& f){
         const char* dbgItems[] = {"Off", "Extinction", "Scatter", "In-Scatter", "Transmittance", "Slice", "Phase g", "Shadow"};
         ImGui::Combo("Debug View", &f.volumetrics.debugView, dbgItems, IM_ARRAYSIZE(dbgItems));
     }
+    ImGui::Checkbox("Voxelize Scene", &f.voxelDebug.voxelizeScene);
+    ImGui::SetItemTooltip("Per-frame voxel build. Uncheck to bisect frame cost; debug views keep the last volume.");
+    if(ImGui::Button("Voxel Grid")){
+        f.voxelDebug.enabled = !f.voxelDebug.enabled;
+    }
+    if(f.voxelDebug.enabled){
+        // Mip Level walks the chain the resolve pass builds — stepping up should blur the grid
+        // coherently, not fade it toward black.
+        ImGui::Checkbox("Draw Cubes", &f.voxelDebug.drawCubes);
+        int voxMip = static_cast<int>(f.voxelDebug.mipLevel);
+        if(ImGui::SliderInt("Voxel Mip", &voxMip, 0, 7)){
+            f.voxelDebug.mipLevel = static_cast<uint32_t>(voxMip);
+        }
+        if(f.voxelDebug.drawCubes){
+            ImGui::SliderFloat("Cube Threshold", &f.voxelDebug.cubeThreshold, 0.001f, 1.0f, "%.3f");
+            ImGui::SetItemTooltip("Min coverage for a voxel to get a cube; lower to see partially-covered mips.");
+        } else {
+            const char* voxItems[] = {"Radiance", "Occupancy", "Albedo (normalized)", "First-hit Depth"};
+            int voxMode = static_cast<int>(f.voxelDebug.mode);
+            if(ImGui::Combo("Voxel View", &voxMode, voxItems, IM_ARRAYSIZE(voxItems))){
+                f.voxelDebug.mode = static_cast<VoxelDebugMode>(voxMode);
+            }
+            ImGui::SliderFloat("Voxel Opacity", &f.voxelDebug.alphaScale, 0.1f, 10.0f);
+            ImGui::SetItemTooltip("Multiplies per-voxel coverage; raise it to read a sparse grid.");
+            int voxSteps = static_cast<int>(f.voxelDebug.maxSteps);
+            if(ImGui::SliderInt("Voxel Max Steps", &voxSteps, 32, 1024)){
+                f.voxelDebug.maxSteps = static_cast<uint32_t>(voxSteps);
+            }
+        }
+    }
     if(ImGui::Button("Show BBOXes")){
         f.showBBoxes = !f.showBBoxes;
     }
@@ -805,8 +835,9 @@ void showTraces() {
         float r, g, b;
         ImGui::ColorConvertHSVtoRGB(hue, 0.6f, 0.95f, r, g, b);
         ImGui::PushStyleColor(ImGuiCol_Text,{r,g,b,1});
-    // indent 2 spaces per scope level
-        std::string indent(trace.scope * 2, ' ');  
+    // indent 2 spaces per scope level, clamped: a drifted scope counter must cost a wrong indent,
+    // never a multi-gigabyte string allocation.
+        std::string indent(std::min(trace.scope, 16u) * 2, ' ');
         ImGui::Text((indent + name + " : " + std::to_string(trace.averageDuration.count() * 1000.0) + " ms").c_str());
         ImGui::PopStyleColor();
     }
