@@ -55,6 +55,7 @@ class Device {
                 // check for the required features
                 auto features = device.template getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
                 bool supportsRequiredFeatures = features.template get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy &&
+                                                features.template get<vk::PhysicalDeviceFeatures2>().features.geometryShader &&
                                                 features.template get<vk::PhysicalDeviceFeatures2>().features.sampleRateShading &&
                                                 features.template get<vk::PhysicalDeviceFeatures2>().features.multiDrawIndirect &&
                                                 features.template get<vk::PhysicalDeviceFeatures2>().features.logicOp &&
@@ -143,7 +144,8 @@ class Device {
             featureChain = {
                 {.features =
                      // fragmentStoresAndAtomics: voxelization scatters albedo/radiance from the fragment shader
-                     {.sampleRateShading = true, .logicOp = true, .multiDrawIndirect = true, .drawIndirectFirstInstance = true, .fillModeNonSolid = true, .wideLines = true, .samplerAnisotropy = true, .fragmentStoresAndAtomics = true, .shaderInt64 = true}}, // vk::PhysicalDeviceFeatures2
+                     // geometryShader: voxelization's per-triangle dominant-axis projection
+                     {.geometryShader = true, .sampleRateShading = true, .logicOp = true, .multiDrawIndirect = true, .drawIndirectFirstInstance = true, .fillModeNonSolid = true, .wideLines = true, .samplerAnisotropy = true, .fragmentStoresAndAtomics = true, .shaderInt64 = true}}, // vk::PhysicalDeviceFeatures2
                 {.shaderDrawParameters = true},
                 {.shaderInt8 = true,
                  .descriptorIndexing = true,

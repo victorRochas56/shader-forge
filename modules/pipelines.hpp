@@ -44,6 +44,7 @@ struct PipelineBase {
     // categories whose target format isn't fixed by category. Ignored for SHADOW (depth-only),
     // DEPTH_PREPASS (depth-only), LIT_GEOMETRY (MRT, formats fixed), BEFORE_GEOMETRY (R32Sfloat fixed).
     vk::Format colorAttachmentFormat = vk::Format::eUndefined;
+    std::string geomEntry; // geometry shader entry point; empty = no geometry stage
 
     std::type_index pushConstantType = std::type_index(typeid(void));
 
@@ -92,12 +93,13 @@ class PipelineManager {
     // colorAttachmentFormat is required. For POSTPROCESS* it sets the pipeline's color target format.
     // For categories with a category-fixed format (SHADOW, DEPTH_PREPASS, LIT_GEOMETRY, BEFORE_GEOMETRY)
     // or no attachments at all (VOXELIZATION) it is ignored — pass vk::Format::eUndefined.
+    // geomEntry, when set, adds a geometry stage with that entry point from the same .spv.
     template <typename T>
     uint32_t createPipeline(PipelineCategory pipelineCategory, vk::PrimitiveTopology topology, vk::CullModeFlagBits cullMode, vk::Bool32 depthTestEnable,
                             vk::Bool32 depthWriteEnable, std::string shaderPath, vk::raii::DescriptorSetLayout& setLayout, vk::raii::DescriptorSet& descriptorSet,
-                            vk::Format colorAttachmentFormat) {
+                            vk::Format colorAttachmentFormat, const char* geomEntry = nullptr) {
 
-        return createPipelineInternal<T>(pipelineCategory, topology, cullMode, depthTestEnable, depthWriteEnable, shaderPath, setLayout, descriptorSet, false, 0, colorAttachmentFormat);
+        return createPipelineInternal<T>(pipelineCategory, topology, cullMode, depthTestEnable, depthWriteEnable, shaderPath, setLayout, descriptorSet, false, 0, colorAttachmentFormat, geomEntry);
     }
 
     // Watches each pipeline's .slang source (and the shared modules they import). On change it runs
@@ -132,8 +134,8 @@ class PipelineManager {
     template <typename T>
     void recreatePipelineAtIndexInternal(PipelineCategory pipelineCategory, uint32_t index, const std::string& shaderPath, vk::PrimitiveTopology topology,
                                          vk::CullModeFlagBits cullMode, vk::Bool32 depthTestEnable, vk::Bool32 depthWriteEnable, vk::raii::DescriptorSetLayout& setLayout,
-                                         vk::raii::DescriptorSet& descriptorSet, vk::Format colorAttachmentFormat) {
-        createPipelineInternal<T>(pipelineCategory, topology, cullMode, depthTestEnable, depthWriteEnable, shaderPath, setLayout, descriptorSet, true, index, colorAttachmentFormat);
+                                         vk::raii::DescriptorSet& descriptorSet, vk::Format colorAttachmentFormat, const char* geomEntry) {
+        createPipelineInternal<T>(pipelineCategory, topology, cullMode, depthTestEnable, depthWriteEnable, shaderPath, setLayout, descriptorSet, true, index, colorAttachmentFormat, geomEntry);
     }
 
     std::vector<std::unique_ptr<PipelineBase>>& getBeforeGeoPipelines() { return beforeGeometryPipelines; }
@@ -207,13 +209,17 @@ class PipelineManager {
     template <typename T>
     uint32_t createPipelineInternal(PipelineCategory pipelineCategory, vk::PrimitiveTopology topology, vk::CullModeFlagBits cullMode, vk::Bool32 depthTestEnable,
                                     vk::Bool32 depthWriteEnable, std::string shaderPath, vk::raii::DescriptorSetLayout& setLayout, vk::raii::DescriptorSet& descriptorSet,
-                                    bool isRecreation, uint32_t recreateIndex, vk::Format colorAttachmentFormat) {
+                                    bool isRecreation, uint32_t recreateIndex, vk::Format colorAttachmentFormat, const char* geomEntry = nullptr) {
 
         ensureSpvUpToDate(shaderPath); // rebuild stale/missing .spv from source before loading it
         vk::raii::ShaderModule shaderModule = createShaderModule(readFile(shaderPath));
         vk::PipelineShaderStageCreateInfo vertShaderStageInfo{.stage = vk::ShaderStageFlagBits::eVertex, .module = shaderModule, .pName = "vertMain"};
         vk::PipelineShaderStageCreateInfo fragShaderStageInfo{.stage = vk::ShaderStageFlagBits::eFragment, .module = shaderModule, .pName = "fragMain"};
-        vk::PipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
+        vk::PipelineShaderStageCreateInfo shaderStages[3] = {vertShaderStageInfo, fragShaderStageInfo, {}};
+        uint32_t stageCount = 2;
+        if (geomEntry) {
+            shaderStages[stageCount++] = {.stage = vk::ShaderStageFlagBits::eGeometry, .module = shaderModule, .pName = geomEntry};
+        }
 
         vk::PipelineVertexInputStateCreateInfo vertexInputInfo{
             .vertexBindingDescriptionCount = 0, .pVertexBindingDescriptions = nullptr, .vertexAttributeDescriptionCount = 0, .pVertexAttributeDescriptions = nullptr};
@@ -236,6 +242,7 @@ class PipelineManager {
         pipeline->descriptorSetLayout = &setLayout;
         pipeline->descriptorSet = &descriptorSet;
         pipeline->colorAttachmentFormat = colorAttachmentFormat;
+        pipeline->geomEntry = geomEntry ? geomEntry : "";
 
         vk::PipelineInputAssemblyStateCreateInfo inputAssembly;
         vk::PipelineRasterizationStateCreateInfo rasterizer;
@@ -517,7 +524,8 @@ class PipelineManager {
         // Attachment-less voxelization. Nothing goes through the ROPs: the fragment shader scatters
         // albedo/radiance into BDA storage buffers with atomics (needs fragmentStoresAndAtomics).
         // renderArea alone drives coverage, so colorAttachmentFormat is ignored. Depth test/write are
-        // forced off — every fragment must land — and there is no depth attachment.
+        // forced off — every fragment must land — and there is no depth attachment. The push constant
+        // range includes the geometry stage (dominant-axis projection reads vpm there).
         case PipelineCategory::VOXELIZATION: {
             pipelineRenderingCreateInfo = {
                 .colorAttachmentCount = 0, .pColorAttachmentFormats = nullptr, .depthAttachmentFormat = vk::Format::eUndefined};
@@ -536,7 +544,7 @@ class PipelineManager {
                             .depthBoundsTestEnable = vk::False,
                             .stencilTestEnable = vk::False};
             colorBlending = {.logicOpEnable = vk::False, .attachmentCount = 0, .pAttachments = nullptr};
-            pushConstantRange = {.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, .offset = 0, .size = sizeof(T)};
+            pushConstantRange = {.stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eGeometry | vk::ShaderStageFlagBits::eFragment, .offset = 0, .size = sizeof(T)};
             vk::PipelineLayoutCreateInfo pipelineLayoutInfo{
                 .setLayoutCount = 1, .pSetLayouts = &*setLayout, .pushConstantRangeCount = 1, .pPushConstantRanges = &pushConstantRange};
             pipeline->layout = vk::raii::PipelineLayout(device.getDevice(), pipelineLayoutInfo);
@@ -547,7 +555,7 @@ class PipelineManager {
         }
 
         vk::GraphicsPipelineCreateInfo createInfo = {.pNext = &pipelineRenderingCreateInfo,
-                                                     .stageCount = 2,
+                                                     .stageCount = stageCount,
                                                      .pStages = shaderStages,
                                                      .pVertexInputState = &vertexInputInfo,
                                                      .pInputAssemblyState = &inputAssembly,
@@ -635,5 +643,6 @@ public:
 };
 
 template <typename T> void Pipeline<T>::recreateInternal(PipelineManager& manager, uint32_t index) {
-    manager.recreatePipelineAtIndexInternal<T>(pipelineCategory, index, shaderPath, topology, cullMode, depthTestEnable, depthWriteEnable, *descriptorSetLayout, *descriptorSet, colorAttachmentFormat);
+    manager.recreatePipelineAtIndexInternal<T>(pipelineCategory, index, shaderPath, topology, cullMode, depthTestEnable, depthWriteEnable, *descriptorSetLayout, *descriptorSet, colorAttachmentFormat,
+                                               geomEntry.empty() ? nullptr : geomEntry.c_str());
 }

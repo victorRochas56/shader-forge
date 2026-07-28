@@ -21,15 +21,16 @@
 // into mip 0 of the volume, and a second pass folds each level into the next with an opacity-weighted
 // 2x2x2 filter — a plain box filter would average empty voxels in and drag coverage toward black.
 //
+// The raster stage does per-triangle dominant-axis selection in a geometry shader: each triangle is
+// projected along the grid axis its face normal is most aligned with, so nothing is edge-on to its
+// own sweep. The FS derives the voxel coord from the interpolated grid position, not SV_Position.
+//
 // Known limitations, in rough order of how much they'll show up:
-//  - Single sweep axis. Triangles near-parallel to the camera's look direction rasterize to almost no
-//    fragments and drop out. The fix is dominant-axis selection (project each triangle along the axis
-//    its normal is most aligned with, then unswizzle in the FS).
 //  - No conservative rasterization. Triangles covering a texel but missing its center write nothing,
 //    which pinholes thin walls. VK_EXT_conservative_rasterization or shader-side edge expansion.
-//  - The grid is static, centred on the origin: geometry outside the VOXEL_WORLD_EXTENT cube never
-//    voxelizes. Re-centring it on the camera (snapped to voxel-size increments to avoid crawl) is the
-//    usual fix once scenes outgrow it.
+//  - The grid follows the camera, snapped to whole-voxel steps so sub-voxel motion doesn't shift the
+//    world→voxel mapping. Geometry beyond the VOXEL_WORLD_EXTENT cube around the camera still never
+//    voxelizes, and the volume is fully rebuilt every frame even when nothing moved.
 //  - Isotropic mips, so cone tracing off this will leak light through thin geometry. The alternative
 //    is Crassin's six directional chains, which also changes the cone tracer.
 class VoxelizationPass : public RenderPass {
@@ -109,7 +110,7 @@ public:
         if (rasterPipelineIndex == 0xFFFFFFFF)
             rasterPipelineIndex = bindless.pipelineManager->createPipeline<VoxelizationPushConstants>(
                 PipelineCategory::VOXELIZATION, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone,
-                vk::False, vk::False, "shaders/voxelization.spv", setLayout, set, vk::Format::eUndefined);
+                vk::False, vk::False, "shaders/voxelization.spv", setLayout, set, vk::Format::eUndefined, "geomMain");
         if (resolvePipelineIndex == 0xFFFFFFFF)
             resolvePipelineIndex = bindless.pipelineManager->createComputePipeline<VoxelResolvePushConstants>("shaders/voxel_resolve.spv", setLayout, set, "resolveMain");
         if (downsamplePipelineIndex == 0xFFFFFFFF)
@@ -313,10 +314,16 @@ private:
     // write to, so the fragment shader's atomics are the only output.
     void recordRaster(vk::raii::CommandBuffer& cmd) {
         constexpr float half = VOXEL_WORLD_EXTENT * 0.5f;
-        // Static top-down sweep. Up must not be parallel to the -Y view direction — (0,1,0) makes
-        // lookAt's cross product zero and fills the whole matrix with NaN.
-        glm::mat4 view = glm::lookAt(glm::vec3(scene.activeCamera.position.x, scene.activeCamera.position.y + half, scene.activeCamera.position.z),
-                                     scene.activeCamera.position,
+        // Snap the grid centre to whole-voxel steps: sub-voxel camera motion no longer shifts the
+        // world→voxel mapping, which kills crawl and keeps voxel contents comparable frame-to-frame
+        // (prerequisite for skipping or caching the rebuild later).
+        constexpr float voxelSize = VOXEL_WORLD_EXTENT / VOXEL_RESOLUTION;
+        glm::vec3 gridCenter = glm::floor(scene.activeCamera.position / voxelSize) * voxelSize;
+        // Top-down ortho defining the grid OBB; the GS re-projects each triangle along its dominant
+        // axis, so this is a coordinate frame, not the sweep direction. Up must not be parallel to
+        // the -Y view direction — (0,1,0) makes lookAt's cross product zero and NaNs the matrix.
+        glm::mat4 view = glm::lookAt(gridCenter + glm::vec3(0.0f, half, 0.0f),
+                                     gridCenter,
                                      glm::vec3(0.0f, 0.0f, -1.0f));
         glm::mat4 proj = glm::orthoRH_ZO(-half, half, -half, half, 0.0f, VOXEL_WORLD_EXTENT);
         proj[1][1] *= -1.0f; // Flip Y axis for vulkan
@@ -360,7 +367,8 @@ private:
             pc.vertexStride       = mesh.vertexStride;
             pc.vertexOffset       = static_cast<uint32_t>(mesh.vertexOffset);
             pc.albedoTextureIndex = material.albedoTextureIndex;
-            cmd.pushConstants<VoxelizationPushConstants>(pipeline.layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pc);
+            cmd.pushConstants<VoxelizationPushConstants>(pipeline.layout,
+                vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eGeometry | vk::ShaderStageFlagBits::eFragment, 0, pc);
             cmd.drawIndexed(mesh.indexCount, 1, static_cast<uint32_t>(mesh.indexOffset / sizeof(uint32_t)), 0, 0);
         }
 
