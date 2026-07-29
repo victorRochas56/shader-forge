@@ -107,7 +107,7 @@ class Scene {
                 break;
             case LightType::Point:
                 for (int i = 0; i < 6; i++)
-                    shadowAtlas.freeShadowMap(light.cubeMapIndices[i].shadowAtlasTile);
+                    shadowAtlas.freeShadowMap(light.shadowMaps[i].shadowAtlasTile);
                 break;
             default:
                 break;
@@ -139,7 +139,7 @@ class Scene {
                     break;
                 case LightType::Point:
                     for (int i = 0; i < 6; i++)
-                        shadowAtlas.freeShadowMap(light.cubeMapIndices[i].shadowAtlasTile);
+                        shadowAtlas.freeShadowMap(light.shadowMaps[i].shadowAtlasTile);
                     break;
                 default:
                     break;

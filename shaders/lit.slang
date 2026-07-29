@@ -1,5 +1,6 @@
 import modules.common;
 import modules.pbr;
+import modules.voxel;
 
 [shader("vertex")]
 VertexOutput vertMain(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID, uint drawID : SV_DrawIndex)
@@ -165,6 +166,8 @@ FragmentOutput fragMain(VertexOutput input)
 
         Lo += (1.0 - shadow) * (kD * albedo.rgb / 3.14159265 + specular) * radiance * NdotL;
     }
+
+    float3 GI = coneTraceVXGI(/*voxel3DTextureIndex*/ 0);
 
     float3 kS = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0, roughness.r);
     float3 kD = float3(1.0) - kS;

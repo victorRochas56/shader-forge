@@ -1397,7 +1397,7 @@ void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light, uint
     // Determine face count up front — draw data is baked per-face below.
     uint32_t faceCount = 0;
     if (light.type == LightType::Directional) {
-        faceCount = light.numCascades;
+        faceCount = light.numCascades + 1; // +1 for VXGI radiance as it needs to encapsulate a different view of the scene
     } else if (light.type == LightType::Point) {
         faceCount = 6;
     }
@@ -1437,7 +1437,16 @@ void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light, uint
     // Bake per-face MMxLSM into shadowInstanceDataList laid out as [face0 instances..., face1 instances..., ...].
     shadowInstanceDataList.reserve(static_cast<size_t>(instancesPerFace) * faceCount);
     for (uint32_t f = 0; f < faceCount; ++f) {
-        const glm::mat4& lsm = (light.type == LightType::Directional) ? light.cascades[f].lightSpaceMatrix : light.cubeMapIndices[f].lightSpaceMatrix;
+        glm::mat4 lsm;
+        if(light.type == LightType::Directional) {
+            if(f < light.numCascades) {
+                lsm = light.cascades[f].lightSpaceMatrix;
+            } else {
+                lsm = light.shadowMaps[0].lightSpaceMatrix;
+            }
+        } else {
+            lsm = light.shadowMaps[f].lightSpaceMatrix;
+        }
         for (const auto& wt : instanceWorldTransforms) {
             shadowInstanceDataList.push_back({.MMxLSM = lsm * wt});
         }
@@ -1483,9 +1492,13 @@ void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light, uint
     for (uint32_t i = 0; i < faceCount; i++) {
         glm::vec4 uvRange;
         if (light.type == LightType::Directional) {
-            uvRange = light.cascades[i].shadowAtlasUVRange;
+            if(i < light.numCascades) {
+                uvRange = light.cascades[i].shadowAtlasUVRange;
+            } else {
+                uvRange = light.shadowMaps[0].shadowAtlasUVRange;
+            }
         } else {
-            uvRange = light.cubeMapIndices[i].shadowAtlasUVRange;
+            uvRange = light.shadowMaps[i].shadowAtlasUVRange;
         }
 
         int32_t  tx = static_cast<int32_t>(uvRange.x * SHADOW_ATLAS_SIZE);
@@ -1670,7 +1683,7 @@ void calculatePointLightFaceMatrices(Light& light, const glm::vec3& lightPos) {
 
     for (int i = 0; i < 6; i++) {
         glm::mat4 view = glm::lookAt(lightPos, lightPos + directions[i], ups[i]);
-        light.cubeMapIndices[i].lightSpaceMatrix = projection * view;
+        light.shadowMaps[i].lightSpaceMatrix = projection * view;
     }
 }
 
@@ -1778,5 +1791,41 @@ void calculateCascadedLightSpaceMatrices(Light& light, Camera& camera, Renderer*
         light.cascades[i].worldTexelSize = finalExtent / static_cast<float>(light.shadowResolution);
 
         lastSplitDist = splitDist;
+    }
+
+    // shadowMaps[0] is the VXGI shadow map: tight ortho bounds around the voxel volume
+    // (the camera-snapped cube VoxelizationPass rasterizes) instead of a camera sub-frustum.
+    {
+        glm::vec3 gridCenter = VoxelizationPass::snappedGridCenter(camera.position);
+        constexpr float half = VoxelizationPass::VOXEL_WORLD_EXTENT * 0.5f;
+
+        float zPullBack = 500.0f;
+        glm::mat4 lightView = glm::lookAt(gridCenter - lightDir * zPullBack, gridCenter, up);
+
+        // Light-space AABB of the volume's 8 corners
+        glm::vec3 lsMin(std::numeric_limits<float>::max());
+        glm::vec3 lsMax(std::numeric_limits<float>::lowest());
+        for (int j = 0; j < 8; j++) {
+            glm::vec3 corner = gridCenter + half * glm::vec3(j & 1 ? 1.0f : -1.0f,
+                                                             j & 2 ? 1.0f : -1.0f,
+                                                             j & 4 ? 1.0f : -1.0f);
+            glm::vec3 ls = glm::vec3(lightView * glm::vec4(corner, 1.0f));
+            lsMin = glm::min(lsMin, ls);
+            lsMax = glm::max(lsMax, ls);
+        }
+
+        // Same near/far convention as the cascades: near starts at the light eye to catch
+        // casters outside the volume, far ends just past its back face.
+        glm::mat4 lightProj = glm::ortho(lsMin.x, lsMax.x, lsMin.y, lsMax.y, 0.1f, -lsMin.z + 10.0f);
+
+        // Texel snap at the VXGI tile resolution — the grid snaps in voxel steps, not texel steps.
+        glm::mat4 shadowMatrix = lightProj * lightView;
+        float halfRes = static_cast<float>(VXGI_DIRECTIONAL_SHADOW_RESOLUTION) * 0.5f;
+        glm::vec4 shadowOrigin = shadowMatrix * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f) * halfRes;
+        glm::vec4 roundOffset = (glm::round(shadowOrigin) - shadowOrigin) / halfRes;
+        lightProj[3][0] += roundOffset.x;
+        lightProj[3][1] += roundOffset.y;
+
+        light.shadowMaps[0].lightSpaceMatrix = lightProj * lightView;
     }
 }

@@ -150,7 +150,7 @@ struct Cascade {
     float worldTexelSize = 0.0f;
 };
 
-struct PointShadowFace {
+struct ShadowMap {
     glm::mat4 lightSpaceMatrix;
     uint32_t shadowAtlasTile;
     glm::vec4 shadowAtlasUVRange = glm::vec4(0);
@@ -170,7 +170,7 @@ struct Light {
     int showCascades = 0;
     uint32_t numCascades = 3;
     std::array<Cascade, 3> cascades;
-    std::array<PointShadowFace,6> cubeMapIndices;
+    std::array<ShadowMap,6> shadowMaps;
     bool shadowDirty = true;
     // Countdown for fanning out a GPULight write across every frame-in-flight slice of the
     // per-frame light buffer. Set to MAX_FRAMES_IN_FLIGHT whenever any field feeding
@@ -201,8 +201,8 @@ struct Light {
             gpu.cascades[i].worldTexelSize = cascades[i].worldTexelSize;
         }
         for (uint32_t i = 0; i < 6; i++) {
-            gpu.pointFaces[i].lightSpaceMatrix = cubeMapIndices[i].lightSpaceMatrix;
-            gpu.pointFaces[i].shadowAtlasRange = cubeMapIndices[i].shadowAtlasUVRange;
+            gpu.shadowMaps[i].lightSpaceMatrix = shadowMaps[i].lightSpaceMatrix;
+            gpu.shadowMaps[i].shadowAtlasRange = shadowMaps[i].shadowAtlasUVRange;
         }
         return gpu;
     }

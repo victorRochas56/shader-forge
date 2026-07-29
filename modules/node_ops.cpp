@@ -57,10 +57,11 @@ void enableLightShadows(Light& light, const std::string& nodeName, Scene& scene)
         for (int i = 0; i < light.numCascades; i++) {
             scene.shadowAtlas.allocateShadowMap(light.shadowResolution, light.cascades[i].shadowAtlasTile, light.cascades[i].shadowAtlasUVRange);
         }
+        scene.shadowAtlas.allocateShadowMap(VXGI_DIRECTIONAL_SHADOW_RESOLUTION, light.shadowMaps[0].shadowAtlasTile, light.shadowMaps[0].shadowAtlasUVRange);
         break;
     case LightType::Point:
         for (int i = 0; i < 6; i++) {
-            scene.shadowAtlas.allocateShadowMap(light.shadowResolution, light.cubeMapIndices[i].shadowAtlasTile, light.cubeMapIndices[i].shadowAtlasUVRange);
+            scene.shadowAtlas.allocateShadowMap(light.shadowResolution, light.shadowMaps[i].shadowAtlasTile, light.shadowMaps[i].shadowAtlasUVRange);
         }
         break;
     default:
@@ -78,7 +79,7 @@ void disableLightShadows(Light& light, Scene& scene) {
         break;
     case LightType::Point:
         for (int i = 0; i < 6; i++) {
-            scene.shadowAtlas.freeShadowMap(light.cubeMapIndices[i].shadowAtlasTile);
+            scene.shadowAtlas.freeShadowMap(light.shadowMaps[i].shadowAtlasTile);
         }
         break;
     default:

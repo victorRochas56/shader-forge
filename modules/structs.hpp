@@ -80,6 +80,9 @@ struct VoxelizationPushConstants {
     uint64_t  vertexBufferAddress;
     uint64_t  voxelAlbedoAddress;   // uint[res^3], luma-keyed packed RGB, InterlockedMax
     uint64_t  voxelRadianceAddress; // uint[res^3], same encoding
+    uint64_t  lightBufferAddress;
+    uint32_t  lightCount;
+    uint32_t  shadowAtlasIndex;
     uint32_t  vertexStride;
     uint32_t  vertexOffset;         // byte offset of this mesh in the shared vertex buffer
     uint32_t  albedoTextureIndex;   // node material's albedo, bindless sampled slot
@@ -909,7 +912,7 @@ struct ShadowAtlas {
         }
     }
 
-    bool allocateShadowMap(uint32_t size, uint32_t& ouTile, glm::vec4& outUVRange) {
+    bool allocateShadowMap(uint32_t size, uint32_t& outTile, glm::vec4& outUVRange) {
         uint32_t target = SHADOW_ATLAS_MIN_TILE;
         while (target < size) target <<= 1;
         if (target > SHADOW_ATLAS_SIZE) return false;
@@ -964,7 +967,7 @@ struct ShadowAtlas {
         }
         quadTree[idx].state = QuadTileState::Occupied;
 
-        ouTile = idx;
+        outTile = idx;
         const float inv = 1.0f / float(SHADOW_ATLAS_SIZE);
         outUVRange = glm::vec4(
             float(foundX) * inv,
@@ -1009,7 +1012,7 @@ struct GPUCascade {
     float _padding; // forces sizeof to match the Slang side's 96-byte stride under scalarBlockLayout
 };
 
-struct GPUPointFace {
+struct GPUShadowMap {
     glm::mat4 lightSpaceMatrix;
     glm::vec4 shadowAtlasRange;
 };
@@ -1026,8 +1029,8 @@ struct GPULight {
     int showCascades = 0;           
     uint32_t numCascades = 3;       
     uint32_t shadowResolution = DEFAULT_SHADOW_RESOLUTION;
-    GPUCascade cascades[3];
-    GPUPointFace pointFaces[6];
+    GPUCascade cascades[3]; // for CSM directional lights
+    GPUShadowMap shadowMaps[6]; // more generic than cascades up to 6 for point lights
 };
 
 enum class VolumeShape {

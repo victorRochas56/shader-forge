@@ -34,8 +34,18 @@
 //  - Isotropic mips, so cone tracing off this will leak light through thin geometry. The alternative
 //    is Crassin's six directional chains, which also changes the cone tracer.
 class VoxelizationPass : public RenderPass {
+public:
     static constexpr uint32_t VOXEL_RESOLUTION  = 128;    // cubic grid side
-    static constexpr float    VOXEL_WORLD_EXTENT = 25.0f; // side of the world-space cube the grid covers
+    static constexpr float    VOXEL_WORLD_EXTENT = 35.0f; // side of the world-space cube the grid covers
+
+    // Grid centre snapped to whole-voxel steps. Shared by the raster pass and the VXGI shadow
+    // matrix so both agree on the volume's placement.
+    static glm::vec3 snappedGridCenter(const glm::vec3& cameraPos) {
+        constexpr float voxelSize = VOXEL_WORLD_EXTENT / VOXEL_RESOLUTION;
+        return glm::floor(cameraPos / voxelSize) * voxelSize;
+    }
+
+private:
     static constexpr vk::Format VOXEL_VOLUME_FORMAT = vk::Format::eR16G16B16A16Sfloat;
 
     // Scatter targets. Two uint per voxel, cleared every frame — 8 MB each at 128^3, and the same
@@ -317,8 +327,7 @@ private:
         // Snap the grid centre to whole-voxel steps: sub-voxel camera motion no longer shifts the
         // world→voxel mapping, which kills crawl and keeps voxel contents comparable frame-to-frame
         // (prerequisite for skipping or caching the rebuild later).
-        constexpr float voxelSize = VOXEL_WORLD_EXTENT / VOXEL_RESOLUTION;
-        glm::vec3 gridCenter = glm::floor(scene.activeCamera.position / voxelSize) * voxelSize;
+        glm::vec3 gridCenter = snappedGridCenter(scene.activeCamera.position);
         // Top-down ortho defining the grid OBB; the GS re-projects each triangle along its dominant
         // axis, so this is a coordinate frame, not the sweep direction. Up must not be parallel to
         // the -Y view direction — (0,1,0) makes lookAt's cross product zero and NaNs the matrix.
@@ -335,6 +344,9 @@ private:
         pc.vertexBufferAddress   = bindless.descriptorSet->getVariableBuffers()[shared.vertexBufferIndex]->address;
         pc.voxelAlbedoAddress    = bindless.descriptorSet->getVariableBuffers()[albedoBufferIndex]->address;
         pc.voxelRadianceAddress  = bindless.descriptorSet->getVariableBuffers()[radianceBufferIndex]->address;
+        pc.lightBufferAddress    = bindless.descriptorSet->getFixedBuffers()[shared.buffers.lightBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(GPULight);
+        pc.lightCount            = scene.getLightLoopBound();
+        pc.shadowAtlasIndex      = scene.shadowAtlas.textureIndex;
         pc.samplerIndex          = shared.defaultSamplerIndex;
         pc.voxelResolution       = VOXEL_RESOLUTION;
 

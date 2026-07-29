@@ -16,6 +16,9 @@ struct VoxelizationPushConstants {
     float*   vertexBuffer;     // shared vertex buffer (BDA), float-addressed like loadVertex expects
     uint*    voxelAlbedo;      // uint[res^3]
     uint*    voxelRadiance;    // uint[res^3]
+    Light*   lights;
+    uint     lightCount;
+    uint     shadowAtlasIndex;
     uint     vertexStride;     // bytes
     uint     vertexOffset;     // bytes
     uint     albedoTextureIndex;
@@ -28,6 +31,7 @@ struct VoxelizationPushConstants {
 ConstantBuffer<VoxelizationPushConstants> voxelPc;
 
 struct VoxelVSOut {
+    float3 worldPos : WORLD_POS;
     float3 gridPos  : GRID_POS; // vpm clip space: xy in [-1,1], z in [0,1] (ortho, w = 1)
     float3 normal   : NORMAL;
     float2 texCoord : TEXCOORD0;
@@ -35,6 +39,7 @@ struct VoxelVSOut {
 
 struct VoxelGSOut {
     float4 position : SV_Position; // swizzled: dominant axis mapped to depth
+    float3 worldPos : WORLD_POS;
     float3 gridPos  : GRID_POS;    // original grid clip, drives the voxel coord in the FS
     float3 normal   : NORMAL;
     float2 texCoord : TEXCOORD0;
@@ -51,6 +56,7 @@ VoxelVSOut vertMain(uint vertexID : SV_VertexID)
     output.gridPos  = mul(voxelPc.vpm, world).xyz;
     output.normal   = normalize(mul((float3x3)voxelPc.model, vertex.normal));
     output.texCoord = vertex.texCoord;
+    output.worldPos = world.xyz;
     return output;
 }
 
@@ -81,6 +87,7 @@ void geomMain(triangle VoxelVSOut input[3], inout TriangleStream<VoxelGSOut> out
         v.gridPos  = input[i].gridPos;
         v.normal   = input[i].normal;
         v.texCoord = input[i].texCoord;
+        v.worldPos = input[i].worldPos;
         output.Append(v);
     }
     output.RestartStrip();
@@ -99,10 +106,33 @@ void fragMain(VoxelGSOut input)
     // Fixed coarse mip: a voxel (~0.2m at 128^3 over 25m) is far bigger than a texel, so the
     // prefiltered average is both cheaper and closer to the right answer than mip 0.
     float3 albedo = textures[voxelPc.albedoTextureIndex].SampleLevel(samplers[voxelPc.samplerIndex], input.texCoord, 2).rgb;
-    // TODO: radiance from the light loop, the way lit.slang does. Until then a normal-derived
-    // brightness stands in, so the resolve's radiance*albedo still shows surface colour.
-    float3 radiance = float3(0.5) * (0.5 + 0.5 * input.normal.y);
+    
+    float3 radiance = float3(0.1,0.1,0.1);
+    for(uint i = 0; i < voxelPc.lightCount; i++)
+    {
+        Light* currentLight = &voxelPc.lights[i];
 
+        if(currentLight.intensity <= 0.0) continue;
+
+        float3 L = normalize(currentLight.position - input.worldPos);
+        float shadow = 0.0;
+
+        if(currentLight.castsShadows == 1) {
+            shadow = calculateVXGIShadow(input.worldPos, input.normal, L, currentLight, voxelPc.shadowAtlasIndex);
+        }
+        
+        float distance = length(currentLight.position - input.worldPos);
+
+        float attenuation = 1.0;
+        if(currentLight.type != LightType.Directional) {
+            attenuation = 1.0 / (distance * distance);
+        }
+            
+        float3 N = input.normal;
+        
+        radiance += (1 - shadow) * max(dot(N,L),0.0) * currentLight.color.rgb * currentLight.intensity * attenuation * albedo.rgb / 3.14159265; 
+
+    }
     InterlockedMax(voxelPc.voxelAlbedo[idx],   packVoxel(albedo));
     InterlockedMax(voxelPc.voxelRadiance[idx], packVoxel(voxelToneMap(radiance)));
 }

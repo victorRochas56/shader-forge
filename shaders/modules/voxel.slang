@@ -7,6 +7,9 @@
 // occupancy buffer.
 module voxel;
 
+[[vk::binding(0, 0)]] Texture3D<float4> textures3D[];
+[[vk::binding(2, 0)]] SamplerState samplers[];
+
 // Radiance is HDR, so it goes through Reinhard on the way in and the inverse on the way out. Values
 // well above ~10 compress hard — raise the knee if the scene has very bright emissives.
 public float3 voxelToneMap(float3 v)    { return v / (1.0 + v); }
@@ -29,4 +32,8 @@ public bool voxelOccupied(uint packed) { return packed != 0; }
 
 public uint voxelIndex(uint3 coord, uint resolution) {
     return coord.x + resolution * (coord.y + resolution * coord.z);
+}
+
+public float3 coneTraceVXGI(uint voxel3DTextureIndex) {
+    return float3(0.0,0.0,0.0);
 }

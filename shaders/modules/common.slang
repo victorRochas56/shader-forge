@@ -58,7 +58,7 @@ struct Cascade {
     float _padding; // pads stride to 96 to match C++ sizeof(GPUCascade) under scalarBlockLayout
 };
 
-struct PointFace {
+struct ShadowMap {
     float4x4 lightSpaceMatrix;
     float4 shadowAtlasRange;
 };
@@ -83,7 +83,7 @@ struct Light {
     uint numCascades;
     uint shadowResolution;
     Cascade cascades[3];
-    PointFace pointFaces[6];
+    ShadowMap shadowMaps[6];
 };
 
 struct Vertex
@@ -203,7 +203,7 @@ float calculatePointShadow(float3 fragWorldPos, float3 geometricNormal, float3 L
         faceIndex = fragToLight.z > 0.0 ? 4 : 5;
     }
 
-    PointFace face = light.pointFaces[faceIndex];
+    ShadowMap face = light.shadowMaps[faceIndex];
 
     float NdotL = saturate(abs(dot(geometricNormal, L)));
     float normalOffset = (1.0 - NdotL) * light.range / float(light.shadowResolution);
@@ -215,11 +215,10 @@ float calculatePointShadow(float3 fragWorldPos, float3 geometricNormal, float3 L
     projCoords.y = projCoords.y * 0.5 + 0.5;
 
     float texelSize = 1.0 / float(light.shadowResolution);
-    if (projCoords.x < texelSize || projCoords.x > 1.0 - texelSize ||
-        projCoords.y < texelSize || projCoords.y > 1.0 - texelSize ||
-        projCoords.z < 0.0 || projCoords.z > 1.0) {
+    if (projCoords.z < 0.0 || projCoords.z > 1.0) {
         return 0.0;
     }
+    projCoords.xy = clamp(projCoords.xy, 0.5 * texelSize, 1.0 - 0.5 * texelSize);
 
     float currentDepth = projCoords.z - 0.0001f;
 
@@ -243,6 +242,47 @@ float calculateShadow(float3 fragWorldPos, float3 cameraPos, float3 cameraForwar
         return calculatePointShadow(fragWorldPos, geometricNormal, L, light, shadowAtlasIdx);
     }
     return 0.0;
+}
+
+// Shadow lookup for voxel radiance injection. Directional lights sample the dedicated VXGI
+// tile (shadowMaps[0], fit around the voxel volume) instead of the camera-driven cascades,
+// so injected radiance doesn't shift with the view. Point lights use the regular cube faces.
+float calculateVXGIShadow(float3 fragWorldPos, float3 geometricNormal, float3 L, Light* light, uint shadowAtlasIdx)
+{
+    if (light.type == LightType::Point) {
+        return calculatePointShadow(fragWorldPos, geometricNormal, L, light, shadowAtlasIdx);
+    }
+
+    ShadowMap map = light.shadowMaps[0];
+
+    // ~one voxel of normal offset against acne; the tile has no per-cascade texel metadata.
+    float NdotL = saturate(abs(dot(geometricNormal, L)));
+    float3 biasedPos = fragWorldPos + geometricNormal * (1.0 - NdotL) * 0.2;
+
+    float4 fragPosLightSpace = mul(map.lightSpaceMatrix, float4(biasedPos, 1.0));
+    float3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
+    projCoords.x = projCoords.x * 0.5 + 0.5;
+    projCoords.y = projCoords.y * 0.5 + 0.5;
+
+    if (projCoords.z < 0.0 || projCoords.z > 1.0) {
+        return 0.0;
+    }
+    // Half-texel clamp keeps the lookup inside the tile (VXGI_DIRECTIONAL_SHADOW_RESOLUTION).
+    float texelSize = 1.0 / 256.0;
+    projCoords.xy = clamp(projCoords.xy, 0.5 * texelSize, 1.0 - 0.5 * texelSize);
+
+    float currentDepth = projCoords.z - 0.0001f;
+
+    float2 rangeMin  = map.shadowAtlasRange.xy;
+    float2 rangeSpan = map.shadowAtlasRange.zw - map.shadowAtlasRange.xy;
+
+    float2 atlasUV = rangeMin + projCoords.xy * rangeSpan;
+    float lit = textures[shadowAtlasIdx].SampleCmpLevelZero(
+        shadowCmpSampler,
+        atlasUV,
+        currentDepth
+    );
+    return 1.0 - lit;
 }
 
 float3 reconstructPixelRayDir(float2 uv, float4x4 view, float proj00, float proj11) {
