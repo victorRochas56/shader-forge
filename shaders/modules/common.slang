@@ -42,11 +42,14 @@ struct LitPass {
     uint shadowSamplerIndex;
     uint shadowAtlasIndex;
     float3 cameraPos;
-    uint padding1;
+    uint voxelTextureIndex;
     float3 cameraForward;
-    uint padding2;
+    uint voxelSamplerIndex;
     float4x4 viewProjection;
     float4x4 prevViewProjection;
+    float4x4 voxelViewProjection; // world -> voxel grid clip
+    uint voxelResolution;
+    float voxelWorldExtent;
 };
 
 struct Cascade {

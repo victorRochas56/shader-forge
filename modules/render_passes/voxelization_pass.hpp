@@ -36,13 +36,30 @@
 class VoxelizationPass : public RenderPass {
 public:
     static constexpr uint32_t VOXEL_RESOLUTION  = 128;    // cubic grid side
-    static constexpr float    VOXEL_WORLD_EXTENT = 35.0f; // side of the world-space cube the grid covers
+    static constexpr float    VOXEL_WORLD_EXTENT = 50.0f; // side of the world-space cube the grid covers
 
-    // Grid centre snapped to whole-voxel steps. Shared by the raster pass and the VXGI shadow
-    // matrix so both agree on the volume's placement.
+    // Grid centre snapped to 8-voxel steps, keeping mips 0-3 phase-stable in world space —
+    // single-voxel snapping re-groups every mip above 0 each step, which pops the cone-traced GI.
+    // Shared by the raster pass and the VXGI shadow matrix so both agree on the volume's placement.
     static glm::vec3 snappedGridCenter(const glm::vec3& cameraPos) {
-        constexpr float voxelSize = VOXEL_WORLD_EXTENT / VOXEL_RESOLUTION;
-        return glm::floor(cameraPos / voxelSize) * voxelSize;
+        constexpr float snapSize = 8.0f * VOXEL_WORLD_EXTENT / VOXEL_RESOLUTION;
+        return glm::floor(cameraPos / snapSize) * snapSize;
+    }
+
+    // World -> grid clip. Shared by the raster pass, cone tracing (LitPassData), and the debug views,
+    // so they all agree on the volume's placement. Top-down ortho defining the grid OBB; the GS
+    // re-projects each triangle along its dominant axis, so this is a coordinate frame, not the sweep
+    // direction. Up must not be parallel to the -Y view direction — (0,1,0) makes lookAt's cross
+    // product zero and NaNs the matrix.
+    static glm::mat4 gridViewProjection(const glm::vec3& cameraPos) {
+        constexpr float half = VOXEL_WORLD_EXTENT * 0.5f;
+        glm::vec3 gridCenter = snappedGridCenter(cameraPos);
+        glm::mat4 view = glm::lookAt(gridCenter + glm::vec3(0.0f, half, 0.0f),
+                                     gridCenter,
+                                     glm::vec3(0.0f, 0.0f, -1.0f));
+        glm::mat4 proj = glm::orthoRH_ZO(-half, half, -half, half, 0.0f, VOXEL_WORLD_EXTENT);
+        proj[1][1] *= -1.0f; // Flip Y axis for vulkan
+        return proj * view;
     }
 
 private:
@@ -60,6 +77,8 @@ private:
     std::vector<uint32_t> volumeMipStorageIndices;
     std::vector<vk::raii::ImageView> volumeMipViews; // owns the views the storage slots point at
     uint32_t volumeMipLevels = 0;
+
+    bool volumeBlanked = false; // volume zeroed since voxelizeScene went off
 
     uint32_t rasterPipelineIndex     = 0xFFFFFFFF;
     uint32_t resolvePipelineIndex    = 0xFFFFFFFF;
@@ -115,6 +134,13 @@ public:
 
         if (voxelVolumeTextureIndex == 0xFFFFFFFF) createVolume();
 
+        // Trilinear for the cone-widening mips; border-black so cones leaving the grid read zero
+        // radiance/opacity instead of smearing the edge voxel or wrapping (defaultSampler is eRepeat).
+        if (shared.volumeSamplerIndex == 0xFFFFFFFF)
+            shared.volumeSamplerIndex = bindless.descriptorSet->allocateSampler(
+                vk::Filter::eLinear, vk::SamplerMipmapMode::eLinear, vk::SamplerAddressMode::eClampToBorder,
+                VK_FALSE, 1.0f, VK_FALSE, vk::CompareOp::eLessOrEqual, vk::BorderColor::eFloatTransparentBlack);
+
         auto& setLayout = bindless.descriptorSet->getDescriptorSetLayout();
         auto& set = bindless.descriptorSet->getDescriptorSet();
         if (rasterPipelineIndex == 0xFFFFFFFF)
@@ -142,9 +168,18 @@ public:
 
     void record(vk::raii::CommandBuffer& cmd, uint32_t imageIndex) override {
         (void)imageIndex;
-        // Skipping is safe: the volume keeps its last contents and rests in ShaderReadOnly (all
-        // transitions are paired inside this function), so the debug views still work.
-        if (!features.voxelDebug.voxelizeScene) return;
+        // On the disable edge, resolve once over zeroed scatter buffers: the volume reads black
+        // instead of feeding stale radiance to cone tracing and the debug views. After that,
+        // skipping is safe — the volume rests in ShaderReadOnly with all transitions paired here.
+        if (!features.voxelDebug.voxelizeScene) {
+            if (!volumeBlanked) {
+                clearScatterBuffers(cmd);
+                recordResolve(cmd);
+                volumeBlanked = true;
+            }
+            return;
+        }
+        volumeBlanked = false;
         tracing::startTrace("voxelization");
 
         clearScatterBuffers(cmd);
@@ -323,22 +358,8 @@ private:
     // Attachment-less rasterization. renderArea is what drives coverage — there is nothing bound to
     // write to, so the fragment shader's atomics are the only output.
     void recordRaster(vk::raii::CommandBuffer& cmd) {
-        constexpr float half = VOXEL_WORLD_EXTENT * 0.5f;
-        // Snap the grid centre to whole-voxel steps: sub-voxel camera motion no longer shifts the
-        // world→voxel mapping, which kills crawl and keeps voxel contents comparable frame-to-frame
-        // (prerequisite for skipping or caching the rebuild later).
-        glm::vec3 gridCenter = snappedGridCenter(scene.activeCamera.position);
-        // Top-down ortho defining the grid OBB; the GS re-projects each triangle along its dominant
-        // axis, so this is a coordinate frame, not the sweep direction. Up must not be parallel to
-        // the -Y view direction — (0,1,0) makes lookAt's cross product zero and NaNs the matrix.
-        glm::mat4 view = glm::lookAt(gridCenter + glm::vec3(0.0f, half, 0.0f),
-                                     gridCenter,
-                                     glm::vec3(0.0f, 0.0f, -1.0f));
-        glm::mat4 proj = glm::orthoRH_ZO(-half, half, -half, half, 0.0f, VOXEL_WORLD_EXTENT);
-        proj[1][1] *= -1.0f; // Flip Y axis for vulkan
-
         VoxelizationPushConstants pc{};
-        pc.vpm = proj * view;
+        pc.vpm = gridViewProjection(scene.activeCamera.position);
         voxelCamVPM = pc.vpm;
         voxelCamInvVPM = glm::inverse(pc.vpm);
         pc.vertexBufferAddress   = bindless.descriptorSet->getVariableBuffers()[shared.vertexBufferIndex]->address;

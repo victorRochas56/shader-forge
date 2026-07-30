@@ -735,11 +735,14 @@ struct LitPassData {
     uint32_t shadowSamplerIndex;
     uint32_t shadowAtlasIndex;
     glm::vec3 cameraPosition;
-    uint32_t padding1;
+    uint32_t voxelTextureIndex;
     glm::vec3 cameraForward;
-    uint32_t padding2;
+    uint32_t voxelSamplerIndex;
     glm::mat4 viewProjection;
     glm::mat4 prevViewProjection;
+    glm::mat4 voxelViewProjection; // world -> voxel grid clip (VoxelizationPass::gridViewProjection)
+    uint32_t voxelResolution;
+    float voxelWorldExtent;
 };
 
 // matches VkDrawIndexedIndirectCommand)

@@ -167,15 +167,17 @@ FragmentOutput fragMain(VertexOutput input)
         Lo += (1.0 - shadow) * (kD * albedo.rgb / 3.14159265 + specular) * radiance * NdotL;
     }
 
-    float3 GI = coneTraceVXGI(/*voxel3DTextureIndex*/ 0);
+    float3 GI = coneTraceVXGI(pc.litPassData.voxelTextureIndex, pc.litPassData.voxelSamplerIndex,
+                              pc.litPassData.voxelViewProjection, pc.litPassData.voxelResolution,
+                              pc.litPassData.voxelWorldExtent, input.worldPos, input.normal);
 
     float3 kS = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0, roughness.r);
     float3 kD = float3(1.0) - kS;
     kD *= 1.0 - metallic.r;
 
     float ao = 1.0;
-    float3 ambient = (kD * diffuseIBL) * ao;
-    float3 color = ambient + Lo;
+    float3 ambient = 0.0; //(kD * diffuseIBL) * ao;
+    float3 color = ambient + Lo + GI * kD * albedo.rgb;
 
     output.color = float4(color, 1.0);
     output.roughness_metal = float4(roughness.r, metallic.r, 0.0, 1.0);

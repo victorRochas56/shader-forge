@@ -163,8 +163,7 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
                                                          vk::CompareOp::eLessOrEqual, vk::BorderColor::eFloatOpaqueBlack);
     passResources.depthSamplerIndex = bindless.descriptorSet->allocateSampler(vk::Filter::eNearest, vk::SamplerMipmapMode::eNearest, vk::SamplerAddressMode::eClampToEdge, VK_FALSE, 16.0, VK_FALSE,
                                                        vk::CompareOp::eLessOrEqual, vk::BorderColor::eFloatOpaqueBlack);
-    passResources.volumeSamplerIndex = bindless.descriptorSet->allocateSampler(vk::Filter::eLinear, vk::SamplerMipmapMode::eLinear, vk::SamplerAddressMode::eClampToEdge, VK_FALSE, 1.0f, VK_FALSE,
-                                                       vk::CompareOp::eLessOrEqual, vk::BorderColor::eFloatOpaqueBlack);
+    // volumeSamplerIndex is allocated by VoxelizationPass::init (border-black, for cone tracing).
     shadowSamplerIndex = bindless.descriptorSet->allocateSampler(vk::Filter::eNearest,
                                                         vk::SamplerMipmapMode::eNearest,
                                                         vk::SamplerAddressMode::eClampToBorder,
@@ -301,9 +300,14 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
                                                                            .shadowSamplerIndex = shadowSamplerIndex,
                                                                            .shadowAtlasIndex = scene.shadowAtlas.textureIndex,
                                                                            .cameraPosition = scene.activeCamera.position,
+                                                                           .voxelTextureIndex = static_cast<VoxelizationPass*>(passes.at(PassId::VOXELIZATION).get())->getVolumeTextureIndex(),
                                                                            .cameraForward = glm::vec3(1, 0, 0),
+                                                                           .voxelSamplerIndex = passResources.volumeSamplerIndex,
                                                                            .viewProjection = scene.activeCamera.viewProjection,
-                                                                           .prevViewProjection = scene.activeCamera.viewProjection});
+                                                                           .prevViewProjection = scene.activeCamera.viewProjection,
+                                                                           .voxelViewProjection = VoxelizationPass::gridViewProjection(scene.activeCamera.position),
+                                                                           .voxelResolution = VoxelizationPass::VOXEL_RESOLUTION,
+                                                                           .voxelWorldExtent = VoxelizationPass::VOXEL_WORLD_EXTENT});
 }
 
 /////=================================================DRAW FRAME=================================================/////
@@ -979,9 +983,14 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
         .shadowSamplerIndex = shadowSamplerIndex,
         .shadowAtlasIndex = scene.shadowAtlas.textureIndex,
         .cameraPosition = scene.activeCamera.position,
+        .voxelTextureIndex = static_cast<VoxelizationPass*>(passes.at(PassId::VOXELIZATION).get())->getVolumeTextureIndex(),
         .cameraForward = cameraForward,
+        .voxelSamplerIndex = passResources.volumeSamplerIndex,
         .viewProjection = scene.activeCamera.viewProjection,
-        .prevViewProjection = scene.activeCamera.prevViewProjection
+        .prevViewProjection = scene.activeCamera.prevViewProjection,
+        .voxelViewProjection = VoxelizationPass::gridViewProjection(scene.activeCamera.position),
+        .voxelResolution = VoxelizationPass::VOXEL_RESOLUTION,
+        .voxelWorldExtent = VoxelizationPass::VOXEL_WORLD_EXTENT
     };
     bindless.descriptorSet->updateFixedBufferWithOffset<LitPassData>(litPassDataBufferIndex,0,litPassData,gpu.currentFrame);
 

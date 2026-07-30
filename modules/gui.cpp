@@ -507,7 +507,7 @@ void showToggles(RenderFeatures& f){
         ImGui::Combo("Debug View", &f.volumetrics.debugView, dbgItems, IM_ARRAYSIZE(dbgItems));
     }
     ImGui::Checkbox("Voxelize Scene", &f.voxelDebug.voxelizeScene);
-    ImGui::SetItemTooltip("Per-frame voxel build. Uncheck to bisect frame cost; debug views keep the last volume.");
+    ImGui::SetItemTooltip("Per-frame voxel build. Uncheck to bisect frame cost; the volume is cleared to black so stale data doesn't linger.");
     if(ImGui::Button("Voxel Grid")){
         f.voxelDebug.enabled = !f.voxelDebug.enabled;
     }
