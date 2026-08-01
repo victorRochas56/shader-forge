@@ -36,8 +36,13 @@
 //    is Crassin's six directional chains, which also changes the cone tracer.
 class VoxelizationPass : public RenderPass {
 public:
-    static constexpr uint32_t VOXEL_RESOLUTION  = 128;    // cubic grid side
-    static constexpr float    VOXEL_WORLD_EXTENT = 50.0f; // side of the world-space cube the grid covers
+    static constexpr uint32_t VOXEL_RESOLUTION  = 256;    // cubic grid side
+    static constexpr float    VOXEL_WORLD_EXTENT = 100.0f; // side of the world-space cube the grid covers
+    // Ambient-cube grid side, decoupled from the radiance grid: irradiance is low-frequency and the
+    // lit-shader lookup samples by UVW, so a coarser grid cuts the six volumes' memory and the gather
+    // dispatch by the cube of the ratio.
+    static constexpr uint32_t IRRADIANCE_RESOLUTION = 128;
+    static_assert(VOXEL_RESOLUTION % IRRADIANCE_RESOLUTION == 0, "gather maps irradiance voxels onto whole radiance mips");
 
     // Grid centre snapped to 8-voxel steps, keeping mips 0-3 phase-stable in world space —
     // single-voxel snapping re-groups every mip above 0 each step, which pops the cone-traced GI.
@@ -79,6 +84,12 @@ private:
     std::vector<vk::raii::ImageView> volumeMipViews; // owns the views the storage slots point at
     uint32_t volumeMipLevels = 0;
 
+    // Ambient-cube irradiance volumes (VOXEL_FACE_DIRS order: +X,-X,+Y,-Y,+Z,-Z). Written by the
+    // gather pass, sampled by the lit shader in giMode 1. Single mip — the lookup never cone-widens.
+    std::array<uint32_t, 6> irradianceTextureIndices{0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF};
+    std::array<uint32_t, 6> irradianceStorageIndices{};
+    uint32_t gatherPipelineIndex = 0xFFFFFFFF;
+
     bool volumeBlanked = false; // volume zeroed since voxelizeScene went off
 
     uint32_t rasterPipelineIndex     = 0xFFFFFFFF;
@@ -107,6 +118,19 @@ public:
 
     uint32_t getVolumeTextureIndex() const { return voxelVolumeTextureIndex; }
     uint32_t getVolumeMipLevels() const { return volumeMipLevels; }
+    std::array<uint32_t, 6> getIrradianceTextureIndices() const { return irradianceTextureIndices; }
+
+    // Debug views: selected volume (0 = radiance, 1..6 = irradiance face) and its mip cap.
+    uint32_t debugVolumeTexIndex() const {
+        int sel = features.voxelDebug.volumeSelect;
+        return sel == 0 ? voxelVolumeTextureIndex : irradianceTextureIndices[sel - 1];
+    }
+    uint32_t debugVolumeMaxMip() const {
+        return features.voxelDebug.volumeSelect == 0 ? volumeMipLevels - 1 : 0; // faces are single-mip
+    }
+    uint32_t debugVolumeResolution() const {
+        return features.voxelDebug.volumeSelect == 0 ? VOXEL_RESOLUTION : IRRADIANCE_RESOLUTION;
+    }
 
     void init(uint32_t width, uint32_t height) override {
         (void)width;
@@ -134,6 +158,7 @@ public:
         }
 
         if (voxelVolumeTextureIndex == 0xFFFFFFFF) createVolume();
+        if (irradianceTextureIndices[0] == 0xFFFFFFFF) createIrradianceVolumes();
 
         // Trilinear for the cone-widening mips; border-black so cones leaving the grid read zero
         // radiance/opacity instead of smearing the edge voxel or wrapping (defaultSampler is eRepeat).
@@ -152,6 +177,8 @@ public:
             resolvePipelineIndex = bindless.pipelineManager->createComputePipeline<VoxelResolvePushConstants>("shaders/voxel_resolve.spv", setLayout, set, "resolveMain");
         if (downsamplePipelineIndex == 0xFFFFFFFF)
             downsamplePipelineIndex = bindless.pipelineManager->createComputePipeline<VoxelResolvePushConstants>("shaders/voxel_resolve.spv", setLayout, set, "downsampleMain");
+        if (gatherPipelineIndex == 0xFFFFFFFF)
+            gatherPipelineIndex = bindless.pipelineManager->createComputePipeline<VoxelGatherPushConstants>("shaders/voxel_gather.spv", setLayout, set, "gatherMain");
         // Overlay onto the HDR composite, so it sits alongside the other post passes.
         if (debugPipelineIndex == 0xFFFFFFFF)
             debugPipelineIndex = bindless.pipelineManager->createPipeline<VoxelDebugPushConstants>(
@@ -176,6 +203,7 @@ public:
             if (!volumeBlanked) {
                 clearScatterBuffers(cmd);
                 recordResolve(cmd);
+                recordGather(cmd); // gathers off the blank volume, so the faces zero too
                 volumeBlanked = true;
             }
             return;
@@ -186,6 +214,9 @@ public:
         clearScatterBuffers(cmd);
         recordRaster(cmd);
         recordResolve(cmd);
+        // Also gather when a debug view is inspecting a face, so it never shows stale data.
+        if (features.vxgi.mode == 1 || (features.voxelDebug.enabled && features.voxelDebug.volumeSelect > 0))
+            recordGather(cmd);
 
         tracing::endTrace("voxelization");
     }
@@ -218,12 +249,12 @@ public:
             VoxelDebugPushConstants{
                 .camNdcToGrid      = camNdcToGrid,
                 .cameraPosGrid     = cameraPosGrid,
-                .mipLevel          = std::min(features.voxelDebug.mipLevel, volumeMipLevels - 1),
-                .volumeTexIndex    = voxelVolumeTextureIndex,
+                .mipLevel          = std::min(features.voxelDebug.mipLevel, debugVolumeMaxMip()),
+                .volumeTexIndex    = debugVolumeTexIndex(),
                 .samplerIndex      = shared.volumeSamplerIndex, // clamped; defaultSampler's eRepeat wraps the grid
                 .depthTexIndex     = gpu.getSwapchain().getDepthResolveIndex(),
                 .depthSamplerIndex = shared.depthSamplerIndex,
-                .resolution        = VOXEL_RESOLUTION,
+                .resolution        = debugVolumeResolution(),
                 .mode              = static_cast<uint32_t>(features.voxelDebug.mode),
                 .maxSteps          = features.voxelDebug.maxSteps,
                 .alphaScale        = features.voxelDebug.alphaScale,
@@ -243,14 +274,14 @@ private:
     void recordCubes(vk::raii::CommandBuffer& cmd) {
         tracing::startTrace("voxel debug cubes");
 
-        uint32_t mip = std::min(features.voxelDebug.mipLevel, volumeMipLevels - 1);
+        uint32_t mip = std::min(features.voxelDebug.mipLevel, debugVolumeMaxMip());
         VoxelCubePushConstants pc{
             .gridToClip            = scene.activeCamera.viewProjection * voxelCamInvVPM,
             .instanceBufferAddress = bindless.descriptorSet->getVariableBuffers()[cubeInstanceBufferIndex]->address,
             .indirectBufferAddress = bindless.descriptorSet->getVariableBuffers()[cubeIndirectBufferIndex]->address,
-            .volumeTexIndex        = voxelVolumeTextureIndex,
+            .volumeTexIndex        = debugVolumeTexIndex(),
             .mipLevel              = mip,
-            .mipRes                = std::max(1u, VOXEL_RESOLUTION >> mip),
+            .mipRes                = std::max(1u, debugVolumeResolution() >> mip),
             .threshold             = features.voxelDebug.cubeThreshold,
         };
 
@@ -341,6 +372,26 @@ private:
             volumeMipStorageIndices.push_back(bindless.descriptorSet->allocateStorageImage(*view));
     }
 
+    // Six single-mip volumes for the ambient-cube gather. One view serves both slots:
+    // allocateStorageImage captures the handle before the raii view moves into the texture slot.
+    void createIrradianceVolumes() {
+        static constexpr const char* faceNames[6] = {"px", "nx", "py", "ny", "pz", "nz"};
+        for (uint32_t f = 0; f < 6; f++) {
+            vk::raii::Image image = nullptr;
+            vk::raii::DeviceMemory memory = nullptr;
+            resource::create3DImage(*bindless.resourceCtx, IRRADIANCE_RESOLUTION, IRRADIANCE_RESOLUTION, IRRADIANCE_RESOLUTION, 1,
+                                    vk::SampleCountFlagBits::e1, VOXEL_VOLUME_FORMAT, vk::ImageTiling::eOptimal,
+                                    vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled,
+                                    vk::MemoryPropertyFlagBits::eDeviceLocal, image, memory, 1);
+            auto view = resource::create3DImageView(*bindless.resourceCtx, image, VOXEL_VOLUME_FORMAT, vk::ImageAspectFlagBits::eColor, 0, 1);
+            // Resting layout is sampled; recordGather transitions to eGeneral to write.
+            resource::transitionImageLayout(*bindless.resourceCtx, nullptr, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal, 0, 1);
+            irradianceStorageIndices[f] = bindless.descriptorSet->allocateStorageImage(*view);
+            irradianceTextureIndices[f] = bindless.descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(view),
+                std::string("internal/voxel_irradiance_") + faceNames[f], false, IRRADIANCE_RESOLUTION, IRRADIANCE_RESOLUTION);
+        }
+    }
+
     // Zero both scatter buffers, then make the fill visible to the fragment shader's atomics.
     void clearScatterBuffers(vk::raii::CommandBuffer& cmd) {
         // The previous frame's raster atomics and resolve reads must finish before this frame's clear
@@ -371,6 +422,8 @@ private:
         pc.shadowAtlasIndex      = scene.shadowAtlas.textureIndex;
         pc.samplerIndex          = shared.defaultSamplerIndex;
         pc.voxelResolution       = VOXEL_RESOLUTION;
+        pc.skyEnvMapIndex        = scene.getSkyBox();
+        pc.skyInjection          = features.skyboxIntensity * features.vxgi.skyStrength;
 
         vk::Extent2D gridExtent{VOXEL_RESOLUTION, VOXEL_RESOLUTION};
         vk::RenderingInfo renderingInfo = {.renderArea = {.offset = {0, 0}, .extent = gridExtent},
@@ -460,5 +513,49 @@ private:
         resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *volumeTex.image,
                                         vk::ImageLayout::eGeneral, vk::ImageLayout::eShaderReadOnlyOptimal, 0, volumeMipLevels);
         tracing::endTrace("voxel resolve");
+    }
+
+    // Ambient-cube gather: six axis cone traces per occupied voxel into the per-face irradiance
+    // volumes. Reads the radiance volume through its sampled slot — recordResolve's final transition
+    // already ordered and flushed those writes — and writes through the storage slots, so only the
+    // face volumes flip to eGeneral around the dispatch.
+    void recordGather(vk::raii::CommandBuffer& cmd) {
+        tracing::startTrace("voxel gather");
+        for (uint32_t idx : irradianceTextureIndices)
+            resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *bindless.descriptorSet->getTextureResource(idx).image,
+                                            vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eGeneral);
+
+        // Recomputed rather than read from voxelCamVPM — deterministic per frame, and the blank path
+        // runs without recordRaster having filled the members.
+        glm::mat4 vpm = gridViewProjection(scene.activeCamera.position);
+        VoxelGatherPushConstants pc{
+            .worldToGridClip      = vpm,
+            .gridClipToWorld      = glm::inverse(vpm),
+            .radianceTextureIndex = voxelVolumeTextureIndex,
+            .samplerIndex         = shared.volumeSamplerIndex,
+            .radianceResolution   = VOXEL_RESOLUTION,
+            .irradianceResolution = IRRADIANCE_RESOLUTION,
+            .worldExtent          = VOXEL_WORLD_EXTENT,
+            .faceStorageIndices   = irradianceStorageIndices,
+            .sideCones            = static_cast<uint32_t>(features.vxgi.gatherSideCones),
+            .maxSteps             = static_cast<uint32_t>(features.vxgi.gatherSteps),
+            .fetchBatch           = static_cast<uint32_t>(features.vxgi.gatherFetchBatch),
+            .skyEnvMapIndex       = scene.getSkyBox(),
+            .skyIntensity         = features.skyboxIntensity * features.vxgi.skyStrength,
+        };
+        auto& pipe = static_cast<ComputePipeline<VoxelGatherPushConstants>&>(*bindless.pipelineManager->getComputePipelines()[gatherPipelineIndex]);
+        pipe.pushConstantData = pc;
+        cmd.bindPipeline(vk::PipelineBindPoint::eCompute, pipe.pipeline);
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, pipe.layout, 0, {**pipe.descriptorSet}, {});
+        pipe.pushConstants(cmd);
+        constexpr uint32_t WG = 4; // [numthreads(4,4,4)]
+        uint32_t groups = (IRRADIANCE_RESOLUTION + WG - 1) / WG;
+        cmd.dispatch(groups, groups, groups);
+
+        // Back to sampled; also makes the gather writes visible to the lit pass.
+        for (uint32_t idx : irradianceTextureIndices)
+            resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *bindless.descriptorSet->getTextureResource(idx).image,
+                                            vk::ImageLayout::eGeneral, vk::ImageLayout::eShaderReadOnlyOptimal);
+        tracing::endTrace("voxel gather");
     }
 };

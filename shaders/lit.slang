@@ -167,11 +167,19 @@ FragmentOutput fragMain(VertexOutput input)
         Lo += (1.0 - shadow) * (kD * albedo.rgb / 3.14159265 + specular) * radiance * NdotL;
     }
 
-    float3 GI = coneTraceVXGI(pc.litPassData.voxelTextureIndex, pc.litPassData.voxelSamplerIndex,
-                              pc.litPassData.voxelViewProjection, pc.litPassData.voxelResolution,
-                              pc.litPassData.voxelWorldExtent, input.worldPos, input.normal,
-                              pc.litPassData.giHemisphereRays, pc.litPassData.giMaxSteps,
-                              pc.litPassData.giFetchBatch);
+    float3 GI;
+    if (pc.litPassData.giMode == 1) {
+        GI = sampleAmbientCubeGI(pc.litPassData.giIrradianceIndices, pc.litPassData.voxelSamplerIndex,
+                                 pc.litPassData.voxelViewProjection, pc.litPassData.voxelResolution,
+                                 pc.litPassData.voxelWorldExtent, input.worldPos, input.normal);
+    } else {
+        GI = coneTraceVXGI(pc.litPassData.voxelTextureIndex, pc.litPassData.voxelSamplerIndex,
+                           pc.litPassData.voxelViewProjection, pc.litPassData.voxelResolution,
+                           pc.litPassData.voxelWorldExtent, input.worldPos, input.normal,
+                           pc.litPassData.giHemisphereRays, pc.litPassData.giMaxSteps,
+                           pc.litPassData.giFetchBatch, inst.environmentMapIndex, pc.litPassData.giSkyIntensity);
+    }
+    GI *= pc.litPassData.giStrength;
 
     float3 kS = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0, roughness.r);
     float3 kD = float3(1.0) - kS;

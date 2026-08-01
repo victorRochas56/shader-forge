@@ -54,6 +54,10 @@ struct LitPass {
     uint giHemisphereRays; // side cones at 60° (0..5); the normal cone always runs
     uint giMaxSteps;       // taps per cone
     uint giFetchBatch;     // taps issued per batch
+    uint giMode;           // 0 = per-pixel cone trace, 1 = ambient-cube lookup
+    uint giIrradianceIndices[6]; // per-face irradiance volumes, VOXEL_FACE_DIRS order
+    float giStrength;
+    float giSkyIntensity;  // cone-miss sky radiance scale (skyboxIntensity * vxgi.skyStrength)
 };
 
 struct Cascade {

@@ -515,6 +515,9 @@ void showToggles(RenderFeatures& f){
         // Mip Level walks the chain the resolve pass builds — stepping up should blur the grid
         // coherently, not fade it toward black.
         ImGui::Checkbox("Draw Cubes", &f.voxelDebug.drawCubes);
+        const char* volItems[] = {"Radiance", "Irradiance +X", "Irradiance -X", "Irradiance +Y", "Irradiance -Y", "Irradiance +Z", "Irradiance -Z"};
+        ImGui::Combo("Volume", &f.voxelDebug.volumeSelect, volItems, IM_ARRAYSIZE(volItems));
+        ImGui::SetItemTooltip("Radiance volume, or one ambient-cube irradiance face (single mip).");
         int voxMip = static_cast<int>(f.voxelDebug.mipLevel);
         if(ImGui::SliderInt("Voxel Mip", &voxMip, 0, 7)){
             f.voxelDebug.mipLevel = static_cast<uint32_t>(voxMip);
@@ -537,16 +540,36 @@ void showToggles(RenderFeatures& f){
         }
     }
     ImGui::SeparatorText("VXGI");
-    ImGui::SliderInt("GI Side Cones", &f.vxgi.hemisphereRays, 0, 5);
-    ImGui::SetItemTooltip("60° side cones per pixel; the normal cone always runs. Weights renormalize.");
-    ImGui::SliderInt("GI Steps", &f.vxgi.maxSteps, 1, 64);
-    ImGui::SetItemTooltip("Taps per cone. Rounds down to a multiple of the fetch batch.");
-    ImGui::SliderInt("GI Fetch Batch", &f.vxgi.fetchBatch, 1, 8);
-    ImGui::SetItemTooltip("Texture fetches kept in flight per loop iteration.");
+    const char* giModes[] = {"Per-pixel cone trace", "Ambient cube lookup"};
+    ImGui::Combo("GI Mode", &f.vxgi.mode, giModes, IM_ARRAYSIZE(giModes));
+    ImGui::SetItemTooltip("Cone trace per pixel, or sample the per-voxel 6-face irradiance volumes.");
+    ImGui::SliderFloat("GI Strength", &f.vxgi.strength, 0.0f, 4.0f);
+    ImGui::SetItemTooltip("Scales the GI term in both modes. 1 = untouched; 0 kills GI for A/B against direct-only.");
+    ImGui::SliderFloat("GI Sky Strength", &f.vxgi.skyStrength, 0.0f, 2.0f);
+    ImGui::SetItemTooltip("Sky as seen by GI, relative to Skybox Intensity: cone-miss sky and the voxel sky injection. 0 = no sky in GI.");
+    if (f.vxgi.mode == 0) {
+        ImGui::SliderInt("GI Side Cones", &f.vxgi.hemisphereRays, 0, 5);
+        ImGui::SetItemTooltip("60° side cones per pixel; the normal cone always runs. Weights renormalize.");
+        ImGui::SliderInt("GI Steps", &f.vxgi.maxSteps, 1, 64);
+        ImGui::SetItemTooltip("Taps per cone. Rounds down to a multiple of the fetch batch.");
+        ImGui::SliderInt("GI Fetch Batch", &f.vxgi.fetchBatch, 1, 8);
+        ImGui::SetItemTooltip("Texture fetches kept in flight per loop iteration.");
+    } else {
+        ImGui::SliderInt("Gather Side Cones", &f.vxgi.gatherSideCones, 0, 5);
+        ImGui::SetItemTooltip("60° side cones per voxel face; the axis cone always runs.");
+        ImGui::SliderInt("Gather Steps", &f.vxgi.gatherSteps, 1, 64);
+        ImGui::SetItemTooltip("Taps per cone in the voxel-space gather. Rounds down to a multiple of the fetch batch.");
+        ImGui::SliderInt("Gather Fetch Batch", &f.vxgi.gatherFetchBatch, 1, 8);
+        ImGui::SetItemTooltip("Texture fetches kept in flight per loop iteration.");
+    }
 
     if(ImGui::Button("Show BBOXes")){
         f.showBBoxes = !f.showBBoxes;
     }
+
+    ImGui::SeparatorText("Sky");
+    ImGui::SliderFloat("Skybox Intensity", &f.skyboxIntensity, 0.0f, 20.0f);
+    ImGui::SetItemTooltip("Radiance multiplier on the skybox cubemap.");
 
     ImGui::SeparatorText("Tonemap / Exposure");
     const char* tonemapOps[] = {"Reinhard", "ACES", "None"};

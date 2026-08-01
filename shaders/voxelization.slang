@@ -24,7 +24,8 @@ struct VoxelizationPushConstants {
     uint     albedoTextureIndex;
     uint     samplerIndex;
     uint     voxelResolution;
-    uint     padding;
+    uint     skyEnvMapIndex;
+    float    skyInjection; // sky irradiance scale; 0 disables the injection
 };
 
 [[vk::push_constant]]
@@ -107,7 +108,16 @@ void fragMain(VoxelGSOut input)
     // prefiltered average is both cheaper and closer to the right answer than mip 0.
     float3 albedo = textures[voxelPc.albedoTextureIndex].SampleLevel(samplers[voxelPc.samplerIndex], input.texCoord, 2).rgb;
     
-    float3 radiance = float3(0.1,0.1,0.1);
+    // Sky injection: hemisphere-averaged sky along the normal (coarse mip ~ cosine lobe). This is
+    // what lets sky-lit surfaces re-radiate into the GI. Visibility is assumed 1 — occluded interiors
+    // over-inject; the cone trace's own occlusion only fixes this for the bounce, not the source.
+    // Replaces the old hardcoded 0.1 ambient floor.
+    float3 radiance = float3(0.0);
+    if (voxelPc.skyInjection > 0.0) {
+        uint w, h, mips;
+        cubemaps[voxelPc.skyEnvMapIndex].GetDimensions(0, w, h, mips);
+        radiance = voxelPc.skyInjection * cubemaps[voxelPc.skyEnvMapIndex].SampleLevel(samplers[voxelPc.samplerIndex], input.normal, float(mips) - 2.0).rgb;
+    }
     for(uint i = 0; i < voxelPc.lightCount; i++)
     {
         Light* currentLight = &voxelPc.lights[i];
@@ -130,7 +140,9 @@ void fragMain(VoxelGSOut input)
             
         float3 N = input.normal;
         
-        radiance += (1 - shadow) * max(dot(N,L),0.0) * currentLight.color.rgb * currentLight.intensity * attenuation * albedo.rgb / 3.14159265; 
+        // No albedo here — the resolve tints by the winning albedo once; doing it in both places
+        // squared the tint on the bounce.
+        radiance += (1 - shadow) * max(dot(N,L),0.0) * currentLight.color.rgb * currentLight.intensity * attenuation / 3.14159265;
 
     }
     InterlockedMax(voxelPc.voxelAlbedo[idx],   packVoxel(albedo));

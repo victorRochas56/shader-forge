@@ -66,7 +66,7 @@ struct LinePushConstants {
 struct SkyBoxPushConstants {
     uint32_t skyboxIndex;
     float blur;
-    uint32_t padding2;
+    float intensity; // radiance multiplier on the cubemap sample
     uint32_t padding3;
     glm::mat4 invViewProjMatrix;
 };
@@ -88,7 +88,8 @@ struct VoxelizationPushConstants {
     uint32_t  albedoTextureIndex;   // node material's albedo, bindless sampled slot
     uint32_t  samplerIndex;
     uint32_t  voxelResolution;      // cubic grid side; index = x + res*(y + res*z)
-    uint32_t  padding;
+    uint32_t  skyEnvMapIndex;
+    float     skyInjection;         // sky irradiance scale; 0 disables the injection
 };
 
 // Mirror of VoxelResolvePushConstants in shaders/voxel_resolve.slang. Shared by both entry points:
@@ -114,6 +115,7 @@ struct VoxelDebugSettings {
     bool           enabled  = false;
     bool           drawCubes = false; // cubes via voxel_cubes.slang instead of the fullscreen ray march
     VoxelDebugMode mode     = VoxelDebugMode::Radiance; // ray-march only; cubes always show radiance
+    int            volumeSelect = 0;  // 0 = radiance volume, 1..6 = irradiance face (+X,-X,+Y,-Y,+Z,-Z)
     uint32_t       mipLevel = 0;      // which level of the chain to visualize — good for eyeballing the fold
     float          alphaScale = 1.0f; // ray-march: raise to make a sparse grid readable
     float          cubeThreshold = 0.05f; // cubes: min coverage for a voxel to get a cube
@@ -128,6 +130,32 @@ struct VXGISettings {
     int hemisphereRays = 5; // side cones at 60° (0..5); the normal cone always runs
     int maxSteps = 8;       // taps per cone
     int fetchBatch = 4;     // taps issued per batch
+    int mode = 1;           // 0 = per-pixel cone trace, 1 = ambient-cube lookup
+    float strength = 1.0f;  // scales the GI term in both modes; 1 = untouched
+    // Sky seen by GI, relative to skyboxIntensity: scales both the cone-miss sky term and the
+    // voxelization sky injection. 0 = no sky in GI.
+    float skyStrength = 1.0f;
+    // Gather-pass tuning. Runs per occupied voxel, so it can afford more steps than the per-pixel path.
+    int gatherSideCones = 5;
+    int gatherSteps = 12;
+    int gatherFetchBatch = 3;
+};
+
+// Mirror of VoxelGatherPushConstants in shaders/voxel_gather.slang.
+struct VoxelGatherPushConstants {
+    glm::mat4 worldToGridClip;
+    glm::mat4 gridClipToWorld;
+    uint32_t radianceTextureIndex;
+    uint32_t samplerIndex;
+    uint32_t radianceResolution;   // cone-trace grid: voxel size and mip cap
+    uint32_t irradianceResolution; // dispatch/storage grid; divides radianceResolution
+    float    worldExtent;
+    std::array<uint32_t, 6> faceStorageIndices; // VOXEL_FACE_DIRS order: +X,-X,+Y,-Y,+Z,-Z
+    uint32_t sideCones;
+    uint32_t maxSteps;
+    uint32_t fetchBatch;
+    uint32_t skyEnvMapIndex;
+    float    skyIntensity; // cone-miss sky radiance scale; 0 disables
 };
 
 // Mirror of VoxelCubePushConstants in shaders/voxel_cubes.slang. Shared by extractMain and the cube
@@ -240,10 +268,10 @@ struct VolumetricSettings {
 
 struct TonemapSettings {
     float ev100 = 6.0f;        // manual exposure; higher = darker (used when autoExposure off)
-    uint32_t op = 1;           // 0 = Reinhard, 1 = ACES, 2 = none (clamp)
+    uint32_t op = 0;           // 0 = Reinhard, 1 = ACES, 2 = none (clamp)
     bool autoExposure = true; // meter scene average luminance and expose automatically
     float exposureComp = 0.0f; // EV bias on auto exposure; + = brighter
-    float minEV = -1.5f;       // clamp the auto-metered EV100
+    float minEV = -1.0f;       // clamp the auto-metered EV100
     float maxEV = 3.0f;
     float adaptationSpeed = 2.5f; // eye-adaptation rate (1/s); higher = snappier
 };
@@ -261,6 +289,7 @@ struct RenderFeatures {
     TonemapSettings tonemap;
     VoxelDebugSettings voxelDebug;
     VXGISettings vxgi;
+    float skyboxIntensity = 5.0f; // radiance multiplier on the skybox draw
     bool showGizmos = true;
     bool showBBoxes = false;
 };
@@ -754,8 +783,12 @@ struct LitPassData {
     float voxelWorldExtent;
     // VXGI cone-trace tuning (VXGISettings sliders); defaults match the old compile-time values
     uint32_t giHemisphereRays = 5;
-    uint32_t giMaxSteps = 8;
-    uint32_t giFetchBatch = 4;
+    uint32_t giMaxSteps = 9;
+    uint32_t giFetchBatch = 3;
+    uint32_t giMode = 0; // 0 = per-pixel cone trace, 1 = ambient-cube lookup
+    std::array<uint32_t, 6> giIrradianceIndices{}; // per-face irradiance volumes, VOXEL_FACE_DIRS order
+    float giStrength = 1.0f;
+    float giSkyIntensity = 0.0f; // cone-miss sky radiance scale (skyboxIntensity * vxgi.skyStrength)
 };
 
 // matches VkDrawIndexedIndirectCommand)

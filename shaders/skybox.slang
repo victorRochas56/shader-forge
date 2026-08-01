@@ -2,7 +2,7 @@ struct SkyBoxConstants
 {
     uint skyboxIndex;
     float blur;
-    uint padding2;
+    float intensity;
     uint padding3;
     float4x4 invViewProjMatrix;
 
@@ -91,8 +91,7 @@ SkyboxOutput fragMain(ScreenVertex input)
     cubemaps[pc.skyboxIndex].GetDimensions(0, width, height, mipLevels);
     //float maxMipLevel = float(mipLevels - 1);
     //float lod = pc.blur * maxMipLevel;
-    // TODO make the intensity of the skybox a parameter
-    output.color = 5.0 * cubemaps[pc.skyboxIndex].Sample(samplers[0], rayDirection);
+    output.color = pc.intensity * cubemaps[pc.skyboxIndex].Sample(samplers[0], rayDirection);
     output.roughness_metal = float4(1, 0, 0, 1);
     output.worldNormal = float4(0.5, 0.5, 1.0, 1.0);
     return output;

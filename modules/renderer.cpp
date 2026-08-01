@@ -307,7 +307,8 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
                                                                            .prevViewProjection = scene.activeCamera.viewProjection,
                                                                            .voxelViewProjection = VoxelizationPass::gridViewProjection(scene.activeCamera.position),
                                                                            .voxelResolution = VoxelizationPass::VOXEL_RESOLUTION,
-                                                                           .voxelWorldExtent = VoxelizationPass::VOXEL_WORLD_EXTENT});
+                                                                           .voxelWorldExtent = VoxelizationPass::VOXEL_WORLD_EXTENT,
+                                                                           .giIrradianceIndices = static_cast<VoxelizationPass*>(passes.at(PassId::VOXELIZATION).get())->getIrradianceTextureIndices()});
 }
 
 /////=================================================DRAW FRAME=================================================/////
@@ -993,7 +994,11 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
         .voxelWorldExtent = VoxelizationPass::VOXEL_WORLD_EXTENT,
         .giHemisphereRays = static_cast<uint32_t>(features.vxgi.hemisphereRays),
         .giMaxSteps = static_cast<uint32_t>(features.vxgi.maxSteps),
-        .giFetchBatch = static_cast<uint32_t>(features.vxgi.fetchBatch)
+        .giFetchBatch = static_cast<uint32_t>(features.vxgi.fetchBatch),
+        .giMode = static_cast<uint32_t>(features.vxgi.mode),
+        .giIrradianceIndices = static_cast<VoxelizationPass*>(passes.at(PassId::VOXELIZATION).get())->getIrradianceTextureIndices(),
+        .giStrength = features.vxgi.strength,
+        .giSkyIntensity = features.skyboxIntensity * features.vxgi.skyStrength
     };
     bindless.descriptorSet->updateFixedBufferWithOffset<LitPassData>(litPassDataBufferIndex,0,litPassData,gpu.currentFrame);
 
@@ -1111,7 +1116,7 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
     // skybox
     auto& skyboxPipeline = bindless.pipelineManager->getGeoPipelines()[skyboxPipelineIndex];
     bindPipeline(cmd, *skyboxPipeline);
-    SkyBoxPushConstants skyboxConstants = {.skyboxIndex = scene.skyboxIndex, .blur = 0.5, .invViewProjMatrix = glm::inverse(scene.activeCamera.viewProjection)};
+    SkyBoxPushConstants skyboxConstants = {.skyboxIndex = scene.skyboxIndex, .blur = 0.5, .intensity = features.skyboxIntensity, .invViewProjMatrix = glm::inverse(scene.activeCamera.viewProjection)};
     cmd.pushConstants<SkyBoxPushConstants>(*skyboxPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, skyboxConstants);
     cmd.draw(3, 1, 0, 0);
 

@@ -8,6 +8,9 @@
 module voxel;
 
 [[vk::binding(0, 0)]] Texture3D<float4> textures3D[];
+// Alias of common.slang's cubemaps — same binding, module-local name to avoid a collision in
+// shaders that import both modules.
+[[vk::binding(1, 0)]] TextureCube voxelCubemaps[];
 [[vk::binding(2, 0)]] SamplerState samplers[];
 
 // Radiance is HDR, so it goes through Reinhard on the way in and the inverse on the way out. The
@@ -30,6 +33,24 @@ public float3 unpackVoxel(uint packed) {
 }
 
 public bool voxelOccupied(uint packed) { return packed != 0; }
+
+// Ambient-cube face order: +X, -X, +Y, -Y, +Z, -Z. Shared by the gather pass (trace axes) and the
+// lit-shader lookup (face picked by normal sign).
+public static const float3 VOXEL_FACE_DIRS[6] = {
+    float3( 1, 0, 0), float3(-1, 0, 0),
+    float3( 0, 1, 0), float3( 0,-1, 0),
+    float3( 0, 0, 1), float3( 0, 0,-1),
+};
+
+public float voxelLoadCoverage(uint textureIndex, uint3 coord, uint mip) {
+    return textures3D[textureIndex].Load(int4(coord, mip)).a;
+}
+
+// Voxel center in world space. Grid clip is orthographic, so w == 1 and the inverse is exact.
+public float3 voxelCenterWorld(uint3 coord, uint resolution, float4x4 gridClipToWorld) {
+    float3 uvw = (float3(coord) + 0.5) / float(resolution);
+    return mul(gridClipToWorld, float4(uvw.xy * 2.0 - 1.0, uvw.z, 1.0)).xyz;
+}
 
 public uint voxelIndex(uint3 coord, uint resolution) {
     return coord.x + resolution * (coord.y + resolution * coord.z);
@@ -73,7 +94,7 @@ static const float CONE_TAN = 0.577; // tan(30°) half-angle
 // Runtime bounds mean no [unroll]; the fetch loop still has no data dependency, so requests overlap.
 float3 traceCone(Texture3D<float4> volume, SamplerState smp, float4x4 worldToGridClip,
                  float3 origin, float3 dir, float voxelSize, float maxDist, float maxMip,
-                 uint maxSteps, uint fetchBatch) {
+                 uint maxSteps, uint fetchBatch, uint envMapIndex, float skyIntensity) {
     // Grid clip is orthographic (w == 1), so uvw is linear in dist — one affine ray, no per-step matrix mul.
     float3 uvwOrigin = worldToGridUVW(origin, worldToGridClip);
     float4 clipDir = mul(worldToGridClip, float4(dir, 0.0));
@@ -100,12 +121,21 @@ float3 traceCone(Texture3D<float4> volume, SamplerState smp, float4x4 worldToGri
         }
         dist = d;
     }
+    // Whatever transmittance survives the march sees sky: sample the env map along the cone at a
+    // coarse mip standing in for the ~60° aperture. Occluded cones (acc.a ~ 1) get nothing, so this
+    // is soft sky visibility for free. Assumes anything past maxDist is open sky.
+    if (skyIntensity > 0.0) {
+        uint w, h, mips;
+        voxelCubemaps[envMapIndex].GetDimensions(0, w, h, mips);
+        acc.rgb += (1.0 - acc.a) * skyIntensity * voxelCubemaps[envMapIndex].SampleLevel(smp, dir, float(mips) - 2.0).rgb;
+    }
     return acc.rgb;
 }
 
 public float3 coneTraceVXGI(uint voxel3DTextureIndex, uint voxelSamplerIndex, float4x4 worldToGridClip,
                             uint resolution, float worldExtent, float3 worldPos, float3 N,
-                            uint hemisphereRays, uint maxSteps, uint fetchBatch) {
+                            uint hemisphereRays, uint maxSteps, uint fetchBatch,
+                            uint envMapIndex, float skyIntensity) {
     Texture3D<float4> volume = textures3D[voxel3DTextureIndex];
     SamplerState smp = samplers[voxelSamplerIndex];
     float voxelSize = worldExtent / resolution;
@@ -126,8 +156,34 @@ public float3 coneTraceVXGI(uint voxel3DTextureIndex, uint voxelSamplerIndex, fl
     float totalWeight = 0.0;
     for (uint i = 0; i < rays + 1; i++) {
         float3 dir = normalize(T * CONE_DIRS[i].x + B * CONE_DIRS[i].y + N * CONE_DIRS[i].z);
-        gi += CONE_WEIGHTS[i] * traceCone(volume, smp, worldToGridClip, origin, dir, voxelSize, worldExtent * 0.5, maxMip, maxSteps, batch);
+        gi += CONE_WEIGHTS[i] * traceCone(volume, smp, worldToGridClip, origin, dir, voxelSize, worldExtent * 0.5, maxMip, maxSteps, batch, envMapIndex, skyIntensity);
         totalWeight += CONE_WEIGHTS[i];
     }
     return gi / totalWeight;
+}
+
+// Irradiance faces store (Reinhard(irradiance) * valid, valid) — premultiplied so hardware trilinear
+// against empty black neighbours renormalizes on the divide instead of dimming. The 0.25 floor makes
+// mostly-empty neighbourhoods fade out rather than amplify unorm8 quantization noise.
+float3 decodeIrradiance(float4 s) {
+    return voxelToneMapInv(s.rgb / max(s.a, 0.25));
+}
+
+// Ambient-cube GI lookup: three trilinear taps from the sign-matching face volumes, blended by N².
+// Sampled at the surface position, no normal offset: an offset along an axis-aligned N lands a full
+// voxel away and zeroes the valid slab's trilinear weight (black walls/floors). The surface's own
+// voxel is the right source — face selection by normal sign already separates the two sides of thin
+// geometry sharing a voxel.
+public float3 sampleAmbientCubeGI(uint faceIndices[6], uint samplerIndex, float4x4 worldToGridClip,
+                                  uint resolution, float worldExtent, float3 worldPos, float3 N) {
+    SamplerState smp = samplers[samplerIndex];
+    N = normalize(N);
+    float3 uvw = worldToGridUVW(worldPos, worldToGridClip);
+    float3 w = N * N; // face weights, sum to 1
+    uint fx = N.x < 0.0 ? 1 : 0;
+    uint fy = N.y < 0.0 ? 3 : 2;
+    uint fz = N.z < 0.0 ? 5 : 4;
+    return w.x * decodeIrradiance(textures3D[faceIndices[fx]].SampleLevel(smp, uvw, 0))
+         + w.y * decodeIrradiance(textures3D[faceIndices[fy]].SampleLevel(smp, uvw, 0))
+         + w.z * decodeIrradiance(textures3D[faceIndices[fz]].SampleLevel(smp, uvw, 0));
 }
