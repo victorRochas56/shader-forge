@@ -1,4 +1,4 @@
-// Voxel grid visualizer. Fullscreen ray-march of the RGBA16F volume the voxelization pass builds,
+// Voxel grid visualizer. Fullscreen ray-march of the RGBA8 volume the voxelization pass builds,
 // alpha-blended over the HDR composite so it reads as an overlay on the real scene.
 //
 // The grid is oriented along the camera's look direction at voxelization time, so it is an OBB in
@@ -9,6 +9,8 @@
 //
 // The far end of the ray is the scene surface (reconstructed from the depth buffer), which gives
 // depth occlusion for free — voxels behind geometry don't draw over it.
+
+import modules.voxel;
 
 // Keep in sync with VoxelDebugMode in structs.hpp and the GUI combo.
 static const uint VOXDBG_RADIANCE  = 0; // stored radiance, alpha-composited
@@ -113,6 +115,7 @@ float4 fragMain(VSOutput input) : SV_Target {
 
         float3 uvw = origin + dir * t;
         float4 s = textures3D[vdpc.volumeTexIndex].SampleLevel(samp, uvw, float(vdpc.mipLevel));
+        s.rgb = voxelToneMapInv(s.rgb); // back to linear HDR — the overlay blends into the HDR composite
 
         float alpha = saturate(s.a * vdpc.alphaScale);
         if (alpha <= 0.001) continue;

@@ -990,7 +990,10 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
         .prevViewProjection = scene.activeCamera.prevViewProjection,
         .voxelViewProjection = VoxelizationPass::gridViewProjection(scene.activeCamera.position),
         .voxelResolution = VoxelizationPass::VOXEL_RESOLUTION,
-        .voxelWorldExtent = VoxelizationPass::VOXEL_WORLD_EXTENT
+        .voxelWorldExtent = VoxelizationPass::VOXEL_WORLD_EXTENT,
+        .giHemisphereRays = static_cast<uint32_t>(features.vxgi.hemisphereRays),
+        .giMaxSteps = static_cast<uint32_t>(features.vxgi.maxSteps),
+        .giFetchBatch = static_cast<uint32_t>(features.vxgi.fetchBatch)
     };
     bindless.descriptorSet->updateFixedBufferWithOffset<LitPassData>(litPassDataBufferIndex,0,litPassData,gpu.currentFrame);
 

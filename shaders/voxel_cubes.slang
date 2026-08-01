@@ -43,7 +43,7 @@ void extractMain(uint3 id : SV_DispatchThreadID) {
     uint slot;
     InterlockedAdd(cpc.drawArgs[0].instanceCount, 1, slot);
 
-    float3 c = saturate(s.rgb / (1.0 + s.rgb)); // Reinhard — the volume is HDR radiance
+    float3 c = saturate(s.rgb); // the volume already stores Reinhard-compressed radiance
     cpc.instances[slot].coord = id.x | (id.y << 10) | (id.z << 20);
     cpc.instances[slot].color = (uint)(c.r * 255.0 + 0.5) | ((uint)(c.g * 255.0 + 0.5) << 8) | ((uint)(c.b * 255.0 + 0.5) << 16);
 }

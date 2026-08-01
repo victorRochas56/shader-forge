@@ -10,7 +10,8 @@
 #endif
 
 
-// Voxelizes the scene into a filterable RGBA16F volume for cone tracing, in three stages:
+// Voxelizes the scene into a filterable RGBA8 volume (Reinhard-compressed radiance, coverage) for
+// cone tracing, in three stages:
 //
 //   [raster scatter] -> [resolve to mip 0] -> [downsample mip chain]
 //
@@ -63,7 +64,7 @@ public:
     }
 
 private:
-    static constexpr vk::Format VOXEL_VOLUME_FORMAT = vk::Format::eR16G16B16A16Sfloat;
+    static constexpr vk::Format VOXEL_VOLUME_FORMAT = vk::Format::eR8G8B8A8Unorm;
 
     // Scatter targets. Two uint per voxel, cleared every frame — 8 MB each at 128^3, and the same
     // again in clear bandwidth per frame. 256^3 is 8x both.

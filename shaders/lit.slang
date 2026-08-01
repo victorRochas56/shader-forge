@@ -169,7 +169,9 @@ FragmentOutput fragMain(VertexOutput input)
 
     float3 GI = coneTraceVXGI(pc.litPassData.voxelTextureIndex, pc.litPassData.voxelSamplerIndex,
                               pc.litPassData.voxelViewProjection, pc.litPassData.voxelResolution,
-                              pc.litPassData.voxelWorldExtent, input.worldPos, input.normal);
+                              pc.litPassData.voxelWorldExtent, input.worldPos, input.normal,
+                              pc.litPassData.giHemisphereRays, pc.litPassData.giMaxSteps,
+                              pc.litPassData.giFetchBatch);
 
     float3 kS = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0, roughness.r);
     float3 kD = float3(1.0) - kS;

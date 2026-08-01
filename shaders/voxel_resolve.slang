@@ -1,6 +1,8 @@
-// Voxel volume resolve. resolveMain unpacks the two atomic scatter buffers into mip 0 of the RGBA16F
+// Voxel volume resolve. resolveMain unpacks the two atomic scatter buffers into mip 0 of the RGBA8
 // volume; downsampleMain folds one level into the next. Both write through single-mip storage slots,
 // so the read and write subresources are always disjoint and the whole chain can stay in eGeneral.
+// The volume is unorm, so radiance lives in it Reinhard-compressed; readers decode per tap. The fold
+// (and the sampler's trilinear) averages compressed values — slightly dim on bright voxels, fine for GI.
 //
 // The fold is opacity-weighted, not a box filter: a plain average of a 2x2x2 neighbourhood pulls
 // empty voxels into occupied ones and the chain fades to black as you climb it.
@@ -38,8 +40,9 @@ void resolveMain(uint3 id : SV_DispatchThreadID) {
 
     float3 albedo   = unpackVoxel(packedAlbedo);
     float3 radiance = voxelToneMapInv(unpackVoxel(packedRadiance));
-    // Albedo modulates the stored radiance so a single bounce off this voxel is already tinted.
-    storageImages3D[vpc.dstStorageIndex][int3(id)] = float4(radiance * albedo, 1.0);
+    // Albedo modulates the radiance so a single bounce off this voxel is already tinted. Modulate in
+    // linear, then back through Reinhard for the unorm volume.
+    storageImages3D[vpc.dstStorageIndex][int3(id)] = float4(voxelToneMap(radiance * albedo), 1.0);
 }
 
 [NumThreads(4, 4, 4)]

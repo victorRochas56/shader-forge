@@ -536,6 +536,14 @@ void showToggles(RenderFeatures& f){
             }
         }
     }
+    ImGui::SeparatorText("VXGI");
+    ImGui::SliderInt("GI Side Cones", &f.vxgi.hemisphereRays, 0, 5);
+    ImGui::SetItemTooltip("60° side cones per pixel; the normal cone always runs. Weights renormalize.");
+    ImGui::SliderInt("GI Steps", &f.vxgi.maxSteps, 1, 64);
+    ImGui::SetItemTooltip("Taps per cone. Rounds down to a multiple of the fetch batch.");
+    ImGui::SliderInt("GI Fetch Batch", &f.vxgi.fetchBatch, 1, 8);
+    ImGui::SetItemTooltip("Texture fetches kept in flight per loop iteration.");
+
     if(ImGui::Button("Show BBOXes")){
         f.showBBoxes = !f.showBBoxes;
     }

@@ -122,6 +122,14 @@ struct VoxelDebugSettings {
     uint32_t       maxSteps = 256;
 };
 
+// Runtime VXGI cone-trace tuning, copied into LitPassData each frame. Ints for ImGui sliders;
+// caps live in shaders/modules/voxel.slang (MAX_HEMISPHERE_RAYS, MAX_FETCH_BATCH).
+struct VXGISettings {
+    int hemisphereRays = 5; // side cones at 60° (0..5); the normal cone always runs
+    int maxSteps = 8;       // taps per cone
+    int fetchBatch = 4;     // taps issued per batch
+};
+
 // Mirror of VoxelCubePushConstants in shaders/voxel_cubes.slang. Shared by extractMain and the cube
 // draw — one struct because two push-constant blocks in one module would collide.
 struct VoxelCubePushConstants {
@@ -252,6 +260,7 @@ struct RenderFeatures {
     VolumetricSettings volumetrics;
     TonemapSettings tonemap;
     VoxelDebugSettings voxelDebug;
+    VXGISettings vxgi;
     bool showGizmos = true;
     bool showBBoxes = false;
 };
@@ -743,6 +752,10 @@ struct LitPassData {
     glm::mat4 voxelViewProjection; // world -> voxel grid clip (VoxelizationPass::gridViewProjection)
     uint32_t voxelResolution;
     float voxelWorldExtent;
+    // VXGI cone-trace tuning (VXGISettings sliders); defaults match the old compile-time values
+    uint32_t giHemisphereRays = 5;
+    uint32_t giMaxSteps = 8;
+    uint32_t giFetchBatch = 4;
 };
 
 // matches VkDrawIndexedIndirectCommand)

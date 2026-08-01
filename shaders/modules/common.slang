@@ -50,6 +50,10 @@ struct LitPass {
     float4x4 voxelViewProjection; // world -> voxel grid clip
     uint voxelResolution;
     float voxelWorldExtent;
+    // VXGI cone-trace tuning (GUI sliders)
+    uint giHemisphereRays; // side cones at 60° (0..5); the normal cone always runs
+    uint giMaxSteps;       // taps per cone
+    uint giFetchBatch;     // taps issued per batch
 };
 
 struct Cascade {
