@@ -31,7 +31,6 @@ float4 fragMain(VSOutput input) : SV_Target {
     float2 uv = input.texCoord;
 
     float4 current = textures[pc.currentSSRIndex].Sample(samplers[pc.samplerIndex], uv);
-
     // No valid history: use current frame directly
     if (pc.historyValid == 0)
         return current;

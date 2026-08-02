@@ -134,7 +134,7 @@ struct VXGISettings {
     float strength = 1.0f;  // scales the GI term in both modes; 1 = untouched
     // Sky seen by GI, relative to skyboxIntensity: scales both the cone-miss sky term and the
     // voxelization sky injection. 0 = no sky in GI.
-    float skyStrength = 1.0f;
+    float skyStrength = 0.025f;
     // Gather-pass tuning. Runs per occupied voxel, so it can afford more steps than the per-pixel path.
     int gatherSideCones = 5;
     int gatherSteps = 12;

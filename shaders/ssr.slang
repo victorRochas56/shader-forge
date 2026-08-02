@@ -75,6 +75,9 @@ float3 intersectCellBoundary(float3 o, float3 d, float2 cellIndex, float2 cellCo
     float2 cellSize = 1.0 / cellCount;
     float2 nextBoundary = (cellIndex + crossStep + crossOffset) * cellSize;
     float2 t = (nextBoundary - o.xy) / d.xy;
+    // Axis-aligned rays: ignore the parallel axis (division gave ±inf)
+    t.x = d.x != 0.0 ? t.x : -1e30;
+    t.y = d.y != 0.0 ? t.y : -1e30;
     // Reverse-Z: the ray marches with DECREASING depth (t), so the first boundary crossed is the
     // largest t below the current position -> max, not min.
     float tMin = max(t.x, t.y);
@@ -84,13 +87,14 @@ float3 intersectCellBoundary(float3 o, float3 d, float2 cellIndex, float2 cellCo
 // Get the cell count at a given mip level.
 // Mip dimensions floor at each level (w >> level), so floor here to match
 // the actual Hi-Z texel grid instead of assuming exact power-of-two division.
-float2 getCellCount(float level, float rootLevel) {
-    return floor(float2(SSRpc.passData.resolution) / exp2(level));
+float2 getCellCount(float level) {
+    // clamp at 1 like mip dims do, so cellSize never divides by zero
+    return max(floor(float2(SSRpc.passData.resolution) / exp2(level)), 1.0);
 }
 
 // Sample the nearest depth plane from the Hi-Z buffer at a given mip level.
 // Reverse-Z: Hi-Z stores raw reverse depth max-reduced, so nearest occluder = maximum.
-float getNearestDepthPlane(float2 ray, float level, float rootLevel) {
+float getNearestDepthPlane(float2 ray, float level) {
     return textures[SSRpc.passData.hiZIndex].SampleLevel(samplers[SSRpc.passData.depthSamplerIndex], ray, level).r;
 }
 
@@ -103,68 +107,39 @@ bool crossedCellBoundary(float2 oldCellIdx, float2 newCellIdx) {
 *   p is screen space point
 *   v is screen space ray direction
 */
-#define HIZ_START_LEVEL 2
+#define HIZ_START_LEVEL 6
 // Stop level is derived from the SSR resolution scale (CPU side) so one Hi-Z cell at the
 // stop level maps to ~one output pixel — refining finer than that is wasted work.
 
 float3 RayTrace(float3 p, float3 v) {
-    const float rootLevel = SSRpc.passData.hiZMipLevels - 1.0f;
-
     float level = HIZ_START_LEVEL;
+    float2 cellCount = getCellCount(level);
+    float t = 1.0 / max(abs(v.x) * cellCount.x, abs(v.y) * cellCount.y);
+    float3 step = v * t;
+    
+    float3 ray = p;
+    ray+= v * 0.01f;
 
-    float iterations = 0.0f;
-
-    float2 crossStep;
-    float2 crossOffset;
-
-    crossStep.x = (v.x >= 0)? 1.f : -1.f;
-    crossStep.y = (v.y >= 0)? 1.f : -1.f;
-    // Small nudge past the boundary, just enough for forward progress (the min-depth fetch
-    // now samples the cell center, so this no longer needs to mask edge-sampling ambiguity).
-    crossOffset.xy = crossStep.xy * 0.25;
-    crossStep.xy = saturate(crossStep.xy);
-
-    float3 ray = p.xyz;
-
-    float3 d = v.xyz /= v.z;
-
-    float3 o = intersectDepthPlane(p, d, -p.z);
-
-    // Step off the origin cell at the START level (not full res) to avoid self-intersection.
-    float2 hiZSize = getCellCount(level, rootLevel);
-    float2 rayCell = getCell(ray.xy, hiZSize);
-    ray = intersectCellBoundary(o, d, rayCell, hiZSize, crossStep.xy, crossOffset.xy);
-
-    [loop]
-    while( level >= float(SSRpc.passData.hiZStopLevel) && iterations < SSRpc.passData.maxSteps){
+    for(int i = 0; i < SSRpc.passData.maxSteps; i++) {
         
-        const float2 cellCount = getCellCount(level,rootLevel);
-        const float2 oldCellIdx = getCell(ray.xy, cellCount);
-
-        // Fetch min-depth at the cell CENTER, not ray.xy. ray.xy sits on a texel edge after a
-        // boundary step, where nearest sampling is ambiguous and can grab the neighbor cell —
-        // that mismatch with oldCellIdx is what striped long rays.
-        float2 cellCenter = (oldCellIdx + 0.5) / cellCount;
-        // Reverse-Z: nearest surface = max depth; clamp the ray no nearer than it (min, since
-        // depth decreases away from the camera).
-        float nearestZ = getNearestDepthPlane(cellCenter,level,rootLevel);
-
-        float3 tmpRay = intersectDepthPlane(o,d,min(ray.z,nearestZ));
-
-        const float2 newCellIdx = getCell(tmpRay.xy,cellCount);
-
-        [branch]
-        if(crossedCellBoundary(oldCellIdx,newCellIdx)){
-            tmpRay = intersectCellBoundary(o,d,oldCellIdx,cellCount.xy,crossStep.xy,crossOffset.xy);
-            level = min(rootLevel, level + 2.0f);
+        cellCount = getCellCount(level);
+        t = 1.0 / max(abs(v.x) * cellCount.x, abs(v.y) * cellCount.y);
+        step = v * t;
+        
+        float3 tmpRay = ray;
+        tmpRay+= step;
+        if(tmpRay.z < getNearestDepthPlane(tmpRay.xy, level)) {
+            if(level <= SSRpc.passData.hiZStopLevel) {
+                ray = tmpRay;
+                break;
+            }
+            level--;
         }
-        ray.xyz = tmpRay.xyz;
-
-        --level;
-
-        ++iterations;
+        else {
+            ray = tmpRay;
+            level = min(level + 1, HIZ_START_LEVEL);
+        }
     }
-
     return ray;
 }
 
@@ -269,8 +244,9 @@ float4 fragMain(VSOutput input) : SV_Target {
         return float4(0, 0, 0, 0);
 
     float3 ray = RayTrace(p,v);
-
+    //return float4(ray,1.0);
     float reflDepth = ray.z;
+
     float4 realDepth = textures[SSRpc.passData.hiZIndex].SampleLevel(samplers[SSRpc.passData.depthSamplerIndex],ray.xy,0);
 
     // Screen-edge fade: smoothly fade out reflections near screen borders
