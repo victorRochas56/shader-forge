@@ -746,7 +746,12 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
     resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *bindless.descriptorSet->getTextureResource(scene.shadowAtlas.textureIndex).image, vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
 
     tracing::endTrace("record shadow pass");
-   
+
+    // Voxelization records before the geometry pass so the lit shader samples volumes built with
+    // this frame's grid center — sampling last frame's contents through this frame's matrix goes
+    // black for one frame whenever the grid recenters. Only needs the shadow atlas, recorded above.
+    passes.at(PassId::VOXELIZATION)->record(cmd, imageIndex);
+
     tracing::startTrace("record geo pass");
     recordGeometryPass(cmd, imageIndex);
     tracing::endTrace("record geo pass");
@@ -755,6 +760,7 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
 
     tracing::startTrace("record passes");
     for(auto& pass : passes) {
+        if (pass.first == PassId::VOXELIZATION) continue; // recorded before the geometry pass
         pass.second->record(cmd, imageIndex);
     }
     tracing::endTrace("record passes");
