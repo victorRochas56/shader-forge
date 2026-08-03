@@ -244,7 +244,7 @@ struct SSAOSettings {
 struct SSRSettings {
     bool enabled = true;
     float resolutionScale = 0.5f;
-    float roughnessThreshold = 0.9f;
+    float roughnessThreshold = 0.5f;
     int maxSteps = 32;
     float thickness = 0.1f;
     float temporalBlend = 0.333f;
