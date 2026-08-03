@@ -10,53 +10,25 @@
 #endif
 
 
-// Voxelizes the scene into a filterable RGBA8 volume (Reinhard-compressed radiance, coverage) for
-// cone tracing, in three stages:
+// Voxelizes the scene into an RGBA8 volume in three stages:
 //
 //   [raster scatter] -> [resolve to mip 0] -> [downsample mip chain]
 //
-// The scene is rasterized once with no attachments; the fragment shader scatters albedo and radiance
-// into two uint[VOXEL_RESOLUTION^3] BDA buffers with InterlockedMax (needs fragmentStoresAndAtomics).
-// Max on a luma-keyed packed RGB word is order-independent, so overlapping triangles converge to the
-// brightest contributor without depending on draw order. A compute pass then unpacks those buffers
-// into mip 0 of the volume, and a second pass folds each level into the next with an opacity-weighted
-// 2x2x2 filter — a plain box filter would average empty voxels in and drag coverage toward black.
-//
-// The raster stage does per-triangle dominant-axis selection in a geometry shader: each triangle is
-// projected along the grid axis its face normal is most aligned with, so nothing is edge-on to its
-// own sweep. The FS derives the voxel coord from the interpolated grid position, not SV_Position.
-//
-// Known limitations, in rough order of how much they'll show up:
-//  - No conservative rasterization. Triangles covering a texel but missing its center write nothing,
-//    which pinholes thin walls. VK_EXT_conservative_rasterization or shader-side edge expansion.
-//  - The grid follows the camera, snapped to whole-voxel steps so sub-voxel motion doesn't shift the
-//    world→voxel mapping. Geometry beyond the VOXEL_WORLD_EXTENT cube around the camera still never
-//    voxelizes, and the volume is fully rebuilt every frame even when nothing moved.
-//  - Isotropic mips, so cone tracing off this will leak light through thin geometry. The alternative
-//    is Crassin's six directional chains, which also changes the cone tracer.
+// The raster stage does per-triangle dominant-axis selection in a geometry shader
 class VoxelizationPass : public RenderPass {
 public:
     static constexpr uint32_t VOXEL_RESOLUTION  = 256;    // cubic grid side
     static constexpr float    VOXEL_WORLD_EXTENT = 100.0f; // side of the world-space cube the grid covers
-    // Ambient-cube grid side, decoupled from the radiance grid: irradiance is low-frequency and the
-    // lit-shader lookup samples by UVW, so a coarser grid cuts the six volumes' memory and the gather
-    // dispatch by the cube of the ratio.
-    static constexpr uint32_t IRRADIANCE_RESOLUTION = 128;
+    static constexpr uint32_t IRRADIANCE_RESOLUTION = 128; // resolution of the grid in which irradiance is stored
     static_assert(VOXEL_RESOLUTION % IRRADIANCE_RESOLUTION == 0, "gather maps irradiance voxels onto whole radiance mips");
 
-    // Grid centre snapped to 8-voxel steps, keeping mips 0-3 phase-stable in world space —
-    // single-voxel snapping re-groups every mip above 0 each step, which pops the cone-traced GI.
-    // Shared by the raster pass and the VXGI shadow matrix so both agree on the volume's placement.
+    // Grid centre snapped to 8-voxel steps, keeping mips 0-3 phase-stable in world space
     static glm::vec3 snappedGridCenter(const glm::vec3& cameraPos) {
         constexpr float snapSize = 8.0f * VOXEL_WORLD_EXTENT / VOXEL_RESOLUTION;
         return glm::floor(cameraPos / snapSize) * snapSize;
     }
 
-    // World -> grid clip. Shared by the raster pass, cone tracing (LitPassData), and the debug views,
-    // so they all agree on the volume's placement. Top-down ortho defining the grid OBB; the GS
-    // re-projects each triangle along its dominant axis, so this is a coordinate frame, not the sweep
-    // direction. Up must not be parallel to the -Y view direction — (0,1,0) makes lookAt's cross
-    // product zero and NaNs the matrix.
+    // World -> grid clip.
     static glm::mat4 gridViewProjection(const glm::vec3& cameraPos) {
         constexpr float half = VOXEL_WORLD_EXTENT * 0.5f;
         glm::vec3 gridCenter = snappedGridCenter(cameraPos);
@@ -71,8 +43,7 @@ public:
 private:
     static constexpr vk::Format VOXEL_VOLUME_FORMAT = vk::Format::eR8G8B8A8Unorm;
 
-    // Scatter targets. Two uint per voxel, cleared every frame — 8 MB each at 128^3, and the same
-    // again in clear bandwidth per frame. 256^3 is 8x both.
+    // Scatter targets. Two uint per voxel, cleared every frame
     uint32_t albedoBufferIndex   = 0xFFFFFFFF;
     uint32_t radianceBufferIndex = 0xFFFFFFFF;
 
@@ -85,7 +56,7 @@ private:
     uint32_t volumeMipLevels = 0;
 
     // Ambient-cube irradiance volumes (VOXEL_FACE_DIRS order: +X,-X,+Y,-Y,+Z,-Z). Written by the
-    // gather pass, sampled by the lit shader in giMode 1. Single mip — the lookup never cone-widens.
+    // gather pass, sampled by the lit shader in giMode 1
     std::array<uint32_t, 6> irradianceTextureIndices{0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF};
     std::array<uint32_t, 6> irradianceStorageIndices{};
     uint32_t gatherPipelineIndex = 0xFFFFFFFF;
