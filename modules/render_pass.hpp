@@ -17,6 +17,9 @@ struct RenderPassResources {
 
     uint32_t depthSamplerIndex = 0xFFFFFFFF;
     uint32_t defaultSamplerIndex = 0xFFFFFFFF;
+    // Linear clamp-to-edge, for screen-space textures: defaultSampler is eRepeat, which wraps
+    // filter footprints at screen borders (visible on high mips of the color chain).
+    uint32_t screenSamplerIndex = 0xFFFFFFFF;
     uint32_t shadowSamplerIndex = 0xFFFFFFFF;
     // Trilinear, clamped, anisotropy off. For volume textures: defaultSampler is eRepeat, so a uvw
     // that strays outside [0,1] wraps to the opposite face of the grid instead of clamping.

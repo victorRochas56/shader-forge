@@ -163,6 +163,8 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
                                                          vk::CompareOp::eLessOrEqual, vk::BorderColor::eFloatOpaqueBlack);
     passResources.depthSamplerIndex = bindless.descriptorSet->allocateSampler(vk::Filter::eNearest, vk::SamplerMipmapMode::eNearest, vk::SamplerAddressMode::eClampToEdge, VK_FALSE, 16.0, VK_FALSE,
                                                        vk::CompareOp::eLessOrEqual, vk::BorderColor::eFloatOpaqueBlack);
+    passResources.screenSamplerIndex = bindless.descriptorSet->allocateSampler(vk::Filter::eLinear, vk::SamplerMipmapMode::eLinear, vk::SamplerAddressMode::eClampToEdge, VK_FALSE, 1.0, VK_FALSE,
+                                                        vk::CompareOp::eLessOrEqual, vk::BorderColor::eFloatOpaqueBlack);
     // volumeSamplerIndex is allocated by VoxelizationPass::init (border-black, for cone tracing).
     shadowSamplerIndex = bindless.descriptorSet->allocateSampler(vk::Filter::eNearest,
                                                         vk::SamplerMipmapMode::eNearest,

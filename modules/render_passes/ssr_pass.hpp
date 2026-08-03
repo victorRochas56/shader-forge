@@ -103,7 +103,7 @@ public:
                 vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal, mip, 1);
 
             drawFullscreenPass(cmd, blurPipeline, (*shared.tempBlurMipViews)[mip], mipExtent,
-                BlurPushConstants{.inputTextureIndex = shared.colorResolveTextureIndex, .samplerIndex = shared.defaultSamplerIndex,
+                BlurPushConstants{.inputTextureIndex = shared.colorResolveTextureIndex, .samplerIndex = shared.screenSamplerIndex,
                                 .isHorizontal = 1, .blurRadius = 1.0f, .resolution = glm::uvec2(mipW, mipH),
                                 .mipLevel = mip - 1});
 
@@ -115,7 +115,7 @@ public:
                 vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal, mip, 1);
 
             drawFullscreenPass(cmd, blurPipeline, (*shared.colorResolveMipViews)[mip], mipExtent,
-                BlurPushConstants{.inputTextureIndex = shared.tempBlurTextureIndex, .samplerIndex = shared.defaultSamplerIndex,
+                BlurPushConstants{.inputTextureIndex = shared.tempBlurTextureIndex, .samplerIndex = shared.screenSamplerIndex,
                                 .isHorizontal = 0, .blurRadius = 1.0f, .resolution = glm::uvec2(mipW, mipH),
                                 .mipLevel = mip});
 
@@ -137,11 +137,11 @@ public:
                                             .depthIndex = shared.hiZTextureIndex,
                                             .depthSamplerIndex = shared.depthSamplerIndex,
                                             .colorIndex = shared.colorResolveTextureIndex,
-                                            .colorSamplerIndex = shared.defaultSamplerIndex,
+                                            .colorSamplerIndex = shared.screenSamplerIndex,
                                             .roughnessMetalIndex = shared.roughnessMetalTextureIndex,
-                                            .roughnessMetalSamplerIndex = shared.defaultSamplerIndex,
+                                            .roughnessMetalSamplerIndex = shared.screenSamplerIndex,
                                             .normalIndex = shared.normalTextureIndex,
-                                            .normalSamplerIndex = shared.defaultSamplerIndex,
+                                            .normalSamplerIndex = shared.screenSamplerIndex,
                                             // Full-res base: drives the Hi-Z cell grid and color-mip selection.
                                             // The half-res output is handled by the ssrExtent viewport below.
                                             .resolution = glm::uvec2(swapExtent.width, swapExtent.height),
@@ -169,7 +169,7 @@ public:
                 .currentSSRIndex = currentTextureIndex,
                 .historySSRIndex = readHistory,
                 .motionVectorIndex = shared.motionVectorTextureIndex,
-                .samplerIndex = shared.defaultSamplerIndex,
+                .samplerIndex = shared.screenSamplerIndex,
                 .temporalBlend = features.ssr.temporalBlend,
                 .historyValid = historyInvalid ? 0u : 1u,
             },
@@ -180,7 +180,7 @@ public:
         // --- Sub-pass 3: Apply accumulated SSR to the HDR composite ---
         drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[applyPipelineIndex], *bindless.descriptorSet->getTextureResource(shared.compositeColorTextureIndex).imageView, swapExtent,
             SSRApplyPushConstants{
-                .samplerIndex = shared.defaultSamplerIndex,
+                .samplerIndex = shared.screenSamplerIndex,
                 .ssrTextureIndex = writeHistory,
             },
             vk::AttachmentLoadOp::eLoad);

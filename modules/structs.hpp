@@ -243,17 +243,17 @@ struct SSAOSettings {
 
 struct SSRSettings {
     bool enabled = true;
-    float resolutionScale = 0.5f;
-    float roughnessThreshold = 0.5f;
+    float resolutionScale = 1.0f;
+    float roughnessThreshold = 0.8f;
     int maxSteps = 32;
     float thickness = 0.1f;
-    float temporalBlend = 0.333f;
+    float temporalBlend = 0.2;
     bool resolutionDirty = false;
 };
 
 struct VolumetricSettings {
     bool enabled = true;
-    float resolutionScale = 0.5f;
+    float resolutionScale = 0.8f;
     float blurRadius = 2.0f;
     int numSteps = 16;
     float maxDist = 35.0f;

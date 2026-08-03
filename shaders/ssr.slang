@@ -58,7 +58,9 @@ struct RayTraceOutput {
     float2 UV;
 };
 
-// Advance ray to a given depth: since d = v/v.z, d.z == 1, so t == depth
+// Advance the ray by a depth delta: d.z == 1, so the step lands exactly on the target plane.
+// Relative (from current position, not a depth-0 origin) to keep intermediates small when
+// d.xy blows up on grazing rays.
 float3 intersectDepthPlane(float3 o, float3 d, float t) {
     return o + d * t;
 }
@@ -84,18 +86,20 @@ float3 intersectCellBoundary(float3 o, float3 d, float2 cellIndex, float2 cellCo
     return o + d * tMin;
 }
 
-// Get the cell count at a given mip level.
+// Get the cell count at a given mip level, from a hoisted base resolution.
 // Mip dimensions floor at each level (w >> level), so floor here to match
 // the actual Hi-Z texel grid instead of assuming exact power-of-two division.
-float2 getCellCount(float level) {
+float2 getCellCount(float level, float2 baseRes) {
     // clamp at 1 like mip dims do, so cellSize never divides by zero
-    return max(floor(float2(SSRpc.passData.resolution) / exp2(level)), 1.0);
+    return max(floor(baseRes / exp2(level)), 1.0);
 }
 
-// Sample the nearest depth plane from the Hi-Z buffer at a given mip level.
+// Fetch the nearest depth plane for a Hi-Z cell at a given mip level.
 // Reverse-Z: Hi-Z stores raw reverse depth max-reduced, so nearest occluder = maximum.
-float getNearestDepthPlane(float2 ray, float level) {
-    return textures[SSRpc.passData.hiZIndex].SampleLevel(samplers[SSRpc.passData.depthSamplerIndex], ray, level).r;
+// Load (texel fetch): no sampler, and the cell tested is exactly the cell computed —
+// UV sampling can round into a neighboring texel at cell boundaries.
+float getNearestDepthPlane(Texture2D hiZ, float2 cellIdx, float level) {
+    return hiZ.Load(int3(int2(cellIdx), int(level))).r;
 }
 
 // Check if the ray crossed a cell boundary
@@ -107,38 +111,65 @@ bool crossedCellBoundary(float2 oldCellIdx, float2 newCellIdx) {
 *   p is screen space point
 *   v is screen space ray direction
 */
-#define HIZ_START_LEVEL 6
+// Start level: where the walk begins — lower = cheaper nearby hits, more ascent for far ones.
+// Max level: ceiling the walk can climb back to; bounds the largest skip (2^level px).
+// Coarser than ~6 the max-reduced plane covers so much screen the ray rarely gets to advance.
+#define HIZ_START_LEVEL 2
+#define HIZ_MAX_LEVEL 6
 // Stop level is derived from the SSR resolution scale (CPU side) so one Hi-Z cell at the
 // stop level maps to ~one output pixel — refining finer than that is wasted work.
 
-float3 RayTrace(float3 p, float3 v) {
-    float level = HIZ_START_LEVEL;
-    float2 cellCount = getCellCount(level);
-    float t = 1.0 / max(abs(v.x) * cellCount.x, abs(v.y) * cellCount.y);
-    float3 step = v * t;
-    
-    float3 ray = p;
-    ray+= v * 0.01f;
+float3 RayTrace(float3 p, float3 v, float jitter) {
+    // Hoist loop-invariant buffer-pointer reads into locals
+    const int maxSteps = SSRpc.passData.maxSteps;
+    const float stopLevel = float(SSRpc.passData.hiZStopLevel);
+    Texture2D hiZ = textures[SSRpc.passData.hiZIndex];
+    const float2 baseRes = float2(SSRpc.passData.resolution);
 
-    for(int i = 0; i < SSRpc.passData.maxSteps; i++) {
-        
-        cellCount = getCellCount(level);
-        t = 1.0 / max(abs(v.x) * cellCount.x, abs(v.y) * cellCount.y);
-        step = v * t;
-        
-        float3 tmpRay = ray;
-        tmpRay+= step;
-        if(tmpRay.z < getNearestDepthPlane(tmpRay.xy, level)) {
-            if(level <= SSRpc.passData.hiZStopLevel) {
-                ray = tmpRay;
-                break;
-            }
-            level--;
+    // Depth-parameterized direction: d.z == 1, so stepping d by a depth delta lands on that
+    // plane. Reverse-Z: depth DECREASES along the ray; clamp v.z so d stays finite on
+    // depth-parallel (grazing) rays.
+    float3 d = v / min(v.z, -1e-7);
+
+    // Cell crossing direction follows v, not d: v.z < 0 flips d.xy backwards
+    float2 crossStep = float2(v.x >= 0.0 ? 1.0 : 0.0, v.y >= 0.0 ? 1.0 : 0.0);
+    float2 crossOffset = (crossStep * 2.0 - 1.0) / 128.0;
+
+    // Cross out of the origin's mip 0 texel (half-texel offset) to avoid immediate
+    // self-intersection, instead of the old fixed 1% jump that skipped nearby geometry
+    float2 mip0CellCount = getCellCount(0.0, baseRes);
+    float3 ray = intersectCellBoundary(p, d, getCell(p.xy, mip0CellCount), mip0CellCount, crossStep, crossOffset * 64.0);
+
+    // Per-pixel/frame phase jitter along the ray, up to one start-level cell. Movement is
+    // along the ray line so converged hits are unaffected; only where step-starved rays
+    // stall decorrelates, letting temporal accumulation average the blocks out.
+    float baseT = 1.0 / max(abs(v.x) * baseRes.x, abs(v.y) * baseRes.y);
+    ray += v * (baseT * exp2(HIZ_START_LEVEL) * jitter);
+
+    float level = HIZ_START_LEVEL;
+    for(int i = 0; i < maxSteps && level >= stopLevel; i++) {
+        // Ray left the screen: no hit possible, stop fetching (border fade rejects the UV)
+        if(any(ray.xy < 0.0) || any(ray.xy >= 1.0))
+            break;
+
+        float2 cellCount = getCellCount(level, baseRes);
+        float2 oldCellIdx = getCell(ray.xy, cellCount);
+
+        float planeZ = getNearestDepthPlane(hiZ, oldCellIdx, level);
+
+        // In front of the cell's nearest plane (reverse-Z: larger = nearer): drop onto it.
+        // At or behind it: stay put and refine a level down.
+        float3 tmpRay = intersectDepthPlane(ray, d, min(0.0, planeZ - ray.z));
+
+        float2 newCellIdx = getCell(tmpRay.xy, cellCount);
+        if(crossedCellBoundary(oldCellIdx, newCellIdx)) {
+            // Plane lies beyond the cell: clamp to the cell boundary and go coarser
+            tmpRay = intersectCellBoundary(ray, d, oldCellIdx, cellCount, crossStep, crossOffset);
+            level = min(level + 2.0, HIZ_MAX_LEVEL + 1.0);
         }
-        else {
-            ray = tmpRay;
-            level = min(level + 1, HIZ_START_LEVEL);
-        }
+
+        level -= 1.0;
+        ray = tmpRay;
     }
     return ray;
 }
@@ -243,7 +274,8 @@ float4 fragMain(VSOutput input) : SV_Target {
     if (v.z > 0.0)
         return float4(0, 0, 0, 0);
 
-    float3 ray = RayTrace(p,v);
+    float jitter = hash2D(uint2(input.position.xy), SSRpc.passData.frameIndex).x;
+    float3 ray = RayTrace(p, v, jitter);
     //return float4(ray,1.0);
     float reflDepth = ray.z;
 
@@ -259,7 +291,7 @@ float4 fragMain(VSOutput input) : SV_Target {
     if(abs(reflDepth - realDepth.r) > SSRpc.passData.thickness)
         return float4(0,0,0,0);
 
-    float gloss = 1.0 - roughness;
+    float gloss = 1.0 - roughness / SSRpc.passData.roughnessThreshold;
     float specularPower = roughnessToSpecularPower(roughness);
     float coneTheta = specularPowerToConeAngle(specularPower);
 
@@ -310,6 +342,9 @@ float4 fragMain(VSOutput input) : SV_Target {
     float fadeOnPerpendicular = saturate(dot(reflectDir, viewDir) * 4.0);
 
     // Fade on roughness (quadratic falloff for more aggressive attenuation on rough surfaces)
+    float minFade = 0.8;
+    float maxFade = 0.0;
+    gloss = gloss * (minFade-maxFade) + maxFade;
     float fadeOnRoughness = gloss * gloss;
 
     float totalFade = fadeOnBorder * fadeOnPerpendicular * fadeOnRoughness;
