@@ -132,6 +132,7 @@ class AssetManager {
         // Each entry is independent: it only touches its own vertices and writes its
         // results to a fixed index, so the per-entry work can run on worker threads.
         auto processEntry = [&](size_t idx) {
+            std::cout << "processing entry!" << std::endl;
             auto& vertices = meshData.entries[idx].vertices;
 
             glm::vec3 bbMin(std::numeric_limits<float>::max());
@@ -217,7 +218,7 @@ class AssetManager {
 
             uint32_t existingInstance = false;
             for (uint32_t m = 0; m < meshes.size(); m++) {
-                if (std::abs(inscribedRadius - meshes[m].minRadius) < 0.001f && std::abs(circumscribedRadius - meshes[m].maxRadius) < 0.001f) {
+                if (std::abs(inscribedRadius - meshes[m].minRadius) < 0.0001f && std::abs(circumscribedRadius - meshes[m].maxRadius) < 0.001f) {
                     existingInstance = m;
                     break;
                 }
@@ -225,6 +226,7 @@ class AssetManager {
 
             EntryResolution& r = resolutions[idx];
             if (existingInstance == 0) {
+                std::cout << "loaded new mesh!" << std::endl;
                 r.meshIdx = createMesh(entry.vertices, entry.indices, bbMin, bbMax, center,
                                        inscribedRadius, circumscribedRadius, entry.shapeName, filePath, importScale,
                                        static_cast<uint32_t>(idx));
@@ -275,6 +277,7 @@ class AssetManager {
                 auto worker = [&]() {
                     for (size_t j = nextJob.fetch_add(1); j < icpEntries.size(); j = nextJob.fetch_add(1)) {
                         runIcpFor(icpEntries[j]);
+                        std::cout << "ran ICP!" << std::endl;
                     }
                 };
                 std::vector<std::thread> workers;
@@ -304,6 +307,7 @@ class AssetManager {
                 // Not really the same mesh (false instance match) -> no rotation.
                 printf("Instance alignment failed for mesh '%s' (rmsd=%f, tol=%f); placing without rotation.\n",
                        meshes[refMeshIdx].name.c_str(), fit.rmsd, tol);
+                fflush(stdout);
                 r.transform = makeTransform(center);
             } else if (!fit.mirrored) {
                 r.transform = makeTransform(center + fit.translation, fit.rotation);

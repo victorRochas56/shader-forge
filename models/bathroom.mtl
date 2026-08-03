@@ -1,0 +1,126 @@
+# Blender 5.1.2 MTL File: 'None'
+# www.blender.org
+
+newmtl Bath
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd C:/Users/evanz/Desktop/Metropolia/Course_Substance/Models/Bath/Textures/Bath_low_UV checker.001_BaseColor.png
+map_Ns C:/Users/evanz/Desktop/Metropolia/Course_Substance/Models/Bath/Textures/Bath_low_UV checker.001_Roughness.png
+map_refl C:/Users/evanz/Desktop/Metropolia/Course_Substance/Models/Bath/Textures/Bath_low_UV checker.001_Metallic.png
+map_Bump -bm 1.000000 C:/Users/evanz/Desktop/Metropolia/Course_Substance/Models/Bath/Textures/Bath_low_UV checker.001_Normal.png
+
+newmtl Bathtube
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd C:/Users/evanz/Desktop/Metropolia/Course_Substance/Materials/Bathtube/Textures/Bathtube_low_Bathtube_BaseColor.png
+map_Ns C:/Users/evanz/Desktop/Metropolia/Course_Substance/Materials/Bathtube/Textures/Bathtube_low_Bathtube_Roughness.png
+map_refl C:/Users/evanz/Desktop/Metropolia/Course_Substance/Materials/Bathtube/Textures/Bathtube_low_Bathtube_Metallic.png
+map_Bump -bm 1.000000 C:/Users/evanz/Desktop/Metropolia/Course_Substance/Materials/Bathtube/Textures/Bathtube_low_Bathtube_Normal.png
+
+newmtl Candle
+Ns 360.000000
+Ka 1.000000 1.000000 1.000000
+Kd 0.800000 0.800000 0.800000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+
+newmtl Cups
+Ns 360.000000
+Ka 1.000000 1.000000 1.000000
+Kd 0.800000 0.800000 0.800000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+
+newmtl Door_and_windows
+Ns 360.000000
+Ka 1.000000 1.000000 1.000000
+Kd 0.800000 0.800000 0.800000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+
+newmtl Fabric
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+illum 2
+map_Kd C:/Users/evanz/Desktop/Metropolia/Course_Substance/Materials/Carpet/Textures/Fabric_Fabric_BaseColor.png
+map_Ns C:/Users/evanz/Desktop/Metropolia/Course_Substance/Materials/Carpet/Textures/Fabric_Fabric_Roughness.png
+map_refl C:/Users/evanz/Desktop/Metropolia/Course_Substance/Materials/Carpet/Textures/Fabric_Fabric_Metallic.png
+map_d C:/Users/evanz/Desktop/Metropolia/Course_Substance/Materials/Carpet/Textures/Opasity.png
+map_Bump -bm 1.000000 C:/Users/evanz/Desktop/Metropolia/Course_Substance/Materials/Carpet/Textures/Fabric_Fabric_Normal.png
+
+newmtl Floor
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd C:/Users/evanz/Desktop/Metropolia/Course_Substance/Materials/Floor/Floor_basecolor.png
+map_Ns C:/Users/evanz/Desktop/Metropolia/Course_Substance/Materials/Floor/Floor_roughness.png
+map_refl C:/Users/evanz/Desktop/Metropolia/Course_Substance/Materials/Floor/Floor_metallic.png
+map_Bump -bm 1.000000 C:/Users/evanz/Desktop/Metropolia/Course_Substance/Materials/Floor/Floor_normal.png
+
+newmtl Frames
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd C:/Users/evanz/Desktop/Metropolia/Course_Substance/Materials/Frames/textures/Frame low_Frames_BaseColor.png
+map_Ns C:/Users/evanz/Desktop/Metropolia/Course_Substance/Materials/Frames/textures/Frame low_Frames_Roughness.png
+map_refl C:/Users/evanz/Desktop/Metropolia/Course_Substance/Materials/Frames/textures/Frame low_Frames_Metallic.png
+map_Bump -bm 1.000000 C:/Users/evanz/Desktop/Metropolia/Course_Substance/Materials/Frames/textures/Frame low_Frames_Normal.png
+
+newmtl Glass
+Ns 928.595032
+Ka 1.000000 1.000000 1.000000
+Kd 0.804547 0.883961 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+
+newmtl Selling_Bump
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd C:/Users/evanz/Desktop/Metropolia/Course_Substance/Materials/Selling/Selling_basecolor.png
+map_Ns C:/Users/evanz/Desktop/Metropolia/Course_Substance/Materials/Selling/Selling_roughness.png
+map_refl C:/Users/evanz/Desktop/Metropolia/Course_Substance/Materials/Selling/Selling_metallic.png
+map_Bump -bm 1.000000 C:/Users/evanz/Desktop/Metropolia/Course_Substance/Materials/Selling/Selling_normal.png
+
+newmtl Wall_Trim
+Ka 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd C:/Users/evanz/Desktop/Metropolia/Course_Substance/Materials/Wall trim/Wall_trim_basecolor.png
+map_Ns C:/Users/evanz/Desktop/Metropolia/Course_Substance/Materials/Wall trim/Wall_trim_roughness.png
+map_refl C:/Users/evanz/Desktop/Metropolia/Course_Substance/Materials/Wall trim/Wall_trim_metallic.png
+map_Bump -bm 1.000000 C:/Users/evanz/Desktop/Metropolia/Course_Substance/Materials/Wall trim/Wall_trim_normal flat.png
