@@ -31,13 +31,16 @@ FragmentOutput fragMain(VertexOutput input)
 
     float3 N;
     float3 normalMap;
+
+    const SamplerState sampler = samplers[pc.litPassData.samplerIndex];
+
     if(hasNormal) {
-        normalMap = textures[inst.normalTextureIndex].Sample(samplers[pc.litPassData.samplerIndex], input.texCoord).rgb;
+        normalMap = textures[inst.normalTextureIndex].Sample(sampler, input.texCoord).rgb;
     }
 
     float4 albedo = float4(1.0, 1.0, 1.0, 1.0);
     if(hasAlbedo) {
-        albedo = textures[inst.albedoTextureIndex].Sample(samplers[pc.litPassData.samplerIndex], input.texCoord);
+        albedo = textures[inst.albedoTextureIndex].Sample(sampler, input.texCoord);
     }
     if (alphaClip && albedo.a < inst.alphaCutoff)
         discard;
@@ -45,12 +48,12 @@ FragmentOutput fragMain(VertexOutput input)
 
     float4 roughness = float4(inst.roughness, inst.roughness, inst.roughness, 1.0);
     if(hasRoughness) {
-        roughness = textures[inst.roughnessTextureIndex].Sample(samplers[pc.litPassData.samplerIndex], input.texCoord);
+        roughness = textures[inst.roughnessTextureIndex].Sample(sampler, input.texCoord);
     }
 
     float4 metallic = float4(inst.metallic, inst.metallic, inst.metallic, 1.0);
     if(hasMetallic){
-        metallic = textures[inst.metallicTextureIndex].Sample(samplers[pc.litPassData.samplerIndex], input.texCoord);
+        metallic = textures[inst.metallicTextureIndex].Sample(sampler, input.texCoord);
     }
 
 
@@ -74,9 +77,8 @@ FragmentOutput fragMain(VertexOutput input)
 
     //do as early as possible to not wait for scoreboard stall
     TextureCube envMap = cubemaps[inst.environmentMapIndex];
-    SamplerState envSampler = samplers[pc.litPassData.samplerIndex];
     //float3 specularIBL = calculateSpecularIBL(N, V, roughness.r, F0, envMap, envSampler);
-    float3 diffuseIBL = calculateDiffuseIBL(N, albedo.rgb, envMap, inst.maxEnvMips, envSampler);
+    float3 diffuseIBL = calculateDiffuseIBL(N, albedo.rgb, envMap, inst.maxEnvMips, sampler);
 
     float3 V = normalize(pc.litPassData.cameraPos.xyz - input.worldPos);
     float3 F0 = float3(0.04);
