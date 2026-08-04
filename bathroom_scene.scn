@@ -1,0 +1,862 @@
+Materials {
+  Material {
+    ID : 3588018304
+    Name : Bath
+    Shader : shaders/lit.spv
+    MaterialFlags : 30
+    Color : 0.5,0.5,0.5,1
+    Metallic : 0
+    Roughness : 0.5
+    AlphaClip : 0
+    AlphaCutoff : 0.5
+    AlbedoTexture : textures/bthroom_tex/Bath_low_UV_checker.001_BaseColor.png
+    MetallicTexture : textures/bthroom_tex/Bath_low_UV_checker.001_Metallic.png
+    RoughnessTexture : textures/bthroom_tex/Bath_low_UV_checker.001_Roughness.png
+    NormalTexture : textures/bthroom_tex/Bath_low_UV_checker.001_Normal.png
+    EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
+  }
+  Material {
+    ID : 28364634
+    Name : Bathtube
+    Shader : shaders/lit.spv
+    MaterialFlags : 30
+    Color : 0.5,0.5,0.5,1
+    Metallic : 0
+    Roughness : 0.5
+    AlphaClip : 0
+    AlphaCutoff : 0.5
+    AlbedoTexture : textures/bthroom_tex/Bathtube_low_Bathtube_BaseColor.png
+    MetallicTexture : textures/bthroom_tex/Bathtube_low_Bathtube_Metallic.png
+    RoughnessTexture : textures/bthroom_tex/Bathtube_low_Bathtube_Roughness.png
+    NormalTexture : textures/bthroom_tex/Bathtube_low_Bathtube_Normal.png
+    EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
+  }
+  Material {
+    ID : 3877091608
+    Name : Candle
+    Shader : shaders/lit.spv
+    MaterialFlags : 30
+    Color : 0.5,0.5,0.5,1
+    Metallic : 0
+    Roughness : 0.5
+    AlphaClip : 0
+    AlphaCutoff : 0.5
+    AlbedoTexture : textures/bthroom_tex/Candle_low_Candle_BaseColor.png
+    MetallicTexture : textures/bthroom_tex/Candle_low_Candle_Metallic.png
+    RoughnessTexture : textures/bthroom_tex/Candle_low_Candle_Roughness.png
+    NormalTexture : textures/bthroom_tex/Candle_low_Candle_Normal.png
+    EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
+  }
+  Material {
+    ID : 1201439092
+    Name : Cups
+    Shader : shaders/lit.spv
+    MaterialFlags : 22
+    Color : 0.5,0.5,0.5,1
+    Metallic : 0
+    Roughness : 0
+    AlphaClip : 0
+    AlphaCutoff : 0.5
+    AlbedoTexture : textures/bthroom_tex/Cups_low_Cups_BaseColor.png
+    MetallicTexture : 
+    RoughnessTexture : textures/bthroom_tex/Cups_low_Cups_Roughness.png
+    NormalTexture : textures/bthroom_tex/Cups_low_Cups_Normal.png
+    EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
+  }
+  Material {
+    ID : 1337326481
+    Name : Door_and_windows
+    Shader : shaders/lit.spv
+    MaterialFlags : 30
+    Color : 0.5,0.5,0.5,1
+    Metallic : 0
+    Roughness : 0.5
+    AlphaClip : 0
+    AlphaCutoff : 0.5
+    AlbedoTexture : textures/bthroom_tex/WinDoorsheet_LOW_Wall_Trim_BaseColor.png
+    MetallicTexture : textures/bthroom_tex/WinDoorsheet_LOW_Wall_Trim_Metallic.png
+    RoughnessTexture : textures/bthroom_tex/WinDoorsheet_LOW_Wall_Trim_Roughness.png
+    NormalTexture : textures/bthroom_tex/WinDoorsheet_LOW_Wall_Trim_Normal.png
+    EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
+  }
+  Material {
+    ID : 2210838972
+    Name : Fabric
+    Shader : shaders/lit.spv
+    MaterialFlags : 54
+    Color : 0.5,0.5,0.5,1
+    Metallic : 0
+    Roughness : 0.5
+    AlphaClip : 1
+    AlphaCutoff : 0.5
+    AlbedoTexture : textures/bthroom_tex/Fabric_Fabric_BaseColor.png
+    MetallicTexture : 
+    RoughnessTexture : textures/bthroom_tex/Fabric_Fabric_Roughness.png
+    NormalTexture : textures/bthroom_tex/Fabric_Fabric_Normal.png
+    EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
+  }
+  Material {
+    ID : 1025489805
+    Name : Floor
+    Shader : shaders/lit.spv
+    MaterialFlags : 30
+    Color : 0.5,0.5,0.5,1
+    Metallic : 0
+    Roughness : 0.5
+    AlphaClip : 0
+    AlphaCutoff : 0.5
+    AlbedoTexture : textures/bthroom_tex/Floor_basecolor.png
+    MetallicTexture : textures/bthroom_tex/Floor_metallic.png
+    RoughnessTexture : textures/bthroom_tex/Floor_roughness.png
+    NormalTexture : textures/bthroom_tex/Floor_normal.png
+    EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
+  }
+  Material {
+    ID : 6646559
+    Name : Frames
+    Shader : shaders/lit.spv
+    MaterialFlags : 30
+    Color : 0.5,0.5,0.5,1
+    Metallic : 0
+    Roughness : 0.5
+    AlphaClip : 0
+    AlphaCutoff : 0.5
+    AlbedoTexture : textures/bthroom_tex/Frame_low_Frames_BaseColor.png
+    MetallicTexture : textures/bthroom_tex/Frame_low_Frames_Metallic.png
+    RoughnessTexture : textures/bthroom_tex/Frame_low_Frames_Roughness.png
+    NormalTexture : textures/bthroom_tex/Frame_low_Frames_Normal.png
+    EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
+  }
+  Material {
+    ID : 1279085011
+    Name : Glass
+    Shader : shaders/lit.spv
+    MaterialFlags : 0
+    Color : 0.5,0.5,0.5,1
+    Metallic : 0
+    Roughness : 0.5
+    AlphaClip : 0
+    AlphaCutoff : 0.5
+    AlbedoTexture : 
+    MetallicTexture : 
+    RoughnessTexture : 
+    NormalTexture : 
+    EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
+  }
+  Material {
+    ID : 357927648
+    Name : Selling_Bump
+    Shader : shaders/lit.spv
+    MaterialFlags : 22
+    Color : 0.5,0.5,0.5,1
+    Metallic : 0
+    Roughness : 0.5
+    AlphaClip : 0
+    AlphaCutoff : 0.5
+    AlbedoTexture : textures/bthroom_tex/Selling_basecolor.png
+    MetallicTexture : 
+    RoughnessTexture : textures/bthroom_tex/Selling_roughness.png
+    NormalTexture : textures/bthroom_tex/Selling_normal.png
+    EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
+  }
+  Material {
+    ID : 2707864558
+    Name : Wall_Trim
+    Shader : shaders/lit.spv
+    MaterialFlags : 22
+    Color : 0.5,0.5,0.5,1
+    Metallic : 0
+    Roughness : 0.5
+    AlphaClip : 0
+    AlphaCutoff : 0.5
+    AlbedoTexture : textures/bthroom_tex/Wall_trim_basecolor.png
+    MetallicTexture : 
+    RoughnessTexture : textures/bthroom_tex/Wall_trim_roughness.png
+    NormalTexture : textures/bthroom_tex/Wall_trim_normal.png
+    EnvironmentMap : textures/sky2/posx.jpg|textures/sky2/negx.jpg|textures/sky2/posy.jpg|textures/sky2/negy.jpg|textures/sky2/posz.jpg|textures/sky2/negz.jpg
+  }
+}
+
+Node {
+  Name : Wall_Dam1_long.001.001
+  Position : 3.266,2.525,0.114
+  Rotation : 0.693872,0,-0.720099,0
+  Scale : 1,1,1.947
+  Mesh : models/bathroom.obj
+  MeshName : Wall_Dam1_long.001
+  MeshEntry : 8
+  MaterialID : 2277457245
+}
+Node {
+  Name : Selling_top.001.001
+  Position : -1.2796,4.37701,-0.49984
+  Rotation : -0.0014434,-3.91844e-09,4.00501e-09,0.999999
+  Scale : 2,1,2
+  Mesh : models/bathroom.obj
+  MeshName : Selling_top.001
+  MeshEntry : 7
+  MaterialID : 2277457245
+}
+Node {
+  Name : empty_68
+  Position : -0.958756,2.26526,-2.09743
+  Rotation : 0.718096,0.493642,-0.404261,-0.277902
+  Scale : 1,1,1
+  Light : Directional;10;2000;1,1,1;1;2048;5.000000,10.000000,20.000000
+}
+Node {
+  Name : empty_2
+  Position : 0,1,0
+  Rotation : 1,0,0,0
+  Scale : 1,1,1
+  Node {
+    Name : Wall_Corner.004
+    Position : 2.33944,1.49944,2.02163
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Wall_Corner.004
+    MeshEntry : 0
+    MaterialID : 2707864558
+  }
+  Node {
+    Name : Wall_Window.003
+    Position : -2.60834,1.70977,1.79338
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Wall_Window.003
+    MeshEntry : 1
+    MaterialID : 1337326481
+  }
+  Node {
+    Name : Wall_Window.003.001
+    Position : -2.64219,1.49944,1.80398
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Wall_Window.003
+    MeshEntry : 2
+    MaterialID : 2707864558
+  }
+  Node {
+    Name : Cup_sanitazer.001
+    Position : 1.06397,0.979252,0.779019
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Cup_sanitazer.001
+    MeshEntry : 3
+    MaterialID : 1201439092
+  }
+  Node {
+    Name : Fabric__Towel_Bath.001
+    Position : 1.78152,0.398946,-1.85121
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Fabric__Towel_Bath.001
+    MeshEntry : 4
+    MaterialID : 2210838972
+  }
+  Node {
+    Name : Door_Hinges.001
+    Position : -0.141501,1.14176,0.941918
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Door_Hinges.001
+    MeshEntry : 5
+    MaterialID : 1337326481
+  }
+  Node {
+    Name : HookTowel.001
+    Position : 0.314133,0.895089,0.856004
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : HookTowel.001
+    MeshEntry : 6
+    MaterialID : 2210838972
+  }
+  Node {
+    Name : Selling_top.001
+    Position : 0.370513,2.97988,-0.0151081
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Selling_top.001
+    MeshEntry : 7
+    MaterialID : 357927648
+  }
+  Node {
+    Name : Wall_Dam1_long.001
+    Position : 1.64053,1.49944,0.964799
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Wall_Dam1_long.001
+    MeshEntry : 8
+    MaterialID : 2707864558
+  }
+  Node {
+    Name : Cup_Ceramic_5.001
+    Position : 2.62914,1.08284,0.499388
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Cup_Ceramic_5.001
+    MeshEntry : 9
+    MaterialID : 1201439092
+  }
+  Node {
+    Name : Wall_corner_shelf.001
+    Position : 2.66861,1.42411,0.292428
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Wall_corner_shelf.001
+    MeshEntry : 10
+    MaterialID : 1279085011
+  }
+  Node {
+    Name : Wall_corner_shelf.001.001
+    Position : 3.16601,1.49944,0.138647
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Wall_corner_shelf.001
+    MeshEntry : 11
+    MaterialID : 2707864558
+  }
+  Node {
+    Name : Mirror.001
+    Position : 1.21829,1.64132,0.914446
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Mirror.001
+    MeshEntry : 12
+    MaterialID : 6646559
+  }
+  Node {
+    Name : Candle.001
+    Position : 0.737717,1.0706,0.146347
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Candle.001
+    MeshEntry : 13
+    MaterialID : 3877091608
+  }
+  Node {
+    Name : Fabric_Sponge.001
+    Position : 0.768535,0.966689,0.787044
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Fabric_Sponge.001
+    MeshEntry : 14
+    MaterialID : 2210838972
+  }
+  Node {
+    Name : Hook.005
+    Position : -0.68803,1.59593,-2.97021
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Hook.005
+    MeshEntry : 15
+    MaterialID : 1337326481
+  }
+  Node {
+    Name : Wall_Clear_Short.001
+    Position : 2.93522,1.49944,-3.41181
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Wall_Clear_Short.001
+    MeshEntry : 16
+    MaterialID : 2707864558
+  }
+  Node {
+    Name : Curtain_flat.001
+    Position : 2.75598,1.34118,-1.77617
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Curtain_flat.001
+    MeshEntry : 17
+    MaterialID : 1337326481
+  }
+  Node {
+    Name : Hook.005.001
+    Position : 0.084404,1.27086,0.912873
+    Rotation : 7.29331e-07,5.00015e-08,1,-7.64314e-07
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Hook.005
+    MeshEntry : 15
+    MaterialID : 1337326481
+  }
+  Node {
+    Name : Selling_holder_Small.001
+    Position : 0.0597379,2.9533,-0.960952
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Selling_holder_Small.001
+    MeshEntry : 19
+    MaterialID : 2707864558
+  }
+  Node {
+    Name : Cup_Ceramic_4.001
+    Position : 2.62396,1.13059,0.179434
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Cup_Ceramic_4.001
+    MeshEntry : 20
+    MaterialID : 1201439092
+  }
+  Node {
+    Name : Bath.001
+    Position : 2.02827,0.519342,-1.78518
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Bath.001
+    MeshEntry : 21
+    MaterialID : 3588018304
+  }
+  Node {
+    Name : Floor_tile.001
+    Position : 0.132672,0.0155515,-0.237195
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Floor_tile.001
+    MeshEntry : 22
+    MaterialID : 1025489805
+  }
+  Node {
+    Name : Wall_Clear_Short.004
+    Position : 2.62333,1.49944,1.70913
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Wall_Clear_Short.004
+    MeshEntry : 23
+    MaterialID : 2707864558
+  }
+  Node {
+    Name : Hook.005.002
+    Position : 0.486571,1.27188,0.912907
+    Rotation : 1.78154e-06,8.33107e-07,1,2.2147e-08
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Hook.005
+    MeshEntry : 15
+    MaterialID : 1337326481
+  }
+  Node {
+    Name : Hook.005.003
+    Position : 0.27121,1.27086,0.912873
+    Rotation : 1.12077e-06,-1.44917e-06,1,-7.62568e-07
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Hook.005
+    MeshEntry : 15
+    MaterialID : 1337326481
+  }
+  Node {
+    Name : Wall_Window.003.002
+    Position : -2.6225,1.70977,-1.0375
+    Rotation : 1,7.977e-08,1.37252e-08,2.59785e-08
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Wall_Window.003
+    MeshEntry : 1
+    MaterialID : 1337326481
+  }
+  Node {
+    Name : Wall_Window.003.003
+    Position : -2.65635,1.49944,-1.02689
+    Rotation : 1,-1.2662e-08,-6.10788e-08,5.61899e-09
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Wall_Window.003
+    MeshEntry : 2
+    MaterialID : 2707864558
+  }
+  Node {
+    Name : Wall_Corner.002
+    Position : -2.1116,1.49944,-2.52689
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Wall_Corner.002
+    MeshEntry : 28
+    MaterialID : 2707864558
+  }
+  Node {
+    Name : Candle.001.001
+    Position : -0.687395,1.67465,-2.91197
+    Rotation : 0.707107,-3.16439e-07,0.707107,-1.71977e-07
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Candle.001
+    MeshEntry : 13
+    MaterialID : 3877091608
+  }
+  Node {
+    Name : Wall_Corner.001
+    Position : -2.1116,1.49944,0.473107
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Wall_Corner.001
+    MeshEntry : 30
+    MaterialID : 2707864558
+  }
+  Node {
+    Name : Wall_Clear_Short.001.001
+    Position : 2.93522,1.49944,-0.411813
+    Rotation : 1,2.67859e-13,1.03805e-10,5.60709e-16
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Wall_Clear_Short.001
+    MeshEntry : 16
+    MaterialID : 2707864558
+  }
+  Node {
+    Name : Wall_Window.003.004
+    Position : 2.89932,1.70977,-1.90121
+    Rotation : -1.54169e-07,-2.51046e-08,1,-2.03685e-07
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Wall_Window.003
+    MeshEntry : 1
+    MaterialID : 1337326481
+  }
+  Node {
+    Name : Wall_Window.003.005
+    Position : 2.93317,1.49944,-1.91181
+    Rotation : -3.76183e-08,-6.27988e-09,1,-1.59404e-07
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Wall_Window.003
+    MeshEntry : 2
+    MaterialID : 2707864558
+  }
+  Node {
+    Name : Selling_holder_Big.001
+    Position : 0.027596,2.89119,-0.119577
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Selling_holder_Big.001
+    MeshEntry : 34
+    MaterialID : 2707864558
+  }
+  Node {
+    Name : Cup_Ceramic_3.001
+    Position : 2.72053,1.62652,-0.0085695
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Cup_Ceramic_3.001
+    MeshEntry : 35
+    MaterialID : 1201439092
+  }
+  Node {
+    Name : Selling_holder_Big.001.001
+    Position : 0.038366,2.89119,-2.37589
+    Rotation : 1,-2.90161e-09,-1.14894e-08,-2.34834e-07
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Selling_holder_Big.001
+    MeshEntry : 34
+    MaterialID : 2707864558
+  }
+  Node {
+    Name : Fabric_Carpet_Small.001
+    Position : -1.3222,0.0258235,-0.61901
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Fabric_Carpet_Small.001
+    MeshEntry : 37
+    MaterialID : 2210838972
+  }
+  Node {
+    Name : Fabric_Towel_folded.001
+    Position : 2.70114,1.33491,0.0388095
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Fabric_Towel_folded.001
+    MeshEntry : 38
+    MaterialID : 2210838972
+  }
+  Node {
+    Name : Selling_holder_Small.002
+    Position : 0.173793,2.9533,1.81622
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Selling_holder_Small.002
+    MeshEntry : 39
+    MaterialID : 2707864558
+  }
+  Node {
+    Name : Sink.001
+    Position : 1.20658,0.605657,0.472778
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Sink.001
+    MeshEntry : 40
+    MaterialID : 28364634
+  }
+  Node {
+    Name : Hook.005.004
+    Position : 0.737081,1.59593,-2.97021
+    Rotation : 1,-1.32176e-11,1.04204e-08,-1.45172e-07
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Hook.005
+    MeshEntry : 15
+    MaterialID : 1337326481
+  }
+  Node {
+    Name : Candle.001.002
+    Position : 1.97664,1.67465,0.859984
+    Rotation : -0.707107,-1.44957e-07,0.707107,1.40874e-07
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Candle.001
+    MeshEntry : 13
+    MaterialID : 3877091608
+  }
+  Node {
+    Name : Hook.005.005
+    Position : 1.97728,1.59593,0.91823
+    Rotation : 1.16323e-06,-8.03686e-07,1,-6.53867e-07
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Hook.005
+    MeshEntry : 15
+    MaterialID : 1337326481
+  }
+  Node {
+    Name : Pic_2.001
+    Position : -1.51357,1.9568,-2.99037
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Pic_2.001
+    MeshEntry : 44
+    MaterialID : 6646559
+  }
+  Node {
+    Name : Candle.001.003
+    Position : 0.551529,1.67465,0.859984
+    Rotation : -0.707107,-2.4393e-07,0.707107,1.74442e-07
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Candle.001
+    MeshEntry : 13
+    MaterialID : 3877091608
+  }
+  Node {
+    Name : Hook.005.006
+    Position : 0.552164,1.59593,0.91823
+    Rotation : 3.621e-07,5.02711e-07,1,-1.07613e-07
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Hook.005
+    MeshEntry : 15
+    MaterialID : 1337326481
+  }
+  Node {
+    Name : Cup_glass_2.001
+    Position : 1.62578,1.00916,0.244555
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Cup_glass_2.001
+    MeshEntry : 47
+    MaterialID : 1201439092
+  }
+  Node {
+    Name : Cup_Ceramic_2.001
+    Position : 2.72669,1.65924,0.212359
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Cup_Ceramic_2.001
+    MeshEntry : 48
+    MaterialID : 1201439092
+  }
+  Node {
+    Name : Cup_Can_2.001
+    Position : -1.99638,1.04048,-1.27242
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Cup_Can_2.001
+    MeshEntry : 49
+    MaterialID : 1201439092
+  }
+  Node {
+    Name : Sink.002
+    Position : -2.08063,0.515573,-0.969402
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Sink.002
+    MeshEntry : 50
+    MaterialID : 28364634
+  }
+  Node {
+    Name : Wall_Doorway_Door.001
+    Position : -0.611601,1.49866,1.01785
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Wall_Doorway_Door.001
+    MeshEntry : 51
+    MaterialID : 2707864558
+  }
+  Node {
+    Name : Wall_Clear_long.002
+    Position : -1.41055,1.49944,2.56645
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Wall_Clear_long.002
+    MeshEntry : 52
+    MaterialID : 2707864558
+  }
+  Node {
+    Name : Fabric_Carpet.001
+    Position : 0.399351,0.01289,-1.73912
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Fabric_Carpet.001
+    MeshEntry : 53
+    MaterialID : 2210838972
+  }
+  Node {
+    Name : Fabric_Towel_folded2.001
+    Position : 2.59289,1.2422,0.497122
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Fabric_Towel_folded2.001
+    MeshEntry : 54
+    MaterialID : 2210838972
+  }
+  Node {
+    Name : Candle.001.004
+    Position : 0.737717,1.67465,-2.91197
+    Rotation : 0.707107,-1.33797e-07,0.707107,-3.55021e-07
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Candle.001
+    MeshEntry : 13
+    MaterialID : 3877091608
+  }
+  Node {
+    Name : Wall_Doorway_Door.001.001
+    Position : 0.83944,1.49866,2.56638
+    Rotation : 1,-2.9956e-08,-3.25563e-08,-1.13835e-10
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Wall_Doorway_Door.001
+    MeshEntry : 51
+    MaterialID : 2707864558
+  }
+  Node {
+    Name : Wall_Clear_long.002.001
+    Position : 0.138415,1.49944,-3.07172
+    Rotation : 1,-2.48991e-08,-6.518e-09,8.88887e-09
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Wall_Clear_long.002
+    MeshEntry : 52
+    MaterialID : 2707864558
+  }
+  Node {
+    Name : Door.001
+    Position : -0.492231,1.14042,0.637735
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Door.001
+    MeshEntry : 58
+    MaterialID : 1337326481
+  }
+  Node {
+    Name : Pic_1.001
+    Position : -1.77095,1.57693,0.93431
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Pic_1.001
+    MeshEntry : 59
+    MaterialID : 6646559
+  }
+  Node {
+    Name : Cup_glass_1.001
+    Position : 2.73802,1.6596,0.602803
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Cup_glass_1.001
+    MeshEntry : 60
+    MaterialID : 1201439092
+  }
+  Node {
+    Name : Cup_Ceramic_1.001
+    Position : 2.72773,1.62092,0.438461
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Cup_Ceramic_1.001
+    MeshEntry : 61
+    MaterialID : 1201439092
+  }
+  Node {
+    Name : Cap_Can_1.001
+    Position : -1.96249,1.02365,-1.05767
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Cap_Can_1.001
+    MeshEntry : 62
+    MaterialID : 1201439092
+  }
+  Node {
+    Name : Wall_Clear_Short.001.002
+    Position : 2.38843,1.49944,-3.07385
+    Rotation : 0.707107,-8.77096e-08,0.707107,-9.23003e-08
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Wall_Clear_Short.001
+    MeshEntry : 16
+    MaterialID : 2707864558
+  }
+  Node {
+    Name : Curtain_flat.002
+    Position : -2.48178,1.34118,-0.979932
+    Rotation : 1,0,0,0
+    Scale : 1,1,1
+    Mesh : models/bathroom.obj
+    MeshName : Curtain_flat.002
+    MeshEntry : 64
+    MaterialID : 1337326481
+  }
+}

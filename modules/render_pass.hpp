@@ -15,6 +15,13 @@ struct RenderBuffers;
 struct RenderPassResources {
     uint32_t blurPipelineIndex = 0xFFFFFFFF;
 
+    // 1x1 fallback material textures; instance data substitutes these for absent maps so the
+    // lit shader can sample all four material textures unconditionally.
+    uint32_t defaultAlbedoIndex = 0xFFFFFFFF;
+    uint32_t defaultRoughnessIndex = 0xFFFFFFFF;
+    uint32_t defaultMetallicIndex = 0xFFFFFFFF;
+    uint32_t defaultNormalIndex = 0xFFFFFFFF;
+
     uint32_t depthSamplerIndex = 0xFFFFFFFF;
     uint32_t defaultSamplerIndex = 0xFFFFFFFF;
     // Linear clamp-to-edge, for screen-space textures: defaultSampler is eRepeat, which wraps

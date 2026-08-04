@@ -34,6 +34,9 @@ struct LitPushConstants {
     // so the lit pass sets this to the pipeline range's first command index (0 for the prepass).
     uint                drawIDOffset;
     float               time;
+    // Slot into litFrame[] (binding 5) holding this pass's LitFrameUniforms.
+    uint                frameUniformsIndex;
+    uint                _pad0;
 };
 
 struct LitPass {
@@ -58,6 +61,34 @@ struct LitPass {
     uint giIrradianceIndices[6]; // per-face irradiance volumes, VOXEL_FACE_DIRS order
     float giStrength;
     float giSkyIntensity;  // cone-miss sky radiance scale (skyboxIntensity * vxgi.skyStrength)
+};
+
+#define MAX_UBO_LIGHTS 256
+
+// Hot per-light data mirrored into the lit frame UBO (GPULightHot in structs.hpp).
+// vec4-only members so std140 layout == the C++ struct byte-for-byte.
+struct LightHot {
+    float4 positionRange;   // xyz world position, w range
+    float4 direction;       // xyz normalized direction, w unused
+    float4 colorIntensity;  // rgb color, w intensity (<= 0 -> disabled sentinel slot)
+    uint4  typeFlags;       // x LightType, y castsShadows, z numCascades, w unused
+    float4 cascadeSplits;   // CSM split distances (xyz)
+};
+
+// Per-frame uniform block for the lit pass (GPULitFrameUniforms in structs.hpp). Hot pass/light
+// data reads go through the constant cache here instead of per-fragment BDA loads; the fat
+// Light/LitPass BDA buffers stay authoritative for every other pass.
+struct LitFrameUniforms {
+    float4x4 voxelViewProjection; // world -> voxel grid clip
+    float4 cameraPosExtent;       // xyz cameraPos, w voxelWorldExtent
+    float4 cameraForwardGI;       // xyz cameraForward, w giStrength
+    uint4  indicesA;              // x samplerIndex, y lightCount (<= MAX_UBO_LIGHTS), z shadowSamplerIndex, w shadowAtlasIndex
+    uint4  indicesB;              // x voxelTextureIndex, y voxelSamplerIndex, z voxelResolution, w giMode
+    uint4  giParams;              // x giHemisphereRays, y giMaxSteps, z giFetchBatch, w unused
+    uint4  giIrradianceA;         // irradiance volume indices 0-3 (VOXEL_FACE_DIRS order)
+    uint4  giIrradianceB;         // xy irradiance indices 4-5, zw unused
+    float4 giFloats;              // x giSkyIntensity, yzw unused
+    LightHot lights[MAX_UBO_LIGHTS];
 };
 
 struct Cascade {
@@ -126,6 +157,12 @@ struct VertexOutput
     float3 bitangent : BITANGENT;
     nointerpolation uint drawID : DRAW_ID;
     nointerpolation uint instanceID : INSTANCE_ID;
+    // Per-instance material data forwarded from the VS so the FS never loads LitInstanceData —
+    // that per-fragment instance -> texture-index -> descriptor -> sample chain was the lit
+    // pass's dominant stall. Attribute reads don't hit the memory scoreboard.
+    nointerpolation uint4  texIndices : TEX_INDICES; // albedo, roughness, metallic, normal
+    nointerpolation uint2  matInfo    : MAT_INFO;    // x environmentMapIndex, y materialFlags
+    nointerpolation float3 matParams  : MAT_PARAMS;  // x metallic, y roughness, z alphaCutoff
 };
 
 // Shared descriptor bindings
@@ -143,6 +180,9 @@ SamplerState samplers[];
 
 [[vk::binding(3,0)]]
 SamplerComparisonState shadowCmpSampler;
+
+[[vk::binding(5,0)]]
+ConstantBuffer<LitFrameUniforms> litFrame[];
 
 
 
@@ -164,20 +204,19 @@ float calculateDirectionalShadow(float3 fragWorldPos, float3 cameraPos, float3 c
     // Walk outward from the split-selected cascade; if the sample lands outside
     // a tile's bounds, try the next-larger cascade rather than returning lit.
     // This prevents block-shaped unshadowed regions on jittered volume samples
-    // near cascade XY edges.   
+    // near cascade XY edges.
     for (int c = cascadeIndex; c < int(light.numCascades); c++) {
-        Cascade cascade = light.cascades[c];
-
+        // Member reads through the pointer, not a 96-byte struct copy.
         float NdotL = abs(dot(geometricNormal, normalize(L + float3(1e-8))));
-        float normalOffset = cascade.worldTexelSize * (1.0 - NdotL) * 2.0;
+        float normalOffset = light.cascades[c].worldTexelSize * (1.0 - NdotL) * 2.0;
         float3 biasedPos = fragWorldPos + geometricNormal * normalOffset;
 
-        float4 fragPosLightSpace = mul(cascade.lightSpaceMatrix, float4(biasedPos, 1.0));
+        float4 fragPosLightSpace = mul(light.cascades[c].lightSpaceMatrix, float4(biasedPos, 1.0));
         float3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
         projCoords.x = projCoords.x * 0.5 + 0.5;
         projCoords.y = projCoords.y * 0.5 + 0.5;
 
-        float texelSize = cascade.texelSize;
+        float texelSize = light.cascades[c].texelSize;
         if (projCoords.x < texelSize || projCoords.x > 1.0 - texelSize ||
             projCoords.y < texelSize || projCoords.y > 1.0 - texelSize ||
             projCoords.z < 0.0 || projCoords.z > 1.0) {
@@ -186,8 +225,9 @@ float calculateDirectionalShadow(float3 fragWorldPos, float3 cameraPos, float3 c
 
         float currentDepth = projCoords.z - 0.0001f;
 
-        float2 rangeMin  = cascade.shadowAtlasRange.xy;
-        float2 rangeSpan = cascade.shadowAtlasRange.zw - cascade.shadowAtlasRange.xy;
+        float4 atlasRange = light.cascades[c].shadowAtlasRange;
+        float2 rangeMin  = atlasRange.xy;
+        float2 rangeSpan = atlasRange.zw - atlasRange.xy;
 
         float2 atlasUV = rangeMin + projCoords.xy * rangeSpan;
         float lit = textures[shadowAtlasIdx].SampleCmpLevelZero(
@@ -214,13 +254,11 @@ float calculatePointShadow(float3 fragWorldPos, float3 geometricNormal, float3 L
         faceIndex = fragToLight.z > 0.0 ? 4 : 5;
     }
 
-    ShadowMap face = light.shadowMaps[faceIndex];
-
     float NdotL = saturate(abs(dot(geometricNormal, L)));
     float normalOffset = (1.0 - NdotL) * light.range / float(light.shadowResolution);
     float3 biasedPos = fragWorldPos + geometricNormal * normalOffset;
 
-    float4 fragPosLightSpace = mul(face.lightSpaceMatrix, float4(biasedPos, 1.0));
+    float4 fragPosLightSpace = mul(light.shadowMaps[faceIndex].lightSpaceMatrix, float4(biasedPos, 1.0));
     float3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
     projCoords.x = projCoords.x * 0.5 + 0.5;
     projCoords.y = projCoords.y * 0.5 + 0.5;
@@ -233,8 +271,9 @@ float calculatePointShadow(float3 fragWorldPos, float3 geometricNormal, float3 L
 
     float currentDepth = projCoords.z - 0.0001f;
 
-    float2 rangeMin  = face.shadowAtlasRange.xy;
-    float2 rangeSpan = face.shadowAtlasRange.zw - face.shadowAtlasRange.xy;
+    float4 atlasRange = light.shadowMaps[faceIndex].shadowAtlasRange;
+    float2 rangeMin  = atlasRange.xy;
+    float2 rangeSpan = atlasRange.zw - atlasRange.xy;
 
     float2 atlasUV = rangeMin + projCoords.xy * rangeSpan;
     float lit = textures[shadowAtlasIdx].SampleCmpLevelZero(
@@ -255,6 +294,70 @@ float calculateShadow(float3 fragWorldPos, float3 cameraPos, float3 cameraForwar
     return 0.0;
 }
 
+// Lit-pass shadow path: cascade selection comes from UBO-provided splits instead of the
+// stride-96 walk over light.cascades[i].splitDistance, and there is no showCascades branch,
+// so the compiler can sink the compare-fetch wait past independent BRDF math at the call site.
+float calculateDirectionalShadowHot(float3 fragWorldPos, float3 cameraPos, float3 cameraForward,
+                                    float3 geometricNormal, float3 L, Light* light, uint shadowAtlasIdx,
+                                    float3 cascadeSplits, uint numCascades)
+{
+    float viewDepth = dot(fragWorldPos - cameraPos, cameraForward);
+
+    int cascadeIndex = int(numCascades) - 1;
+    for (int i = 0; i < int(numCascades); i++) {
+        if (viewDepth < cascadeSplits[i]) {
+            cascadeIndex = i;
+            break;
+        }
+    }
+
+    // Same outward walk as calculateDirectionalShadow.
+    for (int c = cascadeIndex; c < int(numCascades); c++) {
+        float NdotL = abs(dot(geometricNormal, normalize(L + float3(1e-8))));
+        float normalOffset = light.cascades[c].worldTexelSize * (1.0 - NdotL) * 2.0;
+        float3 biasedPos = fragWorldPos + geometricNormal * normalOffset;
+
+        float4 fragPosLightSpace = mul(light.cascades[c].lightSpaceMatrix, float4(biasedPos, 1.0));
+        float3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
+        projCoords.x = projCoords.x * 0.5 + 0.5;
+        projCoords.y = projCoords.y * 0.5 + 0.5;
+
+        float texelSize = light.cascades[c].texelSize;
+        if (projCoords.x < texelSize || projCoords.x > 1.0 - texelSize ||
+            projCoords.y < texelSize || projCoords.y > 1.0 - texelSize ||
+            projCoords.z < 0.0 || projCoords.z > 1.0) {
+            continue;
+        }
+
+        float currentDepth = projCoords.z - 0.0001f;
+
+        float4 atlasRange = light.cascades[c].shadowAtlasRange;
+        float2 rangeMin  = atlasRange.xy;
+        float2 rangeSpan = atlasRange.zw - atlasRange.xy;
+
+        float2 atlasUV = rangeMin + projCoords.xy * rangeSpan;
+        float lit = textures[shadowAtlasIdx].SampleCmpLevelZero(
+            shadowCmpSampler,
+            atlasUV,
+            currentDepth
+        );
+        return 1.0 - lit;
+    }
+    return 0.0;
+}
+
+float calculateShadowHot(float3 fragWorldPos, float3 cameraPos, float3 cameraForward, float3 geometricNormal,
+                         float3 L, uint lightType, Light* light, uint shadowAtlasIdx,
+                         float3 cascadeSplits, uint numCascades)
+{
+    if (lightType == 1) { // Directional
+        return calculateDirectionalShadowHot(fragWorldPos, cameraPos, cameraForward, geometricNormal, L, light, shadowAtlasIdx, cascadeSplits, numCascades);
+    } else if (lightType == 0) { // Point
+        return calculatePointShadow(fragWorldPos, geometricNormal, L, light, shadowAtlasIdx);
+    }
+    return 0.0;
+}
+
 // Shadow lookup for voxel radiance injection. Directional lights sample the dedicated VXGI
 // tile (shadowMaps[0], fit around the voxel volume) instead of the camera-driven cascades,
 // so injected radiance doesn't shift with the view. Point lights use the regular cube faces.
@@ -264,13 +367,11 @@ float calculateVXGIShadow(float3 fragWorldPos, float3 geometricNormal, float3 L,
         return calculatePointShadow(fragWorldPos, geometricNormal, L, light, shadowAtlasIdx);
     }
 
-    ShadowMap map = light.shadowMaps[0];
-
     // ~one voxel of normal offset against acne; the tile has no per-cascade texel metadata.
     float NdotL = saturate(abs(dot(geometricNormal, L)));
     float3 biasedPos = fragWorldPos + geometricNormal * (1.0 - NdotL) * 0.2;
 
-    float4 fragPosLightSpace = mul(map.lightSpaceMatrix, float4(biasedPos, 1.0));
+    float4 fragPosLightSpace = mul(light.shadowMaps[0].lightSpaceMatrix, float4(biasedPos, 1.0));
     float3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
     projCoords.x = projCoords.x * 0.5 + 0.5;
     projCoords.y = projCoords.y * 0.5 + 0.5;
@@ -284,8 +385,9 @@ float calculateVXGIShadow(float3 fragWorldPos, float3 geometricNormal, float3 L,
 
     float currentDepth = projCoords.z - 0.0001f;
 
-    float2 rangeMin  = map.shadowAtlasRange.xy;
-    float2 rangeSpan = map.shadowAtlasRange.zw - map.shadowAtlasRange.xy;
+    float4 atlasRange = light.shadowMaps[0].shadowAtlasRange;
+    float2 rangeMin  = atlasRange.xy;
+    float2 rangeSpan = atlasRange.zw - atlasRange.xy;
 
     float2 atlasUV = rangeMin + projCoords.xy * rangeSpan;
     float lit = textures[shadowAtlasIdx].SampleCmpLevelZero(
@@ -365,6 +467,9 @@ VertexOutput litVertMain(uint vertexID, uint instanceID, uint drawID)
     output.bitangent = normalize(cross(output.normal, output.tangent));
     output.drawID = drawID;
     output.instanceID = absInstance;
+    output.texIndices = uint4(draw.albedoTextureIndex, draw.roughnessTextureIndex, draw.metallicTextureIndex, draw.normalTextureIndex);
+    output.matInfo = uint2(draw.environmentMapIndex, draw.materialFlags);
+    output.matParams = float3(draw.metallic, draw.roughness, draw.alphaCutoff);
     return output;
 }
 

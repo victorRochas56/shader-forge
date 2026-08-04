@@ -174,16 +174,39 @@ float3 decodeIrradiance(float4 s) {
 // voxel away and zeroes the valid slab's trilinear weight (black walls/floors). The surface's own
 // voxel is the right source — face selection by normal sign already separates the two sides of thin
 // geometry sharing a voxel.
-public float3 sampleAmbientCubeGI(uint faceIndices[6], uint samplerIndex, float4x4 worldToGridClip,
-                                  uint resolution, float worldExtent, float3 worldPos, float3 N) {
+//
+// Split into taps + resolve so callers can issue the fetches early (they only need worldPos + N)
+// and decode at point of use — the tap latency then hides behind independent work in between.
+public struct AmbientCubeTaps {
+    public float4 s0;
+    public float4 s1;
+    public float4 s2;
+    public float3 w; // N² face weights, sum to 1
+};
+
+public AmbientCubeTaps sampleAmbientCubeTaps(uint faceIndices[6], uint samplerIndex, float4x4 worldToGridClip,
+                                             float3 worldPos, float3 N) {
     SamplerState smp = samplers[samplerIndex];
     N = normalize(N);
     float3 uvw = worldToGridUVW(worldPos, worldToGridClip);
-    float3 w = N * N; // face weights, sum to 1
     uint fx = N.x < 0.0 ? 1 : 0;
     uint fy = N.y < 0.0 ? 3 : 2;
     uint fz = N.z < 0.0 ? 5 : 4;
-    return w.x * decodeIrradiance(textures3D[faceIndices[fx]].SampleLevel(smp, uvw, 0))
-         + w.y * decodeIrradiance(textures3D[faceIndices[fy]].SampleLevel(smp, uvw, 0))
-         + w.z * decodeIrradiance(textures3D[faceIndices[fz]].SampleLevel(smp, uvw, 0));
+    AmbientCubeTaps t;
+    t.w = N * N;
+    t.s0 = textures3D[faceIndices[fx]].SampleLevel(smp, uvw, 0);
+    t.s1 = textures3D[faceIndices[fy]].SampleLevel(smp, uvw, 0);
+    t.s2 = textures3D[faceIndices[fz]].SampleLevel(smp, uvw, 0);
+    return t;
+}
+
+public float3 resolveAmbientCubeGI(AmbientCubeTaps t) {
+    return t.w.x * decodeIrradiance(t.s0)
+         + t.w.y * decodeIrradiance(t.s1)
+         + t.w.z * decodeIrradiance(t.s2);
+}
+
+public float3 sampleAmbientCubeGI(uint faceIndices[6], uint samplerIndex, float4x4 worldToGridClip,
+                                  uint resolution, float worldExtent, float3 worldPos, float3 N) {
+    return resolveAmbientCubeGI(sampleAmbientCubeTaps(faceIndices, samplerIndex, worldToGridClip, worldPos, N));
 }

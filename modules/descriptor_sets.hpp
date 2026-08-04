@@ -269,6 +269,19 @@ class DescriptorSet {
         storageImageBindingIndex = bindingIndex;
         bindingIndex++;
 
+        // Uniform buffers (small per-frame constant blocks, e.g. the lit frame uniforms).
+        // UBO reads go through the constant cache — much cheaper than the LDG path BDA storage
+        // buffers take for uniform data. Descriptors are written at allocation time (init, before
+        // the set is in use), so no UpdateAfterBind flag — same reasoning as storage images.
+        layoutBindings.push_back(vk::DescriptorSetLayoutBinding{.binding = bindingIndex,
+                                                                .descriptorType = vk::DescriptorType::eUniformBuffer,
+                                                                .descriptorCount = MAX_UNIFORM_BUFFERS,
+                                                                .stageFlags = vk::ShaderStageFlagBits::eFragment | vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eCompute});
+        poolSizes.push_back(vk::DescriptorPoolSize(vk::DescriptorType::eUniformBuffer, MAX_UNIFORM_BUFFERS));
+        bindingFlags.push_back(vk::DescriptorBindingFlagBits::ePartiallyBound);
+        uniformBufferBindingIndex = bindingIndex;
+        bindingIndex++;
+
         // Storage buffers are now accessed via Buffer Device Address (BDA) — no descriptor bindings needed
 
         vk::DescriptorPoolCreateInfo poolInfo{};
@@ -499,6 +512,42 @@ class DescriptorSet {
                                      .descriptorType = vk::DescriptorType::eSampler,
                                      .pImageInfo = &imageInfo};
         device.getDevice().updateDescriptorSets(write, {});
+    }
+
+    // Creates a persistently-mapped host-visible uniform buffer and writes its descriptor into the
+    // bindless UBO binding. Call after createDescriptorSet, before the set is used by a frame.
+    uint32_t allocateUniformBuffer(vk::DeviceSize sizeBytes, std::string name = "") {
+        if (uniformBuffers.size() >= MAX_UNIFORM_BUFFERS) {
+            throw std::runtime_error("Maximum uniform buffers exceeded");
+        }
+        vk::BufferCreateInfo bufferInfo{.size = sizeBytes, .usage = vk::BufferUsageFlagBits::eUniformBuffer, .sharingMode = vk::SharingMode::eExclusive};
+        vk::raii::Buffer buffer(device.getDevice(), bufferInfo);
+        vk::MemoryRequirements memRequirements = buffer.getMemoryRequirements();
+        uint32_t memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, device);
+        vk::MemoryAllocateInfo allocInfo{.allocationSize = memRequirements.size, .memoryTypeIndex = memoryTypeIndex};
+        vk::raii::DeviceMemory memory(device.getDevice(), allocInfo);
+        buffer.bindMemory(*memory, 0);
+        void* mapped = memory.mapMemory(0, sizeBytes);
+
+        uint32_t index = static_cast<uint32_t>(uniformBuffers.size());
+        vk::DescriptorBufferInfo bufInfo{.buffer = *buffer, .offset = 0, .range = sizeBytes};
+        vk::WriteDescriptorSet write{.dstSet = *descriptorSet,
+                                     .dstBinding = uniformBufferBindingIndex,
+                                     .dstArrayElement = index,
+                                     .descriptorCount = 1,
+                                     .descriptorType = vk::DescriptorType::eUniformBuffer,
+                                     .pBufferInfo = &bufInfo};
+        device.getDevice().updateDescriptorSets(write, {});
+
+        uniformBuffers.push_back(UniformBufferResource{std::move(buffer), std::move(memory), mapped, sizeBytes, std::move(name)});
+        return index;
+    }
+
+    void* getUniformBufferMapped(uint32_t index) {
+        if (index >= uniformBuffers.size()) {
+            throw std::runtime_error("Invalid uniform buffer index");
+        }
+        return uniformBuffers[index].mappedData;
     }
 
     template <typename T> uint32_t createFixedBuffer(uint32_t maxElements = MAX_FIXED_BUFFER, bool usesDynamicOffset = false, std::string name = "") {
@@ -757,6 +806,15 @@ class DescriptorSet {
     uint32_t textureBindingIndex;
     uint32_t cubemapBindingIndex;
     uint32_t storageImageBindingIndex;
+    uint32_t uniformBufferBindingIndex;
+    struct UniformBufferResource {
+        vk::raii::Buffer buffer;
+        vk::raii::DeviceMemory memory;
+        void* mappedData = nullptr;
+        vk::DeviceSize size = 0;
+        std::string name;
+    };
+    std::vector<UniformBufferResource> uniformBuffers;
     uint32_t storageImageCount = 0;
     std::queue<uint32_t> freeStorageImageSlots;
     std::queue<uint32_t> freeTextureSlots;

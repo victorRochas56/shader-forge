@@ -15,185 +15,172 @@ struct FragmentOutput
     float4 worldNormal : SV_Target2;
 };
 
-[shader("fragment")]
-FragmentOutput fragMain(VertexOutput input)
+// Hot frame data for this pass (constant-cache reads instead of per-fragment BDA loads).
+#define UF litFrame[pc.frameUniformsIndex]
+
+// GI_MODE: 0 = per-pixel cone trace, 1 = ambient-cube lookup. Baked per entry point so each
+// pipeline variant only compiles its own GI path — carrying both pushed live registers to ~124
+// and collapsed occupancy for every fragment, even when the cone path never ran.
+// DEBUG_CASCADES compiles the cascade-visualization path; only the fallback fragMain keeps it.
+FragmentOutput litFragImpl<let GI_MODE : int, let DEBUG_CASCADES : bool>(VertexOutput input)
 {
     FragmentOutput output;
+    float2 uv = input.texCoord;
+    uint flags = input.matInfo.y;
+    bool hasRoughness = (flags & (1u << 2)) != 0;
+    bool hasMetallic  = (flags & (1u << 3)) != 0;
+    bool hasNormal    = (flags & (1u << 4)) != 0;
+    bool alphaClip    = (flags & (1u << 5)) != 0;
 
-    LitInstanceData inst = pc.litInstanceData[input.instanceID];
+    SamplerState smp = samplers[UF.indicesA.x];
 
-    bool flipNormal  = (inst.materialFlags & (1u << 0)) != 0;
-    bool hasAlbedo   = (inst.materialFlags & (1u << 1)) != 0;
-    bool hasRoughness= (inst.materialFlags & (1u << 2)) != 0;
-    bool hasMetallic = (inst.materialFlags & (1u << 3)) != 0;
-    bool hasNormal   = (inst.materialFlags & (1u << 4)) != 0;
-    bool alphaClip   = (inst.materialFlags & (1u << 5)) != 0;
-
-    float3 N;
-    float3 normalMap;
-
-    const SamplerState sampler = samplers[pc.litPassData.samplerIndex];
-
-    if(hasNormal) {
-        normalMap = textures[inst.normalTextureIndex].Sample(sampler, input.texCoord).rgb;
+    // Ambient-cube taps first: they only need worldPos + geometric normal, so the three volume
+    // fetches stay in flight through the material fetches, TBN math and the whole light loop.
+    AmbientCubeTaps giTaps;
+    giTaps.s0 = float4(0.0);
+    giTaps.s1 = float4(0.0);
+    giTaps.s2 = float4(0.0);
+    giTaps.w = float3(0.0);
+    if (GI_MODE == 1) {
+        uint faceIndices[6] = { UF.giIrradianceA.x, UF.giIrradianceA.y, UF.giIrradianceA.z,
+                                UF.giIrradianceA.w, UF.giIrradianceB.x, UF.giIrradianceB.y };
+        giTaps = sampleAmbientCubeTaps(faceIndices, UF.indicesB.y, UF.voxelViewProjection, input.worldPos, input.normal);
     }
 
-    float4 albedo = float4(1.0, 1.0, 1.0, 1.0);
-    if(hasAlbedo) {
-        albedo = textures[inst.albedoTextureIndex].Sample(sampler, input.texCoord);
-    }
-    if (alphaClip && albedo.a < inst.alphaCutoff)
+    // All four material fetches issued back-to-back with no control flow between them, so their
+    // latencies overlap instead of serializing. Absent maps point at 1x1 defaults (renderer side),
+    // making every index safe to sample.
+    float4 albedo    = textures[input.texIndices.x].Sample(smp, uv);
+    float4 roughTex  = textures[input.texIndices.y].Sample(smp, uv);
+    float4 metalTex  = textures[input.texIndices.z].Sample(smp, uv);
+    float3 normalTex = textures[input.texIndices.w].Sample(smp, uv).rgb;
+
+    if (alphaClip && albedo.a < input.matParams.z)
         discard;
 
+    float roughness = hasRoughness ? roughTex.r : input.matParams.y;
+    float metallic  = hasMetallic  ? metalTex.r : input.matParams.x;
 
-    float4 roughness = float4(inst.roughness, inst.roughness, inst.roughness, 1.0);
-    if(hasRoughness) {
-        roughness = textures[inst.roughnessTextureIndex].Sample(sampler, input.texCoord);
-    }
-
-    float4 metallic = float4(inst.metallic, inst.metallic, inst.metallic, 1.0);
-    if(hasMetallic){
-        metallic = textures[inst.metallicTextureIndex].Sample(sampler, input.texCoord);
-    }
-
-
+    float3 N_world = normalize(input.normal);
+    float3 N;
     if (hasNormal) {
-        normalMap = normalMap * 2.0 - 1.0;
-        float normalIntensity = 1.0;
-        normalMap.xy *= normalIntensity;
+        float3 normalMap = normalTex * 2.0 - 1.0;
         normalMap.y *= -1.0;
         normalMap = normalize(normalMap);
-
         float3 T = normalize(input.tangent);
-        float3 N_world = normalize(input.normal);
         T = normalize(T - dot(T, N_world) * N_world);
         float3 B = normalize(cross(N_world, T));
-        float3x3 TBN = float3x3(T, B, N_world);
-
-        N = normalize(mul(normalMap, TBN));
+        N = normalize(mul(normalMap, float3x3(T, B, N_world)));
     } else {
-        N = normalize(input.normal);
+        N = N_world;
     }
 
-    //do as early as possible to not wait for scoreboard stall
-    TextureCube envMap = cubemaps[inst.environmentMapIndex];
-    //float3 specularIBL = calculateSpecularIBL(N, V, roughness.r, F0, envMap, envSampler);
-    float3 diffuseIBL = calculateDiffuseIBL(N, albedo.rgb, envMap, inst.maxEnvMips, sampler);
-
-    float3 V = normalize(pc.litPassData.cameraPos.xyz - input.worldPos);
-    float3 F0 = float3(0.04);
-    F0 = lerp(F0, albedo.rgb, metallic.r);
+    float3 cameraPos = UF.cameraPosExtent.xyz;
+    float3 cameraForward = UF.cameraForwardGI.xyz;
+    float3 V = normalize(cameraPos - input.worldPos);
+    float3 F0 = lerp(float3(0.04), albedo.rgb, metallic);
+    float NdotV = max(dot(N, V), 0.001);
+    uint shadowAtlasIdx = UF.indicesA.w;
 
     float3 Lo = float3(0.0);
 
-    for(int i = 0; i < pc.litPassData.lightCount; i++){
-        Light* currentLight = &pc.lights[i];
+    for (uint i = 0; i < UF.indicesA.y; i++) {
+        float4 colorIntensity = UF.lights[i].colorIntensity;
+        // Sparse slot skip: removed lights leave a zeroed sentinel.
+        if (colorIntensity.w <= 0.0) continue;
 
-        // Sparse slot skip: removed lights leave a zeroed sentinel in the buffer.
-        if(currentLight.intensity <= 0.0) continue;
-
-        if(currentLight.type != 1) {
-            float distance = length(currentLight.position - input.worldPos);
-            if(distance > currentLight.range){
-                continue;
-            }
-        }
-
+        uint4 typeFlags = UF.lights[i].typeFlags; // x type, y castsShadows, z numCascades
         float3 L;
-        float attenuation;
         float3 radiance;
-
-        if(currentLight.type == 1) {
-            float3 lightDir = currentLight.direction;
-            lightDir = normalize(lightDir);
-            L = -lightDir;
-            attenuation = 1.0;
-            radiance = currentLight.color.rgb * currentLight.intensity;
+        if (typeFlags.x == 1) { // directional
+            L = -normalize(UF.lights[i].direction.xyz);
+            radiance = colorIntensity.rgb * colorIntensity.w;
+        } else {
+            float4 positionRange = UF.lights[i].positionRange;
+            float3 toLight = positionRange.xyz - input.worldPos;
+            float dist2 = dot(toLight, toLight);
+            if (dist2 > positionRange.w * positionRange.w) continue;
+            L = toLight / sqrt(dist2);
+            radiance = colorIntensity.rgb * (colorIntensity.w / dist2);
         }
-        else {
-            float3 lightPos = currentLight.position;
-            float distance = length(lightPos - input.worldPos);
 
-            L = normalize(lightPos - input.worldPos);
-            attenuation = 1.0 / (distance * distance);
-            radiance = currentLight.color.rgb * currentLight.intensity * attenuation;
+        float NdotL_raw = dot(N, L);
+        if (NdotL_raw <= 0.0) continue;
+
+        // Shadow tap issued before the BRDF math so the compare-fetch latency hides behind it.
+        float shadow = 0.0;
+        if (typeFlags.y == 1) {
+            Light* currentLight = &pc.lights[i];
+            if (DEBUG_CASCADES) {
+                if (currentLight.showCascades > 0) {
+                    shadow = calculateShadow(input.worldPos, cameraPos, cameraForward, N_world, L, currentLight, shadowAtlasIdx);
+                    if (shadow == 0) output.color = float4(1, 0, 0, 1);
+                    if (shadow == 1) output.color = float4(0, 1, 0, 1);
+                    if (shadow == 2) output.color = float4(0, 0, 1, 1);
+                    if (shadow == 3) output.color = float4(1, 1, 0, 1);
+                    return output;
+                }
+            }
+            shadow = calculateShadowHot(input.worldPos, cameraPos, cameraForward, N_world, L,
+                                        typeFlags.x, currentLight, shadowAtlasIdx,
+                                        UF.lights[i].cascadeSplits.xyz, typeFlags.z);
         }
 
         float3 H = normalize(V + L);
-
-        float NdotL_raw = dot(N, L);
-        if(NdotL_raw <= 0.0) {
-            continue;
-        }
-
-        float NdotV = max(dot(N, V), 0.001);
         float NdotL = max(NdotL_raw, 0.001);
-        float NdotH = max(dot(N, H), 0.001);
         float HdotV = max(dot(H, V), 0.001);
 
-        float NDF = DistributionGGX(N, H, roughness.r);
-        float G = GeometrySmith(N, V, L, roughness.r);
+        float NDF = DistributionGGX(N, H, roughness);
+        float G = GeometrySmith(N, V, L, roughness);
         float3 F = fresnelSchlick(HdotV, F0);
 
-        float3 kS = F;
-        float3 kD = float3(1.0) - kS;
-        kD *= 1.0 - metallic.r;
+        float3 kD = (float3(1.0) - F) * (1.0 - metallic);
 
-        float3 numerator = NDF * G * F;
-        float denominator = max(4.0 * NdotV * NdotL, 0.001);
-        float3 specular = numerator / denominator;
-        specular = max(specular, float3(0.0, 0.0, 0.0));
-        specular = min(specular, float3(100.0, 100.0, 100.0));
-
-        float shadow = 0.0;
-        if(currentLight.castsShadows == 1) {
-            float3 geometricNormal = normalize(input.normal);
-            shadow = calculateShadow(input.worldPos, pc.litPassData.cameraPos, pc.litPassData.cameraForward, geometricNormal, L, currentLight, pc.litPassData.shadowAtlasIndex);
-            if( currentLight.showCascades>0){
-                if(shadow == 0){
-                    output.color = float4(1,0,0,1);
-                }
-                if(shadow == 1){
-                    output.color = float4(0,1,0,1);
-                }
-                if(shadow == 2){
-                    output.color = float4(0,0,1,1);
-                }
-                if(shadow == 3){
-                    output.color = float4(1,1,0,1);
-                }
-                return output;
-            }
-        }
+        float3 specular = NDF * G * F / max(4.0 * NdotV * NdotL, 0.001);
+        specular = clamp(specular, float3(0.0), float3(100.0));
 
         Lo += (1.0 - shadow) * (kD * albedo.rgb / 3.14159265 + specular) * radiance * NdotL;
     }
 
     float3 GI;
-    if (pc.litPassData.giMode == 1) {
-        GI = sampleAmbientCubeGI(pc.litPassData.giIrradianceIndices, pc.litPassData.voxelSamplerIndex,
-                                 pc.litPassData.voxelViewProjection, pc.litPassData.voxelResolution,
-                                 pc.litPassData.voxelWorldExtent, input.worldPos, input.normal);
+    if (GI_MODE == 1) {
+        GI = resolveAmbientCubeGI(giTaps);
     } else {
-        GI = coneTraceVXGI(pc.litPassData.voxelTextureIndex, pc.litPassData.voxelSamplerIndex,
-                           pc.litPassData.voxelViewProjection, pc.litPassData.voxelResolution,
-                           pc.litPassData.voxelWorldExtent, input.worldPos, input.normal,
-                           pc.litPassData.giHemisphereRays, pc.litPassData.giMaxSteps,
-                           pc.litPassData.giFetchBatch, inst.environmentMapIndex, pc.litPassData.giSkyIntensity);
+        GI = coneTraceVXGI(UF.indicesB.x, UF.indicesB.y, UF.voxelViewProjection,
+                           UF.indicesB.z, UF.cameraPosExtent.w, input.worldPos, input.normal,
+                           UF.giParams.x, UF.giParams.y, UF.giParams.z,
+                           input.matInfo.x, UF.giFloats.x);
     }
-    GI *= pc.litPassData.giStrength;
+    GI *= UF.cameraForwardGI.w;
 
-    float3 kS = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0, roughness.r);
-    float3 kD = float3(1.0) - kS;
-    kD *= 1.0 - metallic.r;
+    float3 kS = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0, roughness);
+    float3 kD = (float3(1.0) - kS) * (1.0 - metallic);
 
-    float ao = 1.0;
-    float3 ambient = 0.0; //(kD * diffuseIBL) * ao;
-    float3 color = ambient + Lo + GI * kD * albedo.rgb;
+    float3 color = Lo + GI * kD * albedo.rgb;
 
     output.color = float4(color, 1.0);
-    output.roughness_metal = float4(roughness.r, metallic.r, 0.0, 1.0);
+    output.roughness_metal = float4(roughness, metallic, 0.0, 1.0);
     output.worldNormal = float4(N * 0.5 + 0.5, 1.0);
     return output;
 }
 
+// Fallback/debug: runtime giMode dispatch + cascade visualization. Bound for material thumbnails
+// and whenever a light has showCascades on; the main pass binds the specialized entries below.
+[shader("fragment")]
+FragmentOutput fragMain(VertexOutput input)
+{
+    if (UF.indicesB.w == 1) return litFragImpl<1, true>(input);
+    return litFragImpl<0, true>(input);
+}
+
+[shader("fragment")]
+FragmentOutput fragMainGICone(VertexOutput input)
+{
+    return litFragImpl<0, false>(input);
+}
+
+[shader("fragment")]
+FragmentOutput fragMainGICube(VertexOutput input)
+{
+    return litFragImpl<1, false>(input);
+}

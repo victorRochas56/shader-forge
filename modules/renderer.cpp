@@ -194,12 +194,24 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     // Default roughness = 0.5
     std::array<uint8_t, 4> roughnessColor = {128, 128, 128, 255};
     auto [roughnessImage, roughnessMemory, roughnessImageView] = resource::createTexture(*bindless.resourceCtx, roughnessColor.data(), 1, 1, vk::Format::eR8G8B8A8Unorm);
-    uint32_t defaultRoughnessIndex = bindless.descriptorSet->allocateTexture(std::move(roughnessImage), std::move(roughnessMemory), std::move(roughnessImageView));
+    defaultRoughnessIndex = bindless.descriptorSet->allocateTexture(std::move(roughnessImage), std::move(roughnessMemory), std::move(roughnessImageView));
 
     // Default metallic = 0.0
     std::array<uint8_t, 4> metallicColor = {0, 0, 0, 255};
     auto [metallicImage, metallicMemory, metallicImageView] = resource::createTexture(*bindless.resourceCtx, metallicColor.data(), 1, 1, vk::Format::eR8G8B8A8Unorm);
-    uint32_t defaultMetallicIndex = bindless.descriptorSet->allocateTexture(std::move(metallicImage), std::move(metallicMemory), std::move(metallicImageView));
+    defaultMetallicIndex = bindless.descriptorSet->allocateTexture(std::move(metallicImage), std::move(metallicMemory), std::move(metallicImageView));
+
+    // Shared with passes (material thumbnails substitute the same defaults for absent maps).
+    passResources.defaultAlbedoIndex    = defaultAlbedoIndex;
+    passResources.defaultRoughnessIndex = defaultRoughnessIndex;
+    passResources.defaultMetallicIndex  = defaultMetallicIndex;
+    passResources.defaultNormalIndex    = defaultNormalIndex;
+
+    // Per-frame lit frame uniforms (hot pass + light data; see GPULitFrameUniforms).
+    litFrameStaging = std::make_unique<GPULitFrameUniforms>();
+    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        litFrameUniformsIndex[i] = bindless.descriptorSet->allocateUniformBuffer(sizeof(GPULitFrameUniforms), "LitFrameUniforms" + std::to_string(i));
+    }
 
     /////S=================================================PIPELINES=================================================/////
     skyboxPipelineIndex =
@@ -235,6 +247,20 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     };
 
     litPipelineIndex = addLitShader("shaders/lit.spv");
+
+    // Specialized lit variants: compile-time giMode, no cascade-debug path. Dropping the unused
+    // GI path from the fragment shader roughly halves its register pressure, which is what makes
+    // the pass's memory-latency stalls hideable. Not registered as material shaders — the draw
+    // loop remaps litPipelineIndex to one of these unless cascade debug is active.
+    litPipelineGIConeIndex = bindless.pipelineManager->createPipeline<LitPushConstants>(
+        PipelineCategory::LIT_GEOMETRY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eBack, vk::True,
+        vk::True, "shaders/lit.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
+        vk::Format::eUndefined, nullptr, "fragMainGICone");
+    litPipelineGICubeIndex = bindless.pipelineManager->createPipeline<LitPushConstants>(
+        PipelineCategory::LIT_GEOMETRY, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eBack, vk::True,
+        vk::True, "shaders/lit.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
+        vk::Format::eUndefined, nullptr, "fragMainGICube");
+
     addLitShader("shaders/water.spv");
 
     // lit-derived variants are added declaratively here, e.g.:
@@ -963,11 +989,14 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
                                         .vertexStride = mesh.vertexStride});},
                                     
                                     [&](const Mesh& mesh, Node& node, const Material& material) {
+        // Absent maps get the 1x1 defaults so the shader can sample all four textures
+        // unconditionally (fetches issue back-to-back instead of serializing on branches).
+        uint32_t mflags = static_cast<uint32_t>(material.flags);
         litInstanceDataList.push_back({ .modelMatrixIndex      = node.getModelMatrixIndex(),
-                                        .albedoTextureIndex    = material.albedoTextureIndex,
-                                        .roughnessTextureIndex = material.roughnessTextureIndex,
-                                        .metallicTextureIndex  = material.metallicTextureIndex,
-                                        .normalTextureIndex    = material.normalTextureIndex,
+                                        .albedoTextureIndex    = (mflags & HAS_ALBEDO)    ? material.albedoTextureIndex    : defaultAlbedoIndex,
+                                        .roughnessTextureIndex = (mflags & HAS_ROUGHNESS) ? material.roughnessTextureIndex : defaultRoughnessIndex,
+                                        .metallicTextureIndex  = (mflags & HAS_METALLIC)  ? material.metallicTextureIndex  : defaultMetallicIndex,
+                                        .normalTextureIndex    = (mflags & HAS_NORMAL)    ? material.normalTextureIndex    : defaultNormalIndex,
                                         .environmentMapIndex   = material.environmentMapIndex,
                                         .maxEnvMips            = static_cast<float>(bindless.descriptorSet->getTextureMipLevels(material.environmentMapIndex) - 1),
                                         .materialFlags         = static_cast<uint32_t>(material.flags),
@@ -1010,6 +1039,13 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
     };
     bindless.descriptorSet->updateFixedBufferWithOffset<LitPassData>(litPassDataBufferIndex,0,litPassData,gpu.currentFrame);
 
+    // Mirror the hot pass + light data into this frame's UBO slot (constant-cache path for lit).
+    GPULitFrameUniforms& uf = *litFrameStaging;
+    uint32_t hotBound = scene.fillHotLights(uf.lights);
+    uf.setPassData(litPassData);
+    uf.indicesA.y = std::min(hotBound, MAX_UBO_LIGHTS);
+    memcpy(bindless.descriptorSet->getUniformBufferMapped(litFrameUniformsIndex[gpu.currentFrame]), &uf, sizeof(uf));
+
     if (!indirectCommands.empty()) {
         // Upload indirect commands and per-draw data (shared between depth prepass and lit pass)
         memcpy(static_cast<char*>(litIndirectDrawBufferMapped) + frameByteOffset, indirectCommands.data(), indirectCommands.size() * sizeof(DrawIndexedIndirectCommand));
@@ -1022,7 +1058,8 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
                                           .lightsAddress          = bindless.descriptorSet->getFixedBuffers()[passResources.buffers.lightBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(GPULight),
                                           .litInstanceDataAddress = bindless.descriptorSet->getFixedBuffers()[litInstanceDataBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(LitInstanceData),
                                           .litMeshDrawDataAddress = bindless.descriptorSet->getFixedBuffers()[litMeshDrawDataBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(LitMeshDrawData),
-                                          .litPassDataAddress     = bindless.descriptorSet->getFixedBuffers()[litPassDataBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(LitPassData)
+                                          .litPassDataAddress     = bindless.descriptorSet->getFixedBuffers()[litPassDataBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(LitPassData),
+                                          .frameUniformsIndex     = litFrameUniformsIndex[gpu.currentFrame]
                                         };
 
         // --- Depth prepass (depth-only, no color attachment) ---
@@ -1139,11 +1176,20 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
                                           .litInstanceDataAddress = bindless.descriptorSet->getFixedBuffers()[litInstanceDataBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(LitInstanceData),
                                           .litMeshDrawDataAddress = bindless.descriptorSet->getFixedBuffers()[litMeshDrawDataBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(LitMeshDrawData),
                                           .litPassDataAddress     = bindless.descriptorSet->getFixedBuffers()[litPassDataBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * MAX_FIXED_BUFFER * sizeof(LitPassData),
-                                          .time                   = gpu.time
+                                          .time                   = gpu.time,
+                                          .frameUniformsIndex     = litFrameUniformsIndex[gpu.currentFrame]
                                         };
 
+        // Cascade debug needs the uber fragMain; otherwise bind the GI-specialized variant
+        // (compile-time giMode -> roughly half the register pressure of the uber shader).
+        const bool cascadeDebugActive = scene.anyLightShowsCascades();
+        const uint32_t litVariantIndex = (features.vxgi.mode == 1) ? litPipelineGICubeIndex : litPipelineGIConeIndex;
+
         for (const auto& range : scene.shaderDrawRanges) {
-            auto currentPipeline = &(geoPipelines[range.pipelineIndex]);
+            uint32_t pipelineIdx = range.pipelineIndex;
+            if (pipelineIdx == litPipelineIndex && !cascadeDebugActive)
+                pipelineIdx = litVariantIndex;
+            auto currentPipeline = &(geoPipelines[pipelineIdx]);
             bindPipeline(cmd, **currentPipeline);
             // SV_DrawIndex restarts at 0 for this range's indirect call, but per-draw data is indexed by
             // absolute command index, so offset the shader's lookups by the range's first command.

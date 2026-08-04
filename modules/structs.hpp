@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <string>
@@ -757,6 +758,9 @@ struct LitPushConstants {
     // index; the prepass draws all commands in one call and leaves it 0.
     uint32_t drawIDOffset = 0;
     float time = 0.0f;
+    // Slot into the bindless uniform-buffer binding holding this pass's GPULitFrameUniforms.
+    uint32_t frameUniformsIndex = 0;
+    uint32_t _pad0 = 0;
 };
 
 // Field order matches ThumbnailPush in thumbnail.slang (mat4, then 8-byte address, then uints).
@@ -790,6 +794,47 @@ struct LitPassData {
     float giStrength = 1.0f;
     float giSkyIntensity = 0.0f; // cone-miss sky radiance scale (skyboxIntensity * vxgi.skyStrength)
 };
+
+// Hot per-light data mirrored into the lit frame UBO (LightHot in common.slang).
+// vec4-only members so std140 layout == this struct byte-for-byte.
+struct GPULightHot {
+    glm::vec4 positionRange = glm::vec4(0);   // xyz world position, w range
+    glm::vec4 direction = glm::vec4(0);       // xyz normalized direction, w unused
+    glm::vec4 colorIntensity = glm::vec4(0);  // rgb color, w intensity (<= 0 -> disabled slot)
+    glm::uvec4 typeFlags = glm::uvec4(0);     // x LightType, y castsShadows, z numCascades, w unused
+    glm::vec4 cascadeSplits = glm::vec4(0);   // CSM split distances (xyz)
+};
+static_assert(sizeof(GPULightHot) == 80, "must match LightHot in common.slang (std140)");
+
+// Mirror of LitFrameUniforms in common.slang: the lit pass's hot pass/light data, read through
+// the constant cache instead of per-fragment BDA loads. One UBO slot per frame in flight; the
+// LitPassData / GPULight BDA buffers stay authoritative for every other pass.
+struct GPULitFrameUniforms {
+    glm::mat4 voxelViewProjection = glm::mat4(1.0f);
+    glm::vec4 cameraPosExtent = glm::vec4(0);  // xyz cameraPos, w voxelWorldExtent
+    glm::vec4 cameraForwardGI = glm::vec4(0);  // xyz cameraForward, w giStrength
+    glm::uvec4 indicesA = glm::uvec4(0);       // sampler, lightCount (<= MAX_UBO_LIGHTS), shadowSampler, shadowAtlas
+    glm::uvec4 indicesB = glm::uvec4(0);       // voxelTexture, voxelSampler, voxelResolution, giMode
+    glm::uvec4 giParams = glm::uvec4(0);       // giHemisphereRays, giMaxSteps, giFetchBatch, unused
+    glm::uvec4 giIrradianceA = glm::uvec4(0);  // irradiance volume indices 0-3
+    glm::uvec4 giIrradianceB = glm::uvec4(0);  // xy irradiance indices 4-5, zw unused
+    glm::vec4 giFloats = glm::vec4(0);         // x giSkyIntensity, yzw unused
+    GPULightHot lights[MAX_UBO_LIGHTS];
+
+    void setPassData(const LitPassData& pd) {
+        voxelViewProjection = pd.voxelViewProjection;
+        cameraPosExtent = glm::vec4(pd.cameraPosition, pd.voxelWorldExtent);
+        cameraForwardGI = glm::vec4(pd.cameraForward, pd.giStrength);
+        indicesA = glm::uvec4(pd.samplerIndex, std::min(pd.lightCount, MAX_UBO_LIGHTS), pd.shadowSamplerIndex, pd.shadowAtlasIndex);
+        indicesB = glm::uvec4(pd.voxelTextureIndex, pd.voxelSamplerIndex, pd.voxelResolution, pd.giMode);
+        giParams = glm::uvec4(pd.giHemisphereRays, pd.giMaxSteps, pd.giFetchBatch, 0u);
+        giIrradianceA = glm::uvec4(pd.giIrradianceIndices[0], pd.giIrradianceIndices[1], pd.giIrradianceIndices[2], pd.giIrradianceIndices[3]);
+        giIrradianceB = glm::uvec4(pd.giIrradianceIndices[4], pd.giIrradianceIndices[5], 0u, 0u);
+        giFloats = glm::vec4(pd.giSkyIntensity, 0.0f, 0.0f, 0.0f);
+    }
+};
+static_assert(sizeof(GPULitFrameUniforms) == 192 + sizeof(GPULightHot) * MAX_UBO_LIGHTS,
+              "must match LitFrameUniforms in common.slang (std140)");
 
 // matches VkDrawIndexedIndirectCommand)
 struct DrawIndexedIndirectCommand {

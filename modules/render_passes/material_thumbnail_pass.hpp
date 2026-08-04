@@ -8,7 +8,9 @@
 #include <glm/gtc/constants.hpp>
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -39,6 +41,9 @@ class MaterialThumbnailPass : public RenderPass {
     uint32_t meshDrawBufferIndex = 0xFFFFFFFF;
     uint32_t modelBufferIndex    = 0xFFFFFFFF;
     uint32_t passBufferIndex     = 0xFFFFFFFF;
+    // Own lit frame UBOs: the preview uses its own camera, so it can't share the main pass's slots.
+    uint32_t frameUniformsIndex[MAX_FRAMES_IN_FLIGHT] = {0xFFFFFFFF, 0xFFFFFFFF};
+    std::unique_ptr<GPULitFrameUniforms> frameUniformsStaging;
 
 public:
     MaterialThumbnailPass(GpuContext& gpu, BindlessSystem& bindless, Scene& scene, RenderFeatures& features, RenderPassResources& shared)
@@ -68,6 +73,11 @@ public:
             meshDrawBufferIndex = bindless.descriptorSet->createFixedBuffer<LitMeshDrawData>(MAX_FRAMES_IN_FLIGHT, false, "MatThumbMeshDraw");
             modelBufferIndex    = bindless.descriptorSet->createFixedBuffer<glm::mat4>(MAX_FRAMES_IN_FLIGHT, false, "MatThumbModel");
             passBufferIndex     = bindless.descriptorSet->createFixedBuffer<LitPassData>(MAX_FRAMES_IN_FLIGHT, false, "MatThumbPass");
+
+            frameUniformsStaging = std::make_unique<GPULitFrameUniforms>();
+            for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+                frameUniformsIndex[i] = bindless.descriptorSet->allocateUniformBuffer(sizeof(GPULitFrameUniforms), "MatThumbFrameUniforms" + std::to_string(i));
+            }
         }
     }
 
@@ -115,14 +125,22 @@ public:
                         .prevViewProjection = vp };
         bindless.descriptorSet->writeFixedBuffer<LitPassData>(passBufferIndex, &pd, 1, frame, frame);
 
+        // Mirror the pass + hot lights into this pass's own frame UBO (lit reads hot data there).
+        GPULitFrameUniforms& uf = *frameUniformsStaging;
+        uint32_t hotBound = scene.fillHotLights(uf.lights);
+        uf.setPassData(pd);
+        uf.indicesA.y = std::min(hotBound, MAX_UBO_LIGHTS);
+        std::memcpy(bindless.descriptorSet->getUniformBufferMapped(frameUniformsIndex[frame]), &uf, sizeof(uf));
+
         std::vector<LitInstanceData> insts(count);
         for (uint32_t i = 0; i < count; i++) {
             const Material& m = materials[i];
+            uint32_t mflags = static_cast<uint32_t>(m.flags);
             insts[i] = { .modelMatrixIndex = 0,
-                         .albedoTextureIndex = m.albedoTextureIndex,
-                         .roughnessTextureIndex = m.roughnessTextureIndex,
-                         .metallicTextureIndex = m.metallicTextureIndex,
-                         .normalTextureIndex = m.normalTextureIndex,
+                         .albedoTextureIndex = (mflags & HAS_ALBEDO) ? m.albedoTextureIndex : shared.defaultAlbedoIndex,
+                         .roughnessTextureIndex = (mflags & HAS_ROUGHNESS) ? m.roughnessTextureIndex : shared.defaultRoughnessIndex,
+                         .metallicTextureIndex = (mflags & HAS_METALLIC) ? m.metallicTextureIndex : shared.defaultMetallicIndex,
+                         .normalTextureIndex = (mflags & HAS_NORMAL) ? m.normalTextureIndex : shared.defaultNormalIndex,
                          .environmentMapIndex = m.environmentMapIndex,
                          .maxEnvMips = static_cast<float>(bindless.descriptorSet->getTextureMipLevels(m.environmentMapIndex) - 1),
                          .materialFlags = static_cast<uint32_t>(m.flags),
@@ -192,7 +210,8 @@ public:
                                 .lightsAddress = lightsAddr,
                                 .litInstanceDataAddress = instBase + static_cast<vk::DeviceSize>(i) * sizeof(LitInstanceData),
                                 .litMeshDrawDataAddress = meshDrawAddr,
-                                .litPassDataAddress = passAddr};
+                                .litPassDataAddress = passAddr,
+                                .frameUniformsIndex = frameUniformsIndex[frame]};
             cmd.pushConstants<LitPushConstants>(bindless.pipelineManager->getBeforeGeoPipelines()[pipelineIndex]->layout,
                                                 vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, pc);
             cmd.drawIndexed(sphereIndexCount, 1, sphereIndexFirst, 0, 0);

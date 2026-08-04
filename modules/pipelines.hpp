@@ -45,6 +45,7 @@ struct PipelineBase {
     // DEPTH_PREPASS (depth-only), LIT_GEOMETRY (MRT, formats fixed), BEFORE_GEOMETRY (R32Sfloat fixed).
     vk::Format colorAttachmentFormat = vk::Format::eUndefined;
     std::string geomEntry; // geometry shader entry point; empty = no geometry stage
+    std::string fragEntry; // fragment entry point override; empty = "fragMain" (e.g. lit GI variants)
 
     std::type_index pushConstantType = std::type_index(typeid(void));
 
@@ -97,9 +98,9 @@ class PipelineManager {
     template <typename T>
     uint32_t createPipeline(PipelineCategory pipelineCategory, vk::PrimitiveTopology topology, vk::CullModeFlagBits cullMode, vk::Bool32 depthTestEnable,
                             vk::Bool32 depthWriteEnable, std::string shaderPath, vk::raii::DescriptorSetLayout& setLayout, vk::raii::DescriptorSet& descriptorSet,
-                            vk::Format colorAttachmentFormat, const char* geomEntry = nullptr) {
+                            vk::Format colorAttachmentFormat, const char* geomEntry = nullptr, const char* fragEntry = nullptr) {
 
-        return createPipelineInternal<T>(pipelineCategory, topology, cullMode, depthTestEnable, depthWriteEnable, shaderPath, setLayout, descriptorSet, false, 0, colorAttachmentFormat, geomEntry);
+        return createPipelineInternal<T>(pipelineCategory, topology, cullMode, depthTestEnable, depthWriteEnable, shaderPath, setLayout, descriptorSet, false, 0, colorAttachmentFormat, geomEntry, fragEntry);
     }
 
     // Watches each pipeline's .slang source (and the shared modules they import). On change it runs
@@ -134,8 +135,8 @@ class PipelineManager {
     template <typename T>
     void recreatePipelineAtIndexInternal(PipelineCategory pipelineCategory, uint32_t index, const std::string& shaderPath, vk::PrimitiveTopology topology,
                                          vk::CullModeFlagBits cullMode, vk::Bool32 depthTestEnable, vk::Bool32 depthWriteEnable, vk::raii::DescriptorSetLayout& setLayout,
-                                         vk::raii::DescriptorSet& descriptorSet, vk::Format colorAttachmentFormat, const char* geomEntry) {
-        createPipelineInternal<T>(pipelineCategory, topology, cullMode, depthTestEnable, depthWriteEnable, shaderPath, setLayout, descriptorSet, true, index, colorAttachmentFormat, geomEntry);
+                                         vk::raii::DescriptorSet& descriptorSet, vk::Format colorAttachmentFormat, const char* geomEntry, const char* fragEntry) {
+        createPipelineInternal<T>(pipelineCategory, topology, cullMode, depthTestEnable, depthWriteEnable, shaderPath, setLayout, descriptorSet, true, index, colorAttachmentFormat, geomEntry, fragEntry);
     }
 
     std::vector<std::unique_ptr<PipelineBase>>& getBeforeGeoPipelines() { return beforeGeometryPipelines; }
@@ -209,12 +210,12 @@ class PipelineManager {
     template <typename T>
     uint32_t createPipelineInternal(PipelineCategory pipelineCategory, vk::PrimitiveTopology topology, vk::CullModeFlagBits cullMode, vk::Bool32 depthTestEnable,
                                     vk::Bool32 depthWriteEnable, std::string shaderPath, vk::raii::DescriptorSetLayout& setLayout, vk::raii::DescriptorSet& descriptorSet,
-                                    bool isRecreation, uint32_t recreateIndex, vk::Format colorAttachmentFormat, const char* geomEntry = nullptr) {
+                                    bool isRecreation, uint32_t recreateIndex, vk::Format colorAttachmentFormat, const char* geomEntry = nullptr, const char* fragEntry = nullptr) {
 
         ensureSpvUpToDate(shaderPath); // rebuild stale/missing .spv from source before loading it
         vk::raii::ShaderModule shaderModule = createShaderModule(readFile(shaderPath));
         vk::PipelineShaderStageCreateInfo vertShaderStageInfo{.stage = vk::ShaderStageFlagBits::eVertex, .module = shaderModule, .pName = "vertMain"};
-        vk::PipelineShaderStageCreateInfo fragShaderStageInfo{.stage = vk::ShaderStageFlagBits::eFragment, .module = shaderModule, .pName = "fragMain"};
+        vk::PipelineShaderStageCreateInfo fragShaderStageInfo{.stage = vk::ShaderStageFlagBits::eFragment, .module = shaderModule, .pName = fragEntry ? fragEntry : "fragMain"};
         vk::PipelineShaderStageCreateInfo shaderStages[3] = {vertShaderStageInfo, fragShaderStageInfo, {}};
         uint32_t stageCount = 2;
         if (geomEntry) {
@@ -243,6 +244,7 @@ class PipelineManager {
         pipeline->descriptorSet = &descriptorSet;
         pipeline->colorAttachmentFormat = colorAttachmentFormat;
         pipeline->geomEntry = geomEntry ? geomEntry : "";
+        pipeline->fragEntry = fragEntry ? fragEntry : "";
 
         vk::PipelineInputAssemblyStateCreateInfo inputAssembly;
         vk::PipelineRasterizationStateCreateInfo rasterizer;
@@ -644,5 +646,6 @@ public:
 
 template <typename T> void Pipeline<T>::recreateInternal(PipelineManager& manager, uint32_t index) {
     manager.recreatePipelineAtIndexInternal<T>(pipelineCategory, index, shaderPath, topology, cullMode, depthTestEnable, depthWriteEnable, *descriptorSetLayout, *descriptorSet, colorAttachmentFormat,
-                                               geomEntry.empty() ? nullptr : geomEntry.c_str());
+                                               geomEntry.empty() ? nullptr : geomEntry.c_str(),
+                                               fragEntry.empty() ? nullptr : fragEntry.c_str());
 }

@@ -73,6 +73,10 @@ class Renderer {
     uint32_t                            skyboxPipelineIndex;
     uint32_t                            shadowPipelineIndex;
     uint32_t                            litPipelineIndex;
+    // Specialized lit variants (compile-time giMode, no cascade-debug path). The material system
+    // still registers litPipelineIndex; the draw loop remaps to these unless debug is active.
+    uint32_t                            litPipelineGIConeIndex = 0xFFFFFFFF;
+    uint32_t                            litPipelineGICubeIndex = 0xFFFFFFFF;
     uint32_t                            gizmoPipelineIndex;
     uint32_t                            imageViewPipelineIndex;
     uint32_t                            depthPipelineIndex;
@@ -99,6 +103,12 @@ class Renderer {
     //defaults
     uint32_t                            shadowSamplerIndex;
     uint32_t                            defaultNormalIndex;
+    uint32_t                            defaultRoughnessIndex;
+    uint32_t                            defaultMetallicIndex;
+
+    // Lit frame uniforms: one UBO slot per frame in flight + a reused CPU staging block.
+    uint32_t                            litFrameUniformsIndex[MAX_FRAMES_IN_FLIGHT] = {};
+    std::unique_ptr<GPULitFrameUniforms> litFrameStaging;
 
     uint32_t                            vertexBufferIndex;
     uint32_t                            indexBufferIndex;

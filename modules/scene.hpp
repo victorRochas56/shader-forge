@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstring>
 #include <map>
 #include <vector>
 
@@ -92,6 +93,35 @@ class Scene {
     // (intensity == 0) in removeLight — see below.
     uint32_t getLightLoopBound() const {
         return lights.empty() ? 0u : lights.size();
+    }
+
+    // Fills the hot-light mirror for a lit frame UBO. Zeroed slots read as disabled
+    // sentinels (intensity 0), matching the sparse GPULight buffer. Returns the loop bound.
+    uint32_t fillHotLights(GPULightHot* dst) {
+        std::memset(dst, 0, sizeof(GPULightHot) * MAX_UBO_LIGHTS);
+        uint32_t bound = 0;
+        for (auto& [idx, light] : lights) {
+            if (idx >= MAX_UBO_LIGHTS) continue;
+            auto& node = sceneGraph.getNode(light.nodeIndex);
+            glm::vec3 pos = node.getWorldPosition();
+            glm::vec3 dir = node.forward();
+            GPULightHot& h = dst[idx];
+            h.positionRange = glm::vec4(pos, light.range);
+            h.direction = glm::vec4(dir, 0.0f);
+            h.colorIntensity = glm::vec4(glm::vec3(light.color), light.intensity);
+            h.typeFlags = glm::uvec4(static_cast<uint32_t>(light.type), static_cast<uint32_t>(light.castsShadows), light.numCascades, 0u);
+            h.cascadeSplits = glm::vec4(light.cascades[0].splitDistance, light.cascades[1].splitDistance, light.cascades[2].splitDistance, 0.0f);
+            bound = std::max(bound, idx + 1);
+        }
+        return bound;
+    }
+
+    // Cascade-visualization is a debug path; when any light has it on, the renderer
+    // falls back to the uber lit shader that still compiles it in.
+    bool anyLightShowsCascades() const {
+        for (const auto& [idx, light] : lights)
+            if (light.showCascades > 0) return true;
+        return false;
     }
 
     // Clears lights AND frees every shadow-atlas tile those lights held.

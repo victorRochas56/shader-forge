@@ -19,6 +19,10 @@ constexpr uint32_t MAX_TEXTURES = 2048;
 constexpr uint32_t MAX_CUBEMAPS = 2048;
 constexpr uint32_t MAX_SAMPLERS = 2048;
 constexpr uint32_t MAX_STORAGE_IMAGES = 256; // compute-writable images (RWTexture2D)
+constexpr uint32_t MAX_UNIFORM_BUFFERS = 16; // small per-frame constant blocks (lit frame uniforms)
+// Hot-light mirror capacity in the lit frame UBO. Caps the lit shader's light loop; the sparse
+// GPULight BDA buffer (MAX_LIGHTS) stays authoritative for every other pass.
+constexpr uint32_t MAX_UBO_LIGHTS = 256;
 
 constexpr uint32_t MAX_FIXED_BUFFER = 2048;
 // Shared particle pool. 128MB / 48B ~= 2.7M particles.
