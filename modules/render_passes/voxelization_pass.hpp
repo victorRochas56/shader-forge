@@ -18,7 +18,7 @@
 class VoxelizationPass : public RenderPass {
 public:
     static constexpr uint32_t VOXEL_RESOLUTION  = 256;    // cubic grid side
-    static constexpr float    VOXEL_WORLD_EXTENT = 100.0f; // side of the world-space cube the grid covers
+    static constexpr float    VOXEL_WORLD_EXTENT = 64.0f; // side of the world-space cube the grid covers
     static constexpr uint32_t IRRADIANCE_RESOLUTION = 128; // resolution of the grid in which irradiance is stored
     static_assert(VOXEL_RESOLUTION % IRRADIANCE_RESOLUTION == 0, "gather maps irradiance voxels onto whole radiance mips");
 
