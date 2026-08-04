@@ -595,14 +595,23 @@ void showToggles(RenderFeatures& f){
 
 void showScenesMenu(Scene& scene, BindlessSystem& bindless, RenderBuffers& buffers,SceneLoader& sceneLoader){
     ImGui::Begin("Scene Manager");
-    if(ImGui::Button("Save Scene")){
-        sceneLoader.saveScene("scene.scn", scene);
+    static char saveName[128] = "scene";
+    ImGui::SetNextItemWidth(150.0f);
+    ImGui::InputTextWithHint("##saveName", "scene name", saveName, sizeof(saveName));
+    ImGui::SameLine();
+    if(ImGui::Button("Save Scene") && saveName[0] != '\0'){
+        std::string path(saveName);
+        if(std::filesystem::path(path).extension() != ".scn") path += ".scn";
+        sceneLoader.saveScene(path, scene);
     }
     ImGui::SameLine();
     if(ImGui::Button("Load Scene")){
-        sceneLoader.loadScene("scene.scn", scene, bindless, buffers,
-                               buffers.modelMatrixBufferIndex,
-                               buffers.lightBufferIndex);
+        std::string path = openFileDialog("Scene Files\0*.scn\0All Files\0*.*\0");
+        if(!path.empty()){
+            sceneLoader.loadScene(path, scene, bindless, buffers,
+                                   buffers.modelMatrixBufferIndex,
+                                   buffers.lightBufferIndex);
+        }
     }
     ImGui::SameLine();
     if(ImGui::Button("Clear Scene")){
