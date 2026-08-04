@@ -11,13 +11,21 @@
 class SSRPass : public RenderPass {
 
     uint32_t currentTextureIndex = 0xFFFFFFFF;
+    uint32_t currentStorageIndex = 0xFFFFFFFF; // storage slot of ssr_current (tiled trace writes)
     uint32_t historyTextureIndices[2] = {0xFFFFFFFF, 0xFFFFFFFF};
     uint32_t historyFlip = 0;
 
     uint32_t pipelineIndex = 0xFFFFFFFF;
     uint32_t applyPipelineIndex = 0xFFFFFFFF;
     uint32_t accumulatePipelineIndex = 0xFFFFFFFF;
+    uint32_t classifyPipelineIndex = 0xFFFFFFFF;
+    uint32_t tracePipelineIndex = 0xFFFFFFFF;
     uint32_t passDataBufferIndex;
+
+    // GPU-built ray list: 16-byte SSRRayHeader (dispatch args + count) + packed pixels.
+    // Grow-only: an upward window resize allocates a fresh buffer and strands the old slot.
+    uint32_t rayBufferIndex = 0xFFFFFFFF;
+    uint32_t rayCapacityPixels = 0;
 
     bool historyInvalid = true;
 
@@ -33,11 +41,24 @@ public:
         uint32_t ssrW = std::max(1u, static_cast<uint32_t>(width * features.ssr.resolutionScale));
         uint32_t ssrH = std::max(1u, static_cast<uint32_t>(height * features.ssr.resolutionScale));
         // SSR runs at a reduced resolution; the Hi-Z trace still indexes the full-res pyramid.
-        resize(currentTextureIndex, ssrW, ssrH, gpu.getSwapchain().getHDRColorFormat(), "internal/ssr_current");
+        // ssr_current also carries a storage slot: the tiled trace writes it from compute, while
+        // the fallback fragment path still renders to it as a color attachment.
+        resize2DStorageImage(currentTextureIndex, currentStorageIndex, ssrW, ssrH, gpu.getSwapchain().getHDRColorFormat(), "internal/ssr_current",
+                             vk::ImageUsageFlagBits::eColorAttachment);
         resize(historyTextureIndices[0], ssrW, ssrH, gpu.getSwapchain().getHDRColorFormat(), "internal/ssr_history0");
         resize(historyTextureIndices[1], ssrW, ssrH, gpu.getSwapchain().getHDRColorFormat(), "internal/ssr_history1");
 
         historyInvalid = true;
+
+        // Ray list sized for the SSR pixel count (16-byte header + one uint per pixel).
+        if (ssrW * ssrH > rayCapacityPixels) {
+            rayCapacityPixels = ssrW * ssrH;
+            rayBufferIndex = bindless.descriptorSet->createVariableBuffer(
+                16 + rayCapacityPixels * sizeof(uint32_t),
+                vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress |
+                vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eTransferDst,
+                false, "SSRRayList", true);
+        }
 
         // SSR ray-trace + accumulate write into ssr_current / ssr_history (HDR; reflections sample HDR scene color).
         if (pipelineIndex == 0xFFFFFFFF) {
@@ -48,6 +69,13 @@ public:
 
             //initialize pass data too
             bindless.descriptorSet->allocateFixedBuffer(passDataBufferIndex,SSRPassData {});
+        }
+
+        if (classifyPipelineIndex == 0xFFFFFFFF) {
+            classifyPipelineIndex = bindless.pipelineManager->createComputePipeline<SSRPushConstants>(
+                "shaders/ssr.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(), "classifyMain");
+            tracePipelineIndex = bindless.pipelineManager->createComputePipeline<SSRPushConstants>(
+                "shaders/ssr.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(), "traceMain");
         }
 
         if (accumulatePipelineIndex == 0xFFFFFFFF) {
@@ -124,10 +152,8 @@ public:
         }
 
         // --- Sub-pass 1: Ray trace -> ssrCurrentTextureIndex ---
-        resource::transitionImageLayouts(cmd, {
-            {gpu.getSwapchain().getDepthImage(),  vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal},
-            {*ssrCurrent.image,           vk::ImageLayout::eShaderReadOnlyOptimal,          vk::ImageLayout::eColorAttachmentOptimal},
-        });
+        resource::transitionImageLayout(*bindless.resourceCtx, &cmd, gpu.getSwapchain().getDepthImage(),
+            vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
 
         bindless.descriptorSet->updateFixedBufferWithOffset(passDataBufferIndex, 0,
                                         SSRPassData{
@@ -152,17 +178,68 @@ public:
                                             .maxSteps = features.ssr.maxSteps,
                                             .frameIndex = gpu.totalFrames,
                                             .hiZStopLevel = hiZStopLevel,
+                                            .hiZStartLevel = static_cast<uint32_t>(std::max(features.ssr.hiZStartLevel, 0)),
+                                            .hiZMaxLevel = static_cast<uint32_t>(std::max(features.ssr.hiZMaxLevel, 0)),
+                                            .outputImageIndex = currentStorageIndex,
+                                            .ssrResolution = glm::uvec2(ssrExtent.width, ssrExtent.height),
+                                            .rayCapacity = rayCapacityPixels,
                                         }, gpu.currentFrame);
 
-        drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[pipelineIndex], *ssrCurrent.imageView, ssrExtent,
-            SSRPushConstants{ .ssrPassDataAddress = bindless.descriptorSet->getFixedBuffers()[passDataBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * sizeof(SSRPassData)},
-            vk::AttachmentLoadOp::eClear, {0.0f, 0.0f, 0.0f, 0.0f});
+        vk::DeviceSize passDataAddr = bindless.descriptorSet->getFixedBuffers()[passDataBufferIndex]->address + static_cast<vk::DeviceSize>(gpu.currentFrame) * sizeof(SSRPassData);
+        uint64_t rayAddr = bindless.descriptorSet->getVariableBuffers()[rayBufferIndex]->address;
+        SSRPushConstants ssrPC{ .ssrPassDataAddress = passDataAddr,
+                                .rayHeaderAddress = rayAddr,
+                                .rayPixelsAddress = rayAddr + 16 };
+
+        if (features.ssr.tiledTrace) {
+            // Classification compacts trace-worthy pixels into the ray list (zeroing the rest of
+            // the output), then a dispatch-indirect trace runs with fully-occupied warps.
+            vk::Buffer rayBuf = bindless.descriptorSet->getVariableBuffer(rayBufferIndex);
+            cmd.fillBuffer(rayBuf, 0, 16, 0u); // header: groupsX = 0, count = 0
+            cmd.fillBuffer(rayBuf, 4, 8, 1u);  // groupsY = groupsZ = 1
+            vk::MemoryBarrier fillBarrier{.srcAccessMask = vk::AccessFlagBits::eTransferWrite,
+                                          .dstAccessMask = vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite};
+            cmd.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eComputeShader, {}, fillBarrier, {}, {});
+
+            resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *ssrCurrent.image,
+                vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eGeneral);
+
+            auto& classify = *static_cast<ComputePipeline<SSRPushConstants>*>(bindless.pipelineManager->getComputePipelines()[classifyPipelineIndex].get());
+            classify.pushConstantData = ssrPC;
+            cmd.bindPipeline(vk::PipelineBindPoint::eCompute, classify.pipeline);
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, classify.layout, 0, {**classify.descriptorSet}, {});
+            classify.pushConstants(cmd);
+            cmd.dispatch((ssrExtent.width + 7) / 8, (ssrExtent.height + 7) / 8, 1);
+
+            // Ray list + indirect args feed the trace dispatch.
+            vk::MemoryBarrier classifyBarrier{.srcAccessMask = vk::AccessFlagBits::eShaderWrite,
+                                              .dstAccessMask = vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eIndirectCommandRead};
+            cmd.pipelineBarrier(vk::PipelineStageFlagBits::eComputeShader,
+                                vk::PipelineStageFlagBits::eComputeShader | vk::PipelineStageFlagBits::eDrawIndirect, {}, classifyBarrier, {}, {});
+
+            auto& trace = *static_cast<ComputePipeline<SSRPushConstants>*>(bindless.pipelineManager->getComputePipelines()[tracePipelineIndex].get());
+            trace.pushConstantData = ssrPC;
+            cmd.bindPipeline(vk::PipelineBindPoint::eCompute, trace.pipeline);
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, trace.layout, 0, {**trace.descriptorSet}, {});
+            trace.pushConstants(cmd);
+            cmd.dispatchIndirect(rayBuf, 0);
+
+            resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *ssrCurrent.image,
+                vk::ImageLayout::eGeneral, vk::ImageLayout::eShaderReadOnlyOptimal);
+        } else {
+            resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *ssrCurrent.image,
+                vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
+
+            drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[pipelineIndex], *ssrCurrent.imageView, ssrExtent,
+                ssrPC, vk::AttachmentLoadOp::eClear, {0.0f, 0.0f, 0.0f, 0.0f});
+
+            resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *ssrCurrent.image,
+                vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+        }
 
         // --- Sub-pass 2: Temporal accumulate -> writeHistory ---
-        resource::transitionImageLayouts(cmd, {
-            {*ssrCurrent.image,    vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal},
-            {*ssrWriteHist.image,  vk::ImageLayout::eShaderReadOnlyOptimal,  vk::ImageLayout::eColorAttachmentOptimal},
-        });
+        resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *ssrWriteHist.image,
+            vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
 
         drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[accumulatePipelineIndex], *ssrWriteHist.imageView, ssrExtent,
             SSRAccumulatePushConstants{

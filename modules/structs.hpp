@@ -250,6 +250,11 @@ struct SSRSettings {
     float thickness = 0.1f;
     float temporalBlend = 0.2;
     bool resolutionDirty = false;
+    // Tiled trace: compute classification compacts trace-worthy pixels, then a dispatch-indirect
+    // trace runs with full warps. Off = legacy fullscreen fragment path.
+    bool tiledTrace = true;
+    int hiZStartLevel = 2; // lower = cheaper nearby hits, more ascent for far ones
+    int hiZMaxLevel = 6;   // coarser than ~6 the max-reduced plane rarely lets the ray advance
 };
 
 struct VolumetricSettings {
@@ -368,6 +373,8 @@ struct SSAOPushConstants {
 
 struct SSRPushConstants {
     uint64_t ssrPassDataAddress;
+    uint64_t rayHeaderAddress = 0; // SSRRayHeader (dispatch args + count); tiled path only
+    uint64_t rayPixelsAddress = 0; // packed pixel list, rayHeaderAddress + 16
 };
 
 struct SSRPassData {
@@ -391,6 +398,13 @@ struct SSRPassData {
     int maxSteps;             // max ray march iterations
     uint32_t frameIndex;
     uint32_t hiZStopLevel;    // finest Hi-Z mip to refine to (derived from resolution scale)
+    // Tiled/tunable trace additions (mirrored in ssr.slang).
+    uint32_t hiZStartLevel = 2;
+    uint32_t hiZMaxLevel = 6;
+    uint32_t outputImageIndex = 0;  // storage slot traceMain writes (ssr_current)
+    glm::uvec2 ssrResolution = glm::uvec2(0); // trace target size in pixels
+    uint32_t rayCapacity = 0;       // ray list element capacity
+    uint32_t _pad2 = 0;
 };
 
 struct HiZPushConstants {

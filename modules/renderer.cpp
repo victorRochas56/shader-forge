@@ -1074,9 +1074,11 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
 
         auto& motionVectorResolve = bindless.descriptorSet->getTextureResource(passResources.motionVectorTextureIndex);
         vk::ClearValue clearMotionVectors{.color = vk::ClearColorValue(std::array<float, 4>{0.0f,0.0f,0.0f,1.0f})};
+        // SAMPLE_ZERO: averaging motion across an edge blends two unrelated motions — worse for
+        // reprojection than picking one — and reads 1 sample instead of N in the resolve shader.
         vk::RenderingAttachmentInfo motionVectorAttachment = {  .imageView = motionVectors.view,
                                                                 .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-                                                                .resolveMode = vk::ResolveModeFlagBits::eAverage,
+                                                                .resolveMode = vk::ResolveModeFlagBits::eSampleZero,
                                                                 .resolveImageView = *motionVectorResolve.imageView,
                                                                 .resolveImageLayout = vk::ImageLayout::eColorAttachmentOptimal,
                                                                 .loadOp = vk::AttachmentLoadOp::eClear,
@@ -1120,9 +1122,12 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
 
     auto& roughnessMetalResolve = bindless.descriptorSet->getTextureResource(passResources.roughnessMetalTextureIndex);
     vk::ClearValue clearRoughMetal{.color = vk::ClearColorValue(std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f})};
+    // SAMPLE_ZERO for the aux G-buffer targets: averaging two materials' roughness (or two surfaces'
+    // normals, which also denormalizes) across an edge is meaningless for the 1x consumers (SSR/SSAO),
+    // and the resolve reads 1 sample instead of N. Color keeps AVERAGE — that's the actual AA.
     vk::RenderingAttachmentInfo roughnessMetalAttachment = {.imageView = *roughnessMetal.view,
                                                              .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-                                                             .resolveMode = vk::ResolveModeFlagBits::eAverage,
+                                                             .resolveMode = vk::ResolveModeFlagBits::eSampleZero,
                                                              .resolveImageView = *roughnessMetalResolve.imageView,
                                                              .resolveImageLayout = vk::ImageLayout::eColorAttachmentOptimal,
                                                              .loadOp = vk::AttachmentLoadOp::eClear,
@@ -1133,18 +1138,19 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
     vk::ClearValue clearNormal{.color = vk::ClearColorValue(std::array<float, 4>{0.5f, 0.5f, 1.0f, 1.0f})};
     vk::RenderingAttachmentInfo normalAttachment = {.imageView = *normalMSAA.view,
                                                      .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-                                                     .resolveMode = vk::ResolveModeFlagBits::eAverage,
+                                                     .resolveMode = vk::ResolveModeFlagBits::eSampleZero,
                                                      .resolveImageView = *normalResolve.imageView,
                                                      .resolveImageLayout = vk::ImageLayout::eColorAttachmentOptimal,
                                                      .loadOp = vk::AttachmentLoadOp::eClear,
                                                      .storeOp = vk::AttachmentStoreOp::eStore,
                                                      .clearValue = clearNormal};
 
+    // No resolve here: the prepass already max-resolved depth, and the lit pass draws the same
+    // geometry with the same alpha clip, so depth cannot change — re-resolving was a full-res
+    // MSAA read+write for identical data every frame.
     vk::RenderingAttachmentInfo depthAttachmentInfo = {.imageView = gpu.getSwapchain().getDepthImageView(),
                                                        .imageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
-                                                       .resolveMode = vk::ResolveModeFlagBits::eMax, // reverse-Z: nearest sample = max depth
-                                                       .resolveImageView = gpu.getSwapchain().getDepthResolveImageView(),
-                                                       .resolveImageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
+                                                       .resolveMode = vk::ResolveModeFlagBits::eNone,
                                                        .loadOp = vk::AttachmentLoadOp::eLoad,
                                                        .storeOp = vk::AttachmentStoreOp::eDontCare};
 
