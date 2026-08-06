@@ -155,9 +155,12 @@ void showNodeMeshInfo(Node& node, Scene& scene) {
 
     if(node.showWireframe) {
         Mesh& mesh = scene.assetManager.meshes[node.meshIndex];
-        for(int i = 0; i < mesh.cpuIndices.size(); i+=3) {
+        // wireframe of the LOD the renderer last drew
+        uint32_t first = mesh.lodIndexStart(mesh.currentLOD);
+        uint32_t last  = first + mesh.lodIndexCount(mesh.currentLOD);
+        for(uint32_t i = first; i < last; i+=3) {
             auto& t = node.worldTransform;
-            Gizmos::drawLine({t*glm::vec4(mesh.cpuPositions[mesh.cpuIndices[i]],1.0f),t*glm::vec4(mesh.cpuPositions[mesh.cpuIndices[i]],1.0f), {2.0,2.0,0.0,1.0}});
+            Gizmos::drawLine({t*glm::vec4(mesh.cpuPositions[mesh.cpuIndices[i]],1.0f),t*glm::vec4(mesh.cpuPositions[mesh.cpuIndices[i+1]],1.0f), {2.0,2.0,0.0,1.0}});
             Gizmos::drawLine({t*glm::vec4(mesh.cpuPositions[mesh.cpuIndices[i+1]],1.0f),t*glm::vec4(mesh.cpuPositions[mesh.cpuIndices[i+2]],1.0f), {2.0,2.0,0.0,1.0}});
             Gizmos::drawLine({t*glm::vec4(mesh.cpuPositions[mesh.cpuIndices[i]],1.0f),t*glm::vec4(mesh.cpuPositions[mesh.cpuIndices[i+2]],1.0f), {2.0,2.0,0.0,1.0}});
         }

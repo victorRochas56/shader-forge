@@ -191,6 +191,7 @@ add_executable(shader-forge
     ${CMAKE_CURRENT_SOURCE_DIR}/modules/input.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/modules/material_editor_state.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/modules/scene_graph.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/LOD.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/modules/stb_implementations.cpp
     ${IMGUI_SOURCES}
 )

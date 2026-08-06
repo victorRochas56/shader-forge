@@ -42,7 +42,9 @@ class AssetManager {
     }
 
     // Allocates GPU buffers for a mesh's geometry, records a Mesh entry, and returns its index.
+    // `indices` may contain appended LOD ranges described by `LODs` (see generateLODs).
     uint32_t createMesh(const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices,
+                        const std::vector<uint32_t>& LODs,
                         const glm::vec3& bbMin, const glm::vec3& bbMax, const glm::vec3& center,
                         float minRadius, float maxRadius, const std::string& name, const std::string& sourceFile,
                         float importScale = 1.0f, uint32_t sourceEntryIndex = 0) {
@@ -80,6 +82,17 @@ class AssetManager {
         mesh.indexAllocationOffset = indexAllocOffset;
         mesh.indexOffset = indexAlloc.offset;
         mesh.indexCount = indexAlloc.count;
+        mesh.LODs = LODs.empty() ? std::vector<uint32_t>{indexAlloc.count} : LODs;
+
+        const uint32_t lod0IndexCount = mesh.LODs[0];
+        float surfaceArea = 0.0f;
+        for (uint32_t i = 0; i + 2 < lod0IndexCount; i += 3) {
+            const glm::vec3& a = cpuPositions[inds[i]];
+            const glm::vec3& b = cpuPositions[inds[i + 1]];
+            const glm::vec3& c = cpuPositions[inds[i + 2]];
+            surfaceArea += 0.5f * glm::length(glm::cross(b - a, c - a));
+        }
+        mesh.surfaceArea = surfaceArea;
         mesh.boundingBoxMin = bbMin;
         mesh.boundingBoxMax = bbMax;
         mesh.center = center;
@@ -227,7 +240,8 @@ class AssetManager {
             EntryResolution& r = resolutions[idx];
             if (existingInstance == 0) {
                 std::cout << "loaded new mesh!" << std::endl;
-                r.meshIdx = createMesh(entry.vertices, entry.indices, bbMin, bbMax, center,
+                generateLODs(entry); // serial on purpose: global Simplify state
+                r.meshIdx = createMesh(entry.vertices, entry.indices, entry.LODs, bbMin, bbMax, center,
                                        inscribedRadius, circumscribedRadius, entry.shapeName, filePath, importScale,
                                        static_cast<uint32_t>(idx));
                 r.transform = makeTransform(center);
@@ -316,7 +330,8 @@ class AssetManager {
                 // winding/culling stay correct.
                 auto it = mirrorVariants.find(refMeshIdx);
                 if (it == mirrorVariants.end()) {
-                    uint32_t mirrorIdx = createMesh(entry.vertices, entry.indices, bbMin, bbMax, center,
+                    generateLODs(entry);
+                    uint32_t mirrorIdx = createMesh(entry.vertices, entry.indices, entry.LODs, bbMin, bbMax, center,
                                                     inscribedRadii[idx], circumscribedRadii[idx],
                                                     meshes[refMeshIdx].name + "_mirror", filePath, importScale,
                                                     static_cast<uint32_t>(idx));
@@ -380,9 +395,9 @@ class AssetManager {
                                      " out of range in " + filePath);
         }
 
-        // Work on a copy so the cached raw data stays pristine for sibling entries.
+        // Work on copies so the cached raw data stays pristine for sibling entries.
         std::vector<Vertex> vertices = meshData.entries[entryIndex].vertices;
-        const std::vector<uint32_t>& indices = meshData.entries[entryIndex].indices;
+        std::vector<uint32_t> indices = meshData.entries[entryIndex].indices;
 
         // Bake the file's unit scale, then mirror the import path's per-entry processing exactly so
         // the geometry lines up with the saved node transforms.
@@ -416,7 +431,9 @@ class AssetManager {
         }
 
         std::string name = meshName.empty() ? meshData.entries[entryIndex].shapeName : meshName;
-        uint32_t meshIdx = createMesh(vertices, indices, bbMin, bbMax, center, inscribedRadius,
+        std::vector<uint32_t> LODs;
+        generateLODs(vertices, indices, LODs);
+        uint32_t meshIdx = createMesh(vertices, indices, LODs, bbMin, bbMax, center, inscribedRadius,
                                       circumscribedRadius, name, filePath, importScale, entryIndex);
         sceneMeshCache[key] = meshIdx;
         return meshIdx;

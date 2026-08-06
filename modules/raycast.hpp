@@ -124,7 +124,8 @@ inline MeshHit castMeshes(glm::vec3 origin, glm::vec3 direction, std::vector<Nod
         if (!rayIntersectsAABB(origin, dir, worldMin, worldMax))
             continue;
 
-        for (uint32_t idx = 0; idx + 2 < mesh.cpuIndices.size(); idx += 3) {
+        // LOD0 range only; cpuIndices also holds the appended LOD levels
+        for (uint32_t idx = 0; idx + 2 < mesh.lodIndexCount(0); idx += 3) {
             glm::vec3 v0 = glm::vec3(worldTransform * glm::vec4(mesh.cpuPositions[mesh.cpuIndices[idx]], 1.0f));
             glm::vec3 v1 = glm::vec3(worldTransform * glm::vec4(mesh.cpuPositions[mesh.cpuIndices[idx + 1]], 1.0f));
             glm::vec3 v2 = glm::vec3(worldTransform * glm::vec4(mesh.cpuPositions[mesh.cpuIndices[idx + 2]], 1.0f));

@@ -818,6 +818,20 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
     cmd.end();
 }
 
+// Finest LOD whose average triangle still covers kMinAvgTrianglePixels on screen 
+// Foreshortening and backfaces shrink real coverage further; the target constant absorbs that on average.
+static uint32_t selectLOD(const Mesh& mesh, float areaToPixels2) {
+    constexpr float kMinAvgTrianglePixels = 12.0f;
+    if (mesh.surfaceArea <= 0.0f) return 0;
+    uint32_t lod = 0;
+    while (lod + 1 < mesh.LODs.size()) {
+        float triCount = std::max(1.0f, static_cast<float>(mesh.LODs[lod] / 3));
+        if (mesh.surfaceArea * areaToPixels2 / triCount >= kMinAvgTrianglePixels) break;
+        lod++;
+    }
+    return lod;
+}
+
 template <typename PerMeshFn, typename PerInstanceFn>
 void Renderer::buildGeometryDrawCommands(const std::array<Plane, 6>& frustumPlanes, bool doCulling, PerMeshFn&& perMeshFn, PerInstanceFn&& perInstanceFn,
                                          const std::function<bool(const Node&)>& nodeFilter) {
@@ -836,23 +850,40 @@ void Renderer::buildGeometryDrawCommands(const std::array<Plane, 6>& frustumPlan
 
     uint32_t groupPipelineIdx = UINT32_MAX;
     uint32_t groupMeshIdx     = UINT32_MAX;
-    const Mesh*     groupMesh          = nullptr;
+    Mesh*           groupMesh          = nullptr;
     Node*           groupFirstNode     = nullptr;
     const Material* groupFirstMaterial = nullptr;
 
     uint32_t currentInstanceCount = 0;
     uint32_t instanceWriteCursor  = 0;
+    // screen pixels per model-space unit at distance 1; |proj[1][1]| = 1/tan(fovY/2)
+    const float pixelsPerUnit = 0.5f * static_cast<float>(gpu.getSwapchain().getSwapChainExtent().height) *
+                                std::abs(scene.activeCamera.projectionMatrix[1][1]);
+    const float pixelsPerUnit2 = pixelsPerUnit * pixelsPerUnit;
+    // largest scale²/distance² among the group's instances: its closest/biggest view drives the LOD
+    float groupMaxAreaScale2 = 0.0f;
+    // world AABBs of the group's instances (showBBoxes); drawn at flush, tinted by the group's LOD
+    std::vector<std::pair<glm::vec3, glm::vec3>> groupBBoxes;
 
     auto flushGroup = [&]() {
         if (currentInstanceCount == 0 || groupMesh == nullptr) {
             currentInstanceCount = 0;
+            groupMaxAreaScale2 = 0.0f;
+            groupBBoxes.clear();
             return;
         }
-        indirectCommands.push_back({.indexCount    = groupMesh->indexCount,
+        uint32_t lod = selectLOD(*groupMesh, pixelsPerUnit2 * groupMaxAreaScale2);
+        groupMesh->currentLOD = lod;
+        static const glm::vec4 lodColors[4] = {{0, 1, 0, 1}, {1, 1, 0, 1}, {1, 0.5f, 0, 1}, {1, 0, 0, 1}}; // green -> red
+        for (const auto& [bbMin, bbMax] : groupBBoxes)
+            Gizmos::drawBox(bbMin, bbMax, lodColors[std::min<uint32_t>(lod, 3)]);
+        groupBBoxes.clear();
+        indirectCommands.push_back({.indexCount    = groupMesh->lodIndexCount(lod),
                                     .instanceCount = currentInstanceCount,
-                                    .firstIndex    = static_cast<uint32_t>(groupMesh->indexOffset / sizeof(uint32_t)),
+                                    .firstIndex    = static_cast<uint32_t>(groupMesh->indexOffset / sizeof(uint32_t)) + groupMesh->lodIndexStart(lod),
                                     .vertexOffset  = 0,
                                     .firstInstance = instanceWriteCursor});
+        groupMaxAreaScale2 = 0.0f;
         perMeshFn(*groupMesh, *groupFirstNode, *groupFirstMaterial);
         if (!scene.shaderDrawRanges.empty())
             scene.shaderDrawRanges.back().commandCount++;
@@ -875,6 +906,8 @@ void Renderer::buildGeometryDrawCommands(const std::array<Plane, 6>& frustumPlan
         }
         if (nodeFilter && !nodeFilter(node)) continue;
 
+        bool pendingBBox = false;
+        glm::vec3 bbWorldMin{}, bbWorldMax{};
         if (node.isBoundingBoxValid() && doCulling) {
             glm::vec3 worldMin, worldMax;
             transformAABBToWorldSpace(mesh.boundingBoxMin, mesh.boundingBoxMax, node.getTransform(), worldMin, worldMax);
@@ -882,8 +915,12 @@ void Renderer::buildGeometryDrawCommands(const std::array<Plane, 6>& frustumPlan
                 culledCount++;
                 continue;
             }
-            if (features.showBBoxes)
-                Gizmos::drawBox(worldMin, worldMax, glm::vec4(1.0f, 1.0f, 0.0f, 1.0f));
+            if (features.showBBoxes) {
+                // deferred to flushGroup: the group's LOD (its color) isn't known yet
+                pendingBBox = true;
+                bbWorldMin = worldMin;
+                bbWorldMax = worldMax;
+            }
         }
 
         // Group boundary: flush the previous group, then open a new one.
@@ -901,6 +938,18 @@ void Renderer::buildGeometryDrawCommands(const std::array<Plane, 6>& frustumPlan
             groupFirstNode     = &node;
             groupFirstMaterial = &material;
         }
+
+        if (pendingBBox)
+            groupBBoxes.emplace_back(bbWorldMin, bbWorldMax);
+
+        // LOD input: this instance's scale²/distance² (screen size of one unit of surface area)
+        const glm::mat4& t = node.getTransform();
+        float scale2 = std::max({glm::dot(glm::vec3(t[0]), glm::vec3(t[0])),
+                                 glm::dot(glm::vec3(t[1]), glm::vec3(t[1])),
+                                 glm::dot(glm::vec3(t[2]), glm::vec3(t[2]))});
+        glm::vec3 toCam = glm::vec3(t[3]) - scene.activeCamera.position;
+        float dist2 = std::max(glm::dot(toCam, toCam), 1e-6f);
+        groupMaxAreaScale2 = std::max(groupMaxAreaScale2, scale2 / dist2);
 
         perInstanceFn(mesh, node, material);
         currentInstanceCount++;

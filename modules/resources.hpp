@@ -25,6 +25,8 @@
 struct MeshEntry {
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
+
+    std::vector<uint32_t> LODs;
     int materialId = -1;
     std::string materialName = "default_material";
     std::string shapeName;
@@ -33,6 +35,11 @@ struct MeshEntry {
 struct MeshData {
     std::vector<MeshEntry> entries; // one per material group per shape
 };
+
+// LOD.cpp — appends simplified index sets to `indices`, fills `LODs` with per-LOD index counts.
+// Not thread-safe (global Simplify state).
+void generateLODs(const std::vector<Vertex>& vertices, std::vector<uint32_t>& indices, std::vector<uint32_t>& LODs);
+inline void generateLODs(MeshEntry& mesh) { generateLODs(mesh.vertices, mesh.indices, mesh.LODs); }
 
 /*
 namespace for GPU resource operations: loading textures/meshes, creating textures

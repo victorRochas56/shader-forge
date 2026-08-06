@@ -427,7 +427,7 @@ private:
             pc.albedoTextureIndex = material.albedoTextureIndex;
             cmd.pushConstants<VoxelizationPushConstants>(pipeline.layout,
                 vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eGeometry | vk::ShaderStageFlagBits::eFragment, 0, pc);
-            cmd.drawIndexed(mesh.indexCount, 1, static_cast<uint32_t>(mesh.indexOffset / sizeof(uint32_t)), 0, 0);
+            cmd.drawIndexed(mesh.lodIndexCount(0), 1, static_cast<uint32_t>(mesh.indexOffset / sizeof(uint32_t)), 0, 0);
         }
 
         cmd.endRendering();
