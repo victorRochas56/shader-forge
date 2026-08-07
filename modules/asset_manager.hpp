@@ -231,7 +231,8 @@ class AssetManager {
 
             uint32_t existingInstance = false;
             for (uint32_t m = 0; m < meshes.size(); m++) {
-                if (std::abs(inscribedRadius - meshes[m].minRadius) < 0.0001f && std::abs(circumscribedRadius - meshes[m].maxRadius) < 0.001f) {
+                if ((std::abs(inscribedRadius - meshes[m].minRadius) < 0.0001f && std::abs(circumscribedRadius - meshes[m].maxRadius) < 0.001f) &&
+                    (std::abs(glm::distance(bbMax, bbMin) - glm::distance(meshes[m].boundingBoxMax, meshes[m].boundingBoxMin)) < 0.001f)) {
                     existingInstance = m;
                     break;
                 }
