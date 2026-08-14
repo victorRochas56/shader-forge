@@ -10,10 +10,6 @@
 #define DEBUG 0
 #endif
 
-#include "include/imgui.h"
-#include "include/imgui_impl_glfw.h"
-#include "include/imgui_impl_vulkan.h"
-
 #include <array>
 #include <chrono>
 #include <iostream>
@@ -30,6 +26,7 @@
 #include "events.hpp"
 #include "material_editor_state.hpp"
 #include "manipulators.hpp"
+#include "GUI.h"
 
 #define GLM_FORCE_RADIANS
 #define GLM_DEPTH_ZERO_TO_ONE
@@ -49,41 +46,44 @@ class App {
         initWindow();
         InputManager::init(renderer, scene);
         InputManager::setMaterialEditorState(&materialEditorState);
+        InputManager::setGUI(&gui);
 
         gpu.initCore(window);
         renderer.initVulkan(start_width, start_height);
-        bindless.descriptorSet->debugDescriptorSet("after_initVulkan");
-        initIMGUI(gpu.getDevice(), *gpu.getInstance(), gpu.getGraphicsIndex(),
-                  gpu.getSwapchain(), window);
+        //bindless.descriptorSet->debugDescriptorSet("after_initVulkan");
+
+        gui.init(bindless, gpu);
+        gui.loadLayout(GUI_LAYOUT_FILE);
         EventSystem::init(scene.sceneGraph);
         
-        //load a default environment map on startup
+        //default environment map
         uint32_t cubeMapIndex =
             scene.assetManager.loadCubemapFromFile("textures/sky2/posx.jpg", "textures/sky2/posy.jpg", "textures/sky2/posz.jpg", "textures/sky2/negx.jpg", "textures/sky2/negy.jpg", "textures/sky2/negz.jpg");
         scene.getMaterials()[scene.getFallBackMaterial()].environmentMapIndex = cubeMapIndex;
         scene.setSkyBox(cubeMapIndex);
-
+        // node icon, probably needs a better place to be
         renderer.buffers.nodeTextureIndex = scene.assetManager.loadTextureFromFile("textures/node.png");
 
         printf("SIZE OF NODE : %zu",sizeof(Node));
 
-        //start of render loop
         mainLoop();
     }
 
   private:
-    GpuContext gpu;
-    BindlessSystem bindless;
-    Scene scene;
-    Renderer renderer{gpu, bindless, scene};
-    GLFWwindow* window = nullptr;
-    bool framebufferResized = false;
-    SceneLoader sceneLoader;
+    GpuContext          gpu;
+    Renderer            renderer{gpu, bindless, scene, gui};
+    BindlessSystem      bindless;
+    Scene               scene;
+    SceneLoader         sceneLoader;
+    GUI                 gui;
     MaterialEditorState materialEditorState;
+    bool                showAllNodes = false;
+    
+    GLFWwindow*         window = nullptr;
+    bool                framebufferResized = false;
 
-    bool showAllNodes = false;
-
-    std::vector<Line> lines;
+    double              lastFrameMs = 0.0;
+    double              lastGuiMs = 0.0;
 
     void initWindow() {
         glfwInit();
@@ -92,10 +92,11 @@ class App {
         window = glfwCreateWindow(start_width, start_height, "Vulkan", nullptr, nullptr);
         glfwSetWindowUserPointer(window, this);
         glfwSetFramebufferSizeCallback(window, framebufferResizedCallback);
-
         glfwSetMouseButtonCallback(window, InputManager::mouse_button_callback);
         glfwSetCursorPosCallback(window, InputManager::cursor_position_callback);
         glfwSetKeyCallback(window, InputManager::key_callback);
+        glfwSetScrollCallback(window, InputManager::scroll_callback);
+        glfwSetCharCallback(window, InputManager::char_callback);
     }
 
     static void framebufferResizedCallback(GLFWwindow* window, int width, int height) {
@@ -109,28 +110,30 @@ class App {
         std::chrono::steady_clock::time_point frameStart;
         std::chrono::duration<double> deltaTime;
 
+        
         while (!glfwWindowShouldClose(window)) {
             tracing::startTrace("frame time");
             frameStart = std::chrono::steady_clock::now();
 
             glfwPollEvents();
             std::chrono::steady_clock::time_point tPoll = std::chrono::steady_clock::now();
-            InputManager::tickInputState();
 
-            //gizmos are used in "immediate mode" so cleared every frame
+            auto inputExtent = gpu.getSwapchain().getSwapChainExtent();
+            gui.resolveLayout(glm::uvec2(inputExtent.width, inputExtent.height));
+            gui.hitTest();
+            InputManager::tickInputState();
+            // after tickInputState: handlers read this frame's mouseDelta
+            gui.runBehaviour();
+
+            //gizmos are rebuilt every frame
             Gizmos::clearLineBuffer();
             Gizmos::clearSDFBuffer();
-
 
             std::chrono::steady_clock::time_point tPreGui = std::chrono::steady_clock::now();
             drawGui();
             std::chrono::steady_clock::time_point tGui = std::chrono::steady_clock::now();
 
-            for(auto& line : lines){
-                Gizmos::drawLine(line);
-            }
-
-            //draw axes visualization for every node
+            //draw manipulator visualization for every node
             Node* currentNode = &scene.sceneGraph.getRootNode();
             if(scene.sceneGraph.selectedNode != 0) {
                 currentNode = &scene.sceneGraph.getNode(scene.sceneGraph.selectedNode);
@@ -162,7 +165,10 @@ class App {
                 Manip::drawGizmos(*currentNode, scene.activeCamera);
             }
 
+            auto guiExtent = gpu.getSwapchain().getSwapChainExtent();
+            gui.uploadGPU(bindless, gpu.currentFrame, glm::uvec2(guiExtent.width, guiExtent.height));
             std::chrono::steady_clock::time_point tPreDraw = std::chrono::steady_clock::now();
+            
             //main draw loop
             renderer.drawFrame();
 
@@ -184,6 +190,8 @@ class App {
                           << "ms | manip/events/sync " << ms(tGui, tPreDraw)
                           << "ms | drawFrame+ " << ms(tPreDraw, tEnd) << "ms" << std::endl;
             }
+            lastFrameMs = deltaTime.count() * 1000.0;
+            lastGuiMs = std::chrono::duration<double, std::milli>(tGui - tPreGui).count();
             gpu.deltaTime = static_cast<float>(deltaTime.count());
             gpu.time += gpu.deltaTime;
             tracing::endTrace("frame time");
@@ -194,46 +202,54 @@ class App {
     } 
 
     void drawGui() {
-        // Per-window timing: [slow gui] names the window eating a slow drawGui (see [slow loop]).
+        // timing for finding windows eating a slow drawGui (in [slow loop])
         using guiClk = std::chrono::steady_clock;
         std::array<std::pair<const char*, guiClk::time_point>, 14> guiMarks;
         size_t guiMarkCount = 0;
         auto guiMark = [&](const char* name) { guiMarks[guiMarkCount++] = {name, guiClk::now()}; };
         guiMark("start");
 
-        ImGui_ImplVulkan_NewFrame();
-        ImGui_ImplGlfw_NewFrame();
-        ImGui::NewFrame();
+        gui.beginFrame();
         guiMark("newFrame");
 
-        ImGui::Begin("node tree");
-        traverseNodeTree(scene.sceneGraph.getRootNode(), 0, scene.sceneGraph.selectedNode, scene.sceneGraph);
-        ImGui::End();
+        if (gui.beginWindow("node tree", nullptr, glm::vec2(280, 320), glm::vec2(20, 450))) {
+            traverseNodeTree(gui, scene.sceneGraph.getRootNode(), 0, scene.sceneGraph.selectedNode, scene.sceneGraph);
+            gui.endWindow();
+        }
         guiMark("nodeTree");
 
-        showNodeInfo(scene.sceneGraph.getNodes()[scene.sceneGraph.selectedNode], scene, bindless, renderer.buffers);
+        showNodeInfo(gui, scene.sceneGraph.getNodes()[scene.sceneGraph.selectedNode], scene, bindless, renderer.buffers);
         if (InputManager::getInstance().contextMenuShown) {
-            showActionMenu(0, gpu.getWindow(), scene.activeCamera, scene.sceneGraph, InputManager::getInstance().contextMenuPinX, InputManager::getInstance().contextMenuPinY);
+            showActionMenu(gui, 0, gpu.getWindow(), scene.activeCamera, scene.sceneGraph, InputManager::getInstance().contextMenuPinX, InputManager::getInstance().contextMenuPinY);
         }
         guiMark("nodeInfo");
 
-        showMaterialEditor(materialEditorState, scene, bindless);
+        showMaterialEditor(gui, materialEditorState, scene, bindless);
         guiMark("materialEditor");
-        showImageViewList(bindless, renderer.features);
+        showImageViewList(gui, bindless, renderer.features);
         guiMark("imageViewList");
-        showBufferAllocs(*bindless.descriptorSet,scene.assetManager,renderer.getIndirectCommands());
+        showBufferAllocs(gui, *bindless.descriptorSet,scene.assetManager,renderer.getIndirectCommands());
         guiMark("bufferAllocs");
-        showDebugWindow(renderer.culledCount,renderer.cullFovScale);
+        if (gui.beginWindow("Debug", nullptr, glm::vec2(320, 150), glm::vec2(-870, 0), GUIAnchor::Top | GUIAnchor::Right, GUIWindowNoSavedSettings | GUIWindowFixed)) {
+            gui.textf("Culled : %u", renderer.culledCount);
+            gui.sliderFloat("Cull FOV Scale", &renderer.cullFovScale, 0.1f, 1.0f);
+            gui.separator();
+            gui.textf("frame %.2f ms", lastFrameMs);
+            gui.textf("gui   %.2f ms", lastGuiMs);
+            gui.textf("quads %u", gui.getQuadCount());
+            gui.endWindow();
+        }
         guiMark("debugWindow");
-        showTraces();
+        showTraces(gui);
         guiMark("traces");
-        showToggles(renderer.features);
+        showToggles(gui, renderer.features);
         guiMark("toggles");
-        showScenesMenu(scene, bindless, renderer.buffers, sceneLoader);
+        showScenesMenu(gui, scene, bindless, renderer.buffers, sceneLoader);
         guiMark("scenesMenu");
-        showMeshList(scene, bindless, renderer.defaultAlbedoIndex);
+        showMeshList(gui, scene, bindless, renderer.defaultAlbedoIndex);
         guiMark("meshList");
-        ImGui::Render();
+        // after every widget call: retires anything this frame stopped drawing
+        gui.endFrame();
         guiMark("render");
 
         auto guiMs = [](guiClk::time_point a, guiClk::time_point b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
@@ -250,10 +266,7 @@ class App {
     }
 
     void cleanup() {
-
-        ImGui_ImplVulkan_Shutdown();
-        ImGui_ImplGlfw_Shutdown();
-        ImGui::DestroyContext();
+        gui.saveLayout(GUI_LAYOUT_FILE);
 
         gpu.getDevice().getDevice().waitIdle();
         gpu.getSwapchain().cleanupSwapChain();

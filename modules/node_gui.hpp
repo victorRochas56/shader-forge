@@ -5,6 +5,7 @@
 class Renderer;
 class Scene;
 class BindlessSystem;
+class GUI;
 struct RenderBuffers;
 
 struct NodeGuiState {
@@ -22,11 +23,11 @@ struct NodeGuiState {
 
 NodeGuiState& getNodeGuiState(uint32_t nodeIndex);
 
-void showNodeInfo(Node& node, Scene& scene, BindlessSystem& bindless, RenderBuffers& buffers);
-void showNodeMeshInfo(Node& node, Scene& scene);
-void showNodeMaterialDialog(Node& node, Scene& scene);
-void showNodeLightInfo(Node& node, Scene& scene, BindlessSystem& bindless, uint32_t lightBufferIndex);
-void showNodeVolumeInfo(Node& node, Scene& scene);
-void showNodeEmitterInfo(Node& node, Scene& scene, BindlessSystem& bindless, const RenderBuffers& buffers);
-void showNodeTransformInfo(Node& node, Scene& scene);
+void showNodeInfo(GUI& gui, Node& node, Scene& scene, BindlessSystem& bindless, RenderBuffers& buffers);
+void showNodeMeshInfo(GUI& gui, Node& node, Scene& scene);
+void showNodeMaterialDialog(GUI& gui, Node& node, Scene& scene);
+void showNodeLightInfo(GUI& gui, Node& node, Scene& scene, BindlessSystem& bindless, uint32_t lightBufferIndex);
+void showNodeVolumeInfo(GUI& gui, Node& node, Scene& scene);
+void showNodeEmitterInfo(GUI& gui, Node& node, Scene& scene, BindlessSystem& bindless, const RenderBuffers& buffers);
+void showNodeTransformInfo(GUI& gui, Node& node, Scene& scene);
 

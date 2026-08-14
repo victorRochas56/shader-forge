@@ -42,13 +42,14 @@ class AssetManager {
     }
 
     // Allocates GPU buffers for a mesh's geometry, records a Mesh entry, and returns its index.
-    // `indices` may contain appended LOD ranges described by `LODs` (see generateLODs).
+    // indices may contain appended LOD ranges (see generateLODs).
     uint32_t createMesh(const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices,
                         const std::vector<uint32_t>& LODs,
                         const glm::vec3& bbMin, const glm::vec3& bbMax, const glm::vec3& center,
                         float minRadius, float maxRadius, const std::string& name, const std::string& sourceFile,
                         float importScale = 1.0f, uint32_t sourceEntryIndex = 0) {
-        std::vector<Vertex> verts = vertices; // allocateVariableBuffer takes a mutable buffer
+        
+        std::vector<Vertex> verts = vertices;
         std::vector<uint32_t> inds = indices;
 
         uint32_t vertexAllocOffset = descriptorSet->allocateVariableBuffer<Vertex>(verts, vertexBufferIndex);
@@ -109,20 +110,13 @@ class AssetManager {
 
     // Loads an OBJ and returns mesh indices plus material grouping info.
     // Each mesh is a single draw unit with its own vertex/index data.
-    // importScale defines the unit scale of the source file (e.g. 0.01 for a model authored in
-    // centimeters). It is baked into the geometry here so the rest of the pipeline — bounding boxes,
-    // instance dedup, raycasting — operates on already-scaled positions. The scale is fixed per file
-    // for the session: a re-load of an already-imported path returns the cached (already-baked) result.
+    // importScale is baked into the geometry 
     MeshLoadResult loadMeshFromFile(std::string filePath, float importScale = 1.0f) {
         if (auto it = loadedMeshes.find(filePath); it != loadedMeshes.end()) {
             return it->second;
         }
-
         MeshLoadResult result;
-
-#if DEBUG == 1
         std::cout << "Loading mesh from " << filePath << " (import scale " << importScale << ")" << std::endl;
-#endif
         MeshData meshData = resource::loadMeshFromFile(filePath);
 
         // Bake the file's unit scale into vertex positions. Uniform scaling leaves normal
@@ -142,8 +136,6 @@ class AssetManager {
         std::vector<glm::vec3> bbMaxes(entryCount);
         std::vector<glm::vec3> bbCenters(entryCount);
 
-        // Each entry is independent: it only touches its own vertices and writes its
-        // results to a fixed index, so the per-entry work can run on worker threads.
         auto processEntry = [&](size_t idx) {
             std::cout << "processing entry!" << std::endl;
             auto& vertices = meshData.entries[idx].vertices;
@@ -202,12 +194,8 @@ class AssetManager {
             processEntry(0);
         }
 
-        // The remaining per-entry work: classify each entry as a new mesh or an instance of an
-        // existing one, and for instances recover the placement transform via ICP. This can't be
-        // a flat parallel-for: instance dedup reads `meshes` while createMesh grows it (so
-        // classification is order-dependent), createMesh allocates GPU buffers (not thread-safe),
-        // and mirror-variant creation is order-dependent. Only icpAlign is both expensive and
-        // pure, so we split into three phases and parallelize just the ICP.
+        // now we classify each entry as a new mesh or an instance of an existing one
+        // for instances recover the placement transform via ICP.
         struct EntryResolution {
             uint32_t meshIdx = 0;
             glm::mat4 transform{1.0f};
@@ -217,10 +205,9 @@ class AssetManager {
         };
         std::vector<EntryResolution> resolutions(entryCount);
 
-        // Phase A (serial): classify entries and create all new base meshes. Afterwards `meshes`
-        // is stable for every reference an instance could point at. Mirror meshes are created
-        // later in phase C, but they share their source's radii so they never change which mesh
-        // the dedup scan matches (it breaks on the earliest match).
+        // (serial): classify entries and create all new base meshes.
+        // Afterwards `meshes` is stable for every reference an instance could point at.
+        // Mirror meshes are created later
         for (size_t idx = 0; idx < entryCount; ++idx) {
             auto& entry = meshData.entries[idx];
             float inscribedRadius = inscribedRadii[idx];
@@ -247,24 +234,22 @@ class AssetManager {
                                        static_cast<uint32_t>(idx));
                 r.transform = makeTransform(center);
             } else {
-                // Default placement for an instance; refined in phase C once its ICP fit is known.
+                // Default placement for an instance; will be replaces if ICP match is known.
                 r.refMeshIdx = existingInstance;
                 r.meshIdx = existingInstance;
                 r.transform = makeTransform(center);
                 // Welded formats (OBJ/PLY) don't store instance transforms and reorder vertices,
-                // so we can't assume cpuPositions[i] matches entry.vertices[i]. Recover the
-                // transform with correspondence-free multi-start ICP instead (which also detects
-                // reflections). Both point sets are centered at their own bbox center, so ICP gives
-                // the rotation plus a residual centroid offset; adding `center` puts it in world space.
+                // so we can't assume cpuPositions[i] matches entry.vertices[i].
+                // Recover the transform with correspondence-free multi-start ICP instead (which also detects reflections).
+                // Both point sets are centered at their own bbox center, so ICP gives the rotation plus a residual centroid offset
                 if (entry.vertices.size() >= 3 && meshes[existingInstance].cpuPositions.size() >= 3) {
                     r.runIcp = true;
                 }
             }
         }
 
-        // Phase B (parallel): run the first (expensive) icpAlign for every instance against its
-        // now-fixed reference mesh. Read-only on `meshes` and icpAlign is pure, so this fans out
-        // safely across the bounded worker pool.
+        // (parallel): run the first icpAlign for every instance against its reference mesh.
+        // Read-only on `meshes` and icpAlign is pure, so parallelizeable
         {
             std::vector<size_t> icpEntries;
             for (size_t idx = 0; idx < entryCount; ++idx) {
@@ -280,10 +265,9 @@ class AssetManager {
                     instanceNormals.push_back(v.normal);
                 }
                 uint32_t ref = resolutions[idx].refMeshIdx;
-                // Reflection is allowed here; a mirrored fit is handled in phase C with a reflected
-                // geometry copy (not a negative scale, which the node system can't carry without shearing).
-                resolutions[idx].fit = icpAlign(meshes[ref].cpuPositions, meshes[ref].cpuNormals,
-                                                instancePositions, instanceNormals);
+                // Reflection is allowed here 
+                // reflected geometry is a copy (negative scale not supported currently).
+                resolutions[idx].fit = icpAlign(meshes[ref].cpuPositions, meshes[ref].cpuNormals, instancePositions, instanceNormals);
             };
             if (icpEntries.size() > 1) {
                 unsigned int hw = std::thread::hardware_concurrency();
@@ -292,7 +276,6 @@ class AssetManager {
                 auto worker = [&]() {
                     for (size_t j = nextJob.fetch_add(1); j < icpEntries.size(); j = nextJob.fetch_add(1)) {
                         runIcpFor(icpEntries[j]);
-                        std::cout << "ran ICP!" << std::endl;
                     }
                 };
                 std::vector<std::thread> workers;
@@ -304,9 +287,9 @@ class AssetManager {
             }
         }
 
-        // Phase C (serial): turn each instance's fit into a transform, creating mirror-variant
-        // meshes in order. The first mirror of a source becomes the canonical mirror mesh (its own
-        // geometry is already correctly wound); later mirrors align to it, so this must stay serial.
+        // (serial): turn each instance's fit into a transform
+        // creating mirror-variant meshes in order. 
+        // The first mirror of a source becomes the canonical mirror mesh and later mirrors align to it
         for (size_t idx = 0; idx < entryCount; ++idx) {
             EntryResolution& r = resolutions[idx];
             if (!r.runIcp) continue;
@@ -357,7 +340,7 @@ class AssetManager {
             }
         }
 
-        // Final assembly (serial, in entry order).
+        // Final assembly
         for (size_t idx = 0; idx < entryCount; ++idx) {
             auto& entry = meshData.entries[idx];
             result.meshIndices.push_back(resolutions[idx].meshIdx);
@@ -367,16 +350,13 @@ class AssetManager {
                 result.materialNames[entry.materialId] = entry.materialName;
             }
         }
-
+ 
         loadedMeshes[filePath] = result;
         return result;
     }
 
-    // Fast scene-load path: build (or reuse) a single mesh from a specific source-file entry,
-    // doing only the cheap per-entry processing that import does (center + bbox + radii). It skips
-    // instance dedup and ICP entirely, because the scene file already stores each node's final
-    // transform and the entry every mesh came from. Meshes are deduped by (file, entry) so the
-    // instances and mirror groups that shared one mesh on import share one again here.
+    // Fast scene-load path: build a single mesh from a specific source-file entry
+    // Meshes are deduped by (file, entry) so the instances and mirror groups that shared one mesh on import share one again here.
     uint32_t loadSceneMesh(const std::string& filePath, uint32_t entryIndex, const std::string& meshName,
                            float importScale = 1.0f) {
         // Persists across scene clears so reloads reuse meshes; scale keyed since it bakes geometry.

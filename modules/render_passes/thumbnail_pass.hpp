@@ -8,10 +8,10 @@
 
 // Renders each mesh once into its own small bindless color target for GUI previews.
 // A mesh is (re)rendered only while its thumbnailDirty flag is set; a few are processed
-// per frame to spread the cost. The targets are sampled directly by ImGui in showMeshList.
+// per frame to spread the cost. The targets are sampled directly by showMeshList.
 class ThumbnailPass : public RenderPass {
 
-    static constexpr uint32_t SIZE = 128;             // rendered size; ImGui downscales to 64
+    static constexpr uint32_t SIZE = 128;             // rendered size; the mesh list draws it at 64
     static constexpr vk::Format COLOR_FORMAT = vk::Format::eR8G8B8A8Unorm;
     static constexpr uint32_t MAX_PER_FRAME = 8;      // dirty meshes processed each frame
 

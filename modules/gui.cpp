@@ -1,6 +1,5 @@
 #include "gui.hpp"
-#include "imgui_impl_glfw.h"
-#include "imgui_impl_vulkan.h"
+#include "GUI.h"
 #include "input.hpp"
 #include "profiling.hpp"
 #include "material_editor_state.hpp"
@@ -20,164 +19,75 @@
 #include <cstdio>
 #include <unordered_map>
 
-static void check_vk_result(VkResult err) {
-    if (err == 0)
-        return;
-    fprintf(stderr, "[vulkan] Error: VkResult = %d\n", err);
-    if (err < 0)
-        abort();
-}
-
-void initIMGUI(Device& device, vk::Instance instance, uint32_t graphicsQueueFamily,
-               Swapchain& swapchain, GLFWwindow* window) {
-    VkDescriptorPoolSize pool_sizes[] = {{VK_DESCRIPTOR_TYPE_SAMPLER, 1000},
-                                         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000},
-                                         {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000},
-                                         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1000},
-                                         {VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1000},
-                                         {VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 1000},
-                                         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000},
-                                         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000},
-                                         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000},
-                                         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000},
-                                         {VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000}};
-
-    VkDescriptorPoolCreateInfo pool_info = {};
-    pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-    pool_info.maxSets = 1000;
-    pool_info.poolSizeCount = std::size(pool_sizes);
-    pool_info.pPoolSizes = pool_sizes;
-
-    VkDescriptorPool imguiPool;
-    VkResult result = vkCreateDescriptorPool(*device.getDevice(), &pool_info, nullptr, &imguiPool);
-    check_vk_result(result);
-
-    // Initialize ImGui
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO();
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-
-    // Setup Platform/Renderer backends
-    ImGui_ImplGlfw_InitForVulkan(window, true);
-
-    // Get swapchain details
-    uint32_t swapchainImageCount = swapchain.getSwapChainImages().size();
-    vk::Format colorFormat = swapchain.getSwapChainImageFormat();
-    vk::Format depthFormat = findDepthFormat(device);
-
-    ImGui_ImplVulkan_InitInfo init_info = {};
-    init_info.ApiVersion = VK_API_VERSION_1_4;
-    init_info.Instance = instance;
-    init_info.PhysicalDevice = *device.getPhysicalDevice();
-    init_info.Device = *device.getDevice();
-    init_info.QueueFamily = graphicsQueueFamily;
-    init_info.Queue = *device.getGraphicsQueue();
-    init_info.DescriptorPool = imguiPool;
-    init_info.Subpass = 0;
-    init_info.MinImageCount = swapchainImageCount;
-    init_info.ImageCount = swapchainImageCount;
-    init_info.MSAASamples = vk::SampleCountFlagBits::e1;
-    init_info.Allocator = nullptr;
-    init_info.CheckVkResultFn = check_vk_result;
-    init_info.UseDynamicRendering = true;
-
-    // Setup pipeline rendering create info for dynamic rendering
-    vk::Format colorAttachmentFormat = colorFormat;
-    VkPipelineRenderingCreateInfo pipelineRenderingInfo = {};
-    pipelineRenderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
-    pipelineRenderingInfo.colorAttachmentCount = 1;
-    pipelineRenderingInfo.pColorAttachmentFormats = reinterpret_cast<VkFormat*>(&colorAttachmentFormat);
-    pipelineRenderingInfo.depthAttachmentFormat = VK_FORMAT_UNDEFINED;
-    pipelineRenderingInfo.stencilAttachmentFormat = VK_FORMAT_UNDEFINED;
-
-    init_info.PipelineRenderingCreateInfo = pipelineRenderingInfo;
-
-    // Initialize Vulkan backend
-    bool initResult = ImGui_ImplVulkan_Init(&init_info);
-    if (!initResult) {
-        throw std::runtime_error("Failed to initialize ImGui Vulkan backend");
-    }
-}
-
-void traverseNodeTree(Node& node, uint32_t level, uint32_t selectedNode, SceneGraph& sceneGraph) {
+void traverseNodeTree(GUI& gui, Node& node, uint32_t level, uint32_t selectedNode, SceneGraph& sceneGraph) {
     std::string displayText = "";
-    ImGuiTreeNodeFlags flag = ImGuiTreeNodeFlags_DefaultOpen;
+    GUITreeFlags flag = GUITreeFlags::TreeDefaultOpen;
     if(!node.internal) {
         if (node.getIndex() == selectedNode) {
-            flag |= ImGuiTreeNodeFlags_Selected;
+            flag = flag | GUITreeFlags::TreeSelected;
         }
-        // Append "##<index>" so the ImGui ID stays unique even if two nodes share a display name
+        // Append "##<index>" so the ID stays unique even if two nodes share a display name
         // (the text after ## is not drawn). Node names are uniquified on spawn, but this guards
         // legacy/default-named nodes too.
         displayText += node.name;
         displayText += "##" + std::to_string(node.getIndex());
-        if(node.firstChild == 0) flag |= ImGuiTreeNodeFlags_Leaf;
-        if(ImGui::TreeNodeEx(displayText.c_str(),flag)){
-            if(ImGui::IsItemClicked())
-                sceneGraph.selectNode(node.getIndex());
-                
+        if(node.firstChild == 0) flag = flag | GUITreeFlags::TreeLeaf;
+        bool open = gui.treeNodeEx(displayText, flag);
+        // Read the click outside the open branch: a Leaf never opens, and nesting the test the way
+        // the ImGui version did would make a childless node impossible to select.
+        if(gui.isItemClicked())
+            sceneGraph.selectNode(node.getIndex());
+        if(open){
             auto& nodes = sceneGraph.getNodes();
             uint32_t child = node.firstChild;
             while (child != 0) {
-                traverseNodeTree(nodes[child], level + 1, selectedNode, sceneGraph);
+                traverseNodeTree(gui, nodes[child], level + 1, selectedNode, sceneGraph);
                 child = nodes[child].nextSibling;
             }
-            ImGui::TreePop();
+            gui.treePop();
         }
     }
 }
 
-void showMaterialEditor(MaterialEditorState& state, Scene& scene, BindlessSystem& bindless) {
+void showMaterialEditor(GUI& gui, MaterialEditorState& state, Scene& scene, BindlessSystem& bindless) {
     auto& materials = scene.getMaterials();
 
-    ImGui::Begin("Materials");
+    if (!gui.beginWindow("Materials", nullptr, glm::vec2(300, 420), glm::vec2(20, 20))) return;
 
-    // Cache the ImGui descriptor per thumbnail image view (see showMeshList for the rationale).
-    static std::unordered_map<VkImageView, ImTextureID> matThumbCache;
+    // No thumbnail descriptor cache. The custom GUI draws any bindless texture by index, so the
+    // per-image-view descriptor map this used to keep is simply gone.
     const std::vector<TextureResource>& textures = bindless.descriptorSet->getTextureResources();
-    const std::vector<SamplerResource>& samplers = bindless.descriptorSet->getSamplerResources();
 
     // material list
     for (int i = 0; i < static_cast<int>(materials.size()); i++) {
         uint32_t ti = materials[i].thumbnailTextureIndex;
-        if (ti != 0xFFFFFFFF && ti < textures.size() && !textures[ti].isEmpty() && !samplers.empty()) {
-            VkImageView view = static_cast<VkImageView>(**textures[ti].imageView);
-            auto it = matThumbCache.find(view);
-            ImTextureID texId;
-            if (it != matThumbCache.end()) {
-                texId = it->second;
-            } else {
-                texId = (ImTextureID)ImGui_ImplVulkan_AddTexture(static_cast<VkSampler>(**samplers[0].sampler), view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-                matThumbCache.emplace(view, texId);
-            }
-            ImGui::Image(texId, ImVec2(128.0f, 128.0f));
+        if (ti != 0xFFFFFFFF && ti < textures.size() && !textures[ti].isEmpty()) {
+            gui.image(ti, glm::vec2(128.0f, 128.0f));
         }
 
         std::string label = materials[i].name.empty() ? ("Material " + std::to_string(i)) : materials[i].name;
         if (i == 0) label += " (default)";
 
         bool isSelected = (state.showEditor && state.selectedIndex == i);
-        if (ImGui::Selectable(label.c_str(), isSelected)) {
+        if (gui.selectable(label, isSelected)) {
             state.showEditor = true;
             state.loadFromMaterial(i, materials[i], scene);
             InputManager::getInstance().canMove = false;
         }
     }
 
-    ImGui::Separator();
-    if (ImGui::Button("Create New Material")) {
+    gui.separator();
+    if (gui.button("Create New Material")) {
         state.showEditor = true;
         state.resetToDefaults();
         InputManager::getInstance().canMove = false;
     }
-    if (ImGui::Button("Pick from Mesh")) {
+    if (gui.button("Pick from Mesh")) {
         InputManager::getInstance().materialPickMode = true;
         InputManager::getInstance().pickedMaterialIndex = -1;
     }
     if (InputManager::getInstance().materialPickMode) {
-        ImGui::TextColored(ImVec4(1, 1, 0, 1), "Click a mesh to select its material...");
+        gui.textColored("Click a mesh to select its material...", glm::vec4(1, 1, 0, 1));
     }
 
     // handle pick result
@@ -189,24 +99,24 @@ void showMaterialEditor(MaterialEditorState& state, Scene& scene, BindlessSystem
         input.pickedMaterialIndex = -1;
     }
 
-    ImGui::End();
+    gui.endWindow();
 
     if (!state.showEditor) return;
 
     bool open = true;
     std::string title = state.selectedIndex >= 0 ? "Edit Material" : "New Material";
-    ImGui::Begin(title.c_str(), &open);
+    if (!gui.beginWindow(title.c_str(), &open, glm::vec2(440, 600), glm::vec2(420, 20))) return;
     if (!open) {
         state.showEditor = false;
         InputManager::getInstance().canMove = true;
-        ImGui::End();
+        gui.endWindow();
         return;
     }
 
     InputManager::getInstance().canMove = false;
 
-    ImGui::SetNextItemWidth(200);
-    ImGui::InputText("Name", state.nameBuffer, sizeof(state.nameBuffer));
+    gui.setNextItemWidth(200);
+    gui.inputText("Name", state.nameBuffer, sizeof(state.nameBuffer));
 
     // shader selection — lists all registered lit / lit-derived shaders
     {
@@ -220,54 +130,53 @@ void showMaterialEditor(MaterialEditorState& state, Scene& scene, BindlessSystem
         if (state.selectedShaderIndex < 0 || state.selectedShaderIndex >= static_cast<int>(litShaders.size()))
             state.selectedShaderIndex = 0;
         std::string preview = litShaders.empty() ? "<none>" : shaderLabel(litShaders[state.selectedShaderIndex].sourceFile);
-        ImGui::SetNextItemWidth(200);
-        if (ImGui::BeginCombo("Shader##mat", preview.c_str())) {
+        gui.setNextItemWidth(200);
+        if (gui.beginCombo("Shader##mat", preview)) {
             for (int i = 0; i < static_cast<int>(litShaders.size()); i++) {
                 bool sel = (state.selectedShaderIndex == i);
-                if (ImGui::Selectable(shaderLabel(litShaders[i].sourceFile).c_str(), sel))
+                if (gui.comboItem(shaderLabel(litShaders[i].sourceFile), sel))
                     state.selectedShaderIndex = i;
-                if (sel) ImGui::SetItemDefaultFocus();
             }
-            ImGui::EndCombo();
+            gui.endCombo();
         }
     }
 
-    ImGui::Separator();
-    ImGui::Text("Properties");
-    ImGui::ColorEdit4("Base Color", state.color);
-    ImGui::SliderFloat("Metallic##mat", &state.metallic, 0.0f, 1.0f);
-    ImGui::SliderFloat("Roughness##mat", &state.roughness, 0.0f, 1.0f);
+    gui.separator();
+    gui.textf("Properties");
+    gui.colorEdit4("Base Color", state.color);
+    gui.sliderFloat("Metallic##mat", &state.metallic, 0.0f, 1.0f);
+    gui.sliderFloat("Roughness##mat", &state.roughness, 0.0f, 1.0f);
 
-    ImGui::Separator();
-    ImGui::Text("Textures (leave empty for defaults)");
-    ImGui::SetNextItemWidth(300);
-    ImGui::InputText("Albedo", state.albedoPath, sizeof(state.albedoPath));
-    browseButton("albedo", state.albedoPath, sizeof(state.albedoPath));
-    ImGui::SetNextItemWidth(300);
-    ImGui::InputText("Metallic Tex", state.metallicPath, sizeof(state.metallicPath));
-    browseButton("metallic", state.metallicPath, sizeof(state.metallicPath));
-    ImGui::SetNextItemWidth(300);
-    ImGui::InputText("Roughness Tex", state.roughnessPath, sizeof(state.roughnessPath));
-    browseButton("roughness", state.roughnessPath, sizeof(state.roughnessPath));
-    ImGui::SetNextItemWidth(300);
-    ImGui::InputText("Normal", state.normalPath, sizeof(state.normalPath));
-    browseButton("normal", state.normalPath, sizeof(state.normalPath));
-    ImGui::Checkbox("Flip Normal", &state.flipNormal);
-    ImGui::Checkbox("Alpha Clip", &state.alphaClip);
+    gui.separator();
+    gui.textf("Textures (leave empty for defaults)");
+    gui.setNextItemWidth(300);
+    gui.inputText("Albedo", state.albedoPath, sizeof(state.albedoPath));
+    browseButton(gui, "albedo", state.albedoPath, sizeof(state.albedoPath));
+    gui.setNextItemWidth(300);
+    gui.inputText("Metallic Tex", state.metallicPath, sizeof(state.metallicPath));
+    browseButton(gui, "metallic", state.metallicPath, sizeof(state.metallicPath));
+    gui.setNextItemWidth(300);
+    gui.inputText("Roughness Tex", state.roughnessPath, sizeof(state.roughnessPath));
+    browseButton(gui, "roughness", state.roughnessPath, sizeof(state.roughnessPath));
+    gui.setNextItemWidth(300);
+    gui.inputText("Normal", state.normalPath, sizeof(state.normalPath));
+    browseButton(gui, "normal", state.normalPath, sizeof(state.normalPath));
+    gui.checkbox("Flip Normal", &state.flipNormal);
+    gui.checkbox("Alpha Clip", &state.alphaClip);
     if (state.alphaClip) {
-        ImGui::SliderFloat("Alpha Cutoff", &state.alphaCutoff, 0.0f, 1.0f);
+        gui.sliderFloat("Alpha Cutoff", &state.alphaCutoff, 0.0f, 1.0f);
     }
 
-    ImGui::Separator();
-    ImGui::Text("Environment Map (6 faces)");
+    gui.separator();
+    gui.textf("Environment Map (6 faces)");
     const char* faceLabels[] = {"Pos X", "Pos Y", "Pos Z", "Neg X", "Neg Y", "Neg Z"};
     for (int i = 0; i < 6; i++) {
-        ImGui::SetNextItemWidth(300);
-        ImGui::InputText(faceLabels[i], state.envMapPaths[i], sizeof(state.envMapPaths[i]));
-        browseButton(faceLabels[i], state.envMapPaths[i], sizeof(state.envMapPaths[i]));
+        gui.setNextItemWidth(300);
+        gui.inputText(faceLabels[i], state.envMapPaths[i], sizeof(state.envMapPaths[i]));
+        browseButton(gui, faceLabels[i], state.envMapPaths[i], sizeof(state.envMapPaths[i]));
     }
 
-    ImGui::Separator();
+    gui.separator();
 
     auto buildMaterial = [&](Material& mat) {
         const Material& defaultMat = materials[scene.getFallBackMaterial()];
@@ -351,7 +260,7 @@ void showMaterialEditor(MaterialEditorState& state, Scene& scene, BindlessSystem
 
     if (state.selectedIndex >= 0) {
         // editing existing material
-        if (ImGui::Button("Apply Changes")) {
+        if (gui.button("Apply Changes")) {
             Material& existingMat = materials[state.selectedIndex];
             Material oldMat = existingMat;
 
@@ -385,7 +294,7 @@ void showMaterialEditor(MaterialEditorState& state, Scene& scene, BindlessSystem
         }
     } else {
         // creating new material
-        if (ImGui::Button("Create")) {
+        if (gui.button("Create")) {
             Material newMat;
             buildMaterial(newMat);
             scene.addMaterial(newMat);
@@ -395,20 +304,20 @@ void showMaterialEditor(MaterialEditorState& state, Scene& scene, BindlessSystem
         }
     }
 
-    ImGui::SameLine();
-    if (ImGui::Button("Cancel")) {
+    gui.sameLine();
+    if (gui.button("Cancel")) {
         state.showEditor = false;
         InputManager::getInstance().canMove = true;
     }
 
-    ImGui::End();
+    gui.endWindow();
 }
 
-void showImageViewList(BindlessSystem& bindless, RenderFeatures& features) {
-    ImGui::Begin("Image Views");
+void showImageViewList(GUI& gui, BindlessSystem& bindless, RenderFeatures& features) {
+    if (!gui.beginWindow("Image Views", nullptr, glm::vec2(360, 280), glm::vec2(200, 200))) return;
 
     ImageVisSettings& vis = features.imageVis;
-    if (ImGui::Button("Clear Selection")) {
+    if (gui.button("Clear Selection")) {
         vis.imageIndex = 0xFFFFFFFF;
     }
 
@@ -419,27 +328,25 @@ void showImageViewList(BindlessSystem& bindless, RenderFeatures& features) {
             continue;
         }
         bool selected = (vis.imageIndex == static_cast<uint32_t>(i));
-        if (selected) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-        if (ImGui::Button(img.source.c_str())) {
+        if (gui.buttonToggled(img.source, selected)) {
             vis.imageIndex = (selected) ? 0xFFFFFFFF : i;
         }
         if (selected) {
-            ImGui::PopStyleColor();
-            ImGui::SameLine();
-            if (ImGui::Button("B&W")){
+            gui.sameLine();
+            if (gui.button("B&W")){
                 vis.flags ^= ImageVisFlags::B_W_IMAGE;
             }
-            ImGui::SameLine();
-            if (ImGui::Button("Flip Y")){
+            gui.sameLine();
+            if (gui.button("Flip Y")){
                 vis.flags ^= ImageVisFlags::FLIP_VERTICAL;
             }
-            ImGui::SameLine();
-            if (ImGui::Button("Slicemap")){
+            gui.sameLine();
+            if (gui.button("Slicemap")){
                 vis.flags ^= ImageVisFlags::SLICEMAP;
             }
             if ((vis.flags & ImageVisFlags::SLICEMAP) != 0) {
-                ImGui::SameLine();
-                if (ImGui::Button("Single Slice")){
+                gui.sameLine();
+                if (gui.button("Single Slice")){
                     vis.flags ^= ImageVisFlags::SLICEMAP_SLICE;
                 }
             }
@@ -447,165 +354,156 @@ void showImageViewList(BindlessSystem& bindless, RenderFeatures& features) {
         i++;
     }
 
-    ImGui::End();
+    gui.endWindow();
 }
 
-void showActionMenu(uint32_t context, GLFWwindow* window, Camera& camera,
+void showActionMenu(GUI& gui, uint32_t context, GLFWwindow* window, Camera& camera,
                     SceneGraph& sceneGraph, float posX, float posY) {
-    ImGui::SetNextWindowPos({posX, posY});
-    ImGui::Begin("Action");
-    if (ImGui::Button("Add Node")) {
+    gui.setNextWindowPos(glm::vec2(posX, posY));
+    if (!gui.beginWindow("Action", nullptr, glm::vec2(160, 80))) return;
+    if (gui.button("Add Node")) {
         glm::vec3 origin, direction;
         int w = 0, h = 0;
         glfwGetWindowSize(window, &w, &h);
         camera.rayFromScreenCoords((posX / w) * 2.0 - 1.0, (posY / h) * 2.0 - 1.0, origin, direction);
         sceneGraph.addNode(false, SceneGraph::ROOT_INDEX, origin + direction);
     }
-    ImGui::End();
+    gui.endWindow();
 }
 
-void showToggles(RenderFeatures& f){
-    ImGui::Begin("Toggles");
-    if(ImGui::Button("Gizmos")){
+void showToggles(GUI& gui, RenderFeatures& f){
+    if(!gui.beginWindow("Toggles", nullptr, glm::vec2(360, 560), glm::vec2(-510, 0), GUIAnchor::Top | GUIAnchor::Right, GUIWindowFixed | GUIWindowNoSavedSettings)) return;
+    if(gui.button("Gizmos")){
         f.showGizmos = !f.showGizmos;
     }
     // In slicemap mode the same field selects one of the 32 slices instead of a mip.
     bool slicemap = (f.imageVis.flags & ImageVisFlags::SLICEMAP) != 0;
-    ImGui::SliderInt(slicemap ? "Slice" : "ImageMip", &f.imageVis.mipLevel, 0, slicemap ? 31 : 6);
-    if(ImGui::Button("Depth Buffer")){
+    gui.sliderInt(slicemap ? "Slice" : "ImageMip", &f.imageVis.mipLevel, 0, slicemap ? 31 : 6);
+    if(gui.button("Depth Buffer")){
         f.imageVis.flags ^= ImageVisFlags::LINEARIZE;
     }
-    if(ImGui::Button("SSAO")){
+    if(gui.button("SSAO")){
         f.ssao.enabled = !f.ssao.enabled;
     }
     if(f.ssao.enabled){
-        ImGui::SliderFloat("AO Radius", &f.ssao.radius, 0.01f, 10.0f);
-        ImGui::SliderFloat("AO Bias", &f.ssao.bias, 0.01f, 0.1f);
-        ImGui::SliderFloat("AO Power", &f.ssao.power, 0.01f, 5.0f);
+        gui.sliderFloat("AO Radius", &f.ssao.radius, 0.01f, 10.0f);
+        gui.sliderFloat("AO Bias", &f.ssao.bias, 0.01f, 0.1f);
+        gui.sliderFloat("AO Power", &f.ssao.power, 0.01f, 5.0f);
     }
-    if(ImGui::Button("SSR")){
+    if(gui.button("SSR")){
         f.ssr.enabled = !f.ssr.enabled;
     }
     if(f.ssr.enabled){
-        ImGui::SliderInt("Max Steps", &f.ssr.maxSteps, 16, 128);
-        ImGui::SliderFloat("Thickness", &f.ssr.thickness, 0.01f, 5.0f);
-        ImGui::SliderFloat("Roughness Threshold", &f.ssr.roughnessThreshold, 0.0f, 1.0f);
-        ImGui::SliderFloat("Temporal Blend", &f.ssr.temporalBlend, 0.01f, 1.0f);
-        if(ImGui::SliderFloat("Resolution Scale", &f.ssr.resolutionScale, 0.25f, 1.0f)){
+        gui.sliderInt("Max Steps", &f.ssr.maxSteps, 16, 128);
+        gui.sliderFloat("Thickness", &f.ssr.thickness, 0.01f, 5.0f);
+        gui.sliderFloat("Roughness Threshold", &f.ssr.roughnessThreshold, 0.0f, 1.0f);
+        gui.sliderFloat("Temporal Blend", &f.ssr.temporalBlend, 0.01f, 1.0f);
+        if(gui.sliderFloat("Resolution Scale", &f.ssr.resolutionScale, 0.25f, 1.0f)){
             f.ssr.resolutionDirty = true;
         }
     }
-    if(ImGui::Button("Volumetrics")){
+    if(gui.button("Volumetrics")){
         f.volumetrics.enabled = !f.volumetrics.enabled;
     }
     if(f.volumetrics.enabled){
         // Grid Far bounds the froxel volume (media beyond it isn't rendered). Scattering phase is a
         // per-volume property (edit it on each Volume node). Debug View overwrites the scene with a
         // false-color visualization of a grid volume to diagnose injection/lighting.
-        ImGui::SliderFloat("Grid Far", &f.volumetrics.gridFar, 5.0f, 200.0f);
+        gui.sliderFloat("Grid Far", &f.volumetrics.gridFar, 5.0f, 200.0f);
         const char* dbgItems[] = {"Off", "Extinction", "Scatter", "In-Scatter", "Transmittance", "Slice", "Phase g", "Shadow"};
-        ImGui::Combo("Debug View", &f.volumetrics.debugView, dbgItems, IM_ARRAYSIZE(dbgItems));
+        gui.combo("Debug View", &f.volumetrics.debugView, dbgItems, guiArraySize(dbgItems));
     }
-    ImGui::Checkbox("Voxelize Scene", &f.voxelDebug.voxelizeScene);
-    ImGui::SetItemTooltip("Per-frame voxel build. Uncheck to bisect frame cost; the volume is cleared to black so stale data doesn't linger.");
-    if(ImGui::Button("Voxel Grid")){
+    gui.checkbox("Voxelize Scene", &f.voxelDebug.voxelizeScene);
+    if(gui.button("Voxel Grid")){
         f.voxelDebug.enabled = !f.voxelDebug.enabled;
     }
     if(f.voxelDebug.enabled){
         // Mip Level walks the chain the resolve pass builds — stepping up should blur the grid
         // coherently, not fade it toward black.
-        ImGui::Checkbox("Draw Cubes", &f.voxelDebug.drawCubes);
+        gui.checkbox("Draw Cubes", &f.voxelDebug.drawCubes);
         const char* volItems[] = {"Radiance", "Irradiance +X", "Irradiance -X", "Irradiance +Y", "Irradiance -Y", "Irradiance +Z", "Irradiance -Z"};
-        ImGui::Combo("Volume", &f.voxelDebug.volumeSelect, volItems, IM_ARRAYSIZE(volItems));
-        ImGui::SetItemTooltip("Radiance volume, or one ambient-cube irradiance face (single mip).");
+        gui.combo("Volume", &f.voxelDebug.volumeSelect, volItems, guiArraySize(volItems));
+        gui.setItemTooltip("Radiance volume, or one ambient-cube irradiance face (single mip).");
         int voxMip = static_cast<int>(f.voxelDebug.mipLevel);
-        if(ImGui::SliderInt("Voxel Mip", &voxMip, 0, 7)){
+        if(gui.sliderInt("Voxel Mip", &voxMip, 0, 7)){
             f.voxelDebug.mipLevel = static_cast<uint32_t>(voxMip);
         }
         if(f.voxelDebug.drawCubes){
-            ImGui::SliderFloat("Cube Threshold", &f.voxelDebug.cubeThreshold, 0.001f, 1.0f, "%.3f");
-            ImGui::SetItemTooltip("Min coverage for a voxel to get a cube; lower to see partially-covered mips.");
+            gui.sliderFloat("Cube Threshold", &f.voxelDebug.cubeThreshold, 0.001f, 1.0f, "%.3f");
+            gui.setItemTooltip("Min coverage for a voxel to get a cube; lower to see partially-covered mips.");
         } else {
             const char* voxItems[] = {"Radiance", "Occupancy", "Albedo (normalized)", "First-hit Depth"};
             int voxMode = static_cast<int>(f.voxelDebug.mode);
-            if(ImGui::Combo("Voxel View", &voxMode, voxItems, IM_ARRAYSIZE(voxItems))){
+            if(gui.combo("Voxel View", &voxMode, voxItems, guiArraySize(voxItems))){
                 f.voxelDebug.mode = static_cast<VoxelDebugMode>(voxMode);
             }
-            ImGui::SliderFloat("Voxel Opacity", &f.voxelDebug.alphaScale, 0.1f, 10.0f);
-            ImGui::SetItemTooltip("Multiplies per-voxel coverage; raise it to read a sparse grid.");
+            gui.sliderFloat("Voxel Opacity", &f.voxelDebug.alphaScale, 0.1f, 10.0f);
+            gui.setItemTooltip("Multiplies per-voxel coverage; raise it to read a sparse grid.");
             int voxSteps = static_cast<int>(f.voxelDebug.maxSteps);
-            if(ImGui::SliderInt("Voxel Max Steps", &voxSteps, 32, 1024)){
+            if(gui.sliderInt("Voxel Max Steps", &voxSteps, 32, 1024)){
                 f.voxelDebug.maxSteps = static_cast<uint32_t>(voxSteps);
             }
         }
     }
-    ImGui::SeparatorText("VXGI");
+    gui.separatorText("VXGI");
     const char* giModes[] = {"Per-pixel cone trace", "Ambient cube lookup"};
-    ImGui::Combo("GI Mode", &f.vxgi.mode, giModes, IM_ARRAYSIZE(giModes));
-    ImGui::SetItemTooltip("Cone trace per pixel, or sample the per-voxel 6-face irradiance volumes.");
-    ImGui::SliderFloat("GI Strength", &f.vxgi.strength, 0.0f, 4.0f);
-    ImGui::SetItemTooltip("Scales the GI term in both modes. 1 = untouched; 0 kills GI for A/B against direct-only.");
-    ImGui::SliderFloat("GI Sky Strength", &f.vxgi.skyStrength, 0.0f, 2.0f);
-    ImGui::SetItemTooltip("Sky as seen by GI, relative to Skybox Intensity: cone-miss sky and the voxel sky injection. 0 = no sky in GI.");
+    gui.combo("GI Mode", &f.vxgi.mode, giModes, guiArraySize(giModes));
+    gui.setItemTooltip("Cone trace per pixel, or sample the per-voxel 6-face irradiance volumes.");
+    gui.sliderFloat("GI Strength", &f.vxgi.strength, 0.0f, 4.0f);
+    gui.sliderFloat("GI Sky Strength", &f.vxgi.skyStrength, 0.0f, 2.0f);
     if (f.vxgi.mode == 0) {
-        ImGui::SliderInt("GI Side Cones", &f.vxgi.hemisphereRays, 0, 5);
-        ImGui::SetItemTooltip("60° side cones per pixel; the normal cone always runs. Weights renormalize.");
-        ImGui::SliderInt("GI Steps", &f.vxgi.maxSteps, 1, 64);
-        ImGui::SetItemTooltip("Taps per cone. Rounds down to a multiple of the fetch batch.");
-        ImGui::SliderInt("GI Fetch Batch", &f.vxgi.fetchBatch, 1, 8);
-        ImGui::SetItemTooltip("Texture fetches kept in flight per loop iteration.");
+        gui.sliderInt("GI Side Cones", &f.vxgi.hemisphereRays, 0, 5);
+        gui.sliderInt("GI Steps", &f.vxgi.maxSteps, 1, 64);
+        gui.setItemTooltip("Rounds down to a multiple of GI fetch batch");
+        gui.sliderInt("GI Fetch Batch", &f.vxgi.fetchBatch, 1, 8);
     } else {
-        ImGui::SliderInt("Gather Side Cones", &f.vxgi.gatherSideCones, 0, 5);
-        ImGui::SetItemTooltip("60° side cones per voxel face; the axis cone always runs.");
-        ImGui::SliderInt("Gather Steps", &f.vxgi.gatherSteps, 1, 64);
-        ImGui::SetItemTooltip("Taps per cone in the voxel-space gather. Rounds down to a multiple of the fetch batch.");
-        ImGui::SliderInt("Gather Fetch Batch", &f.vxgi.gatherFetchBatch, 1, 8);
-        ImGui::SetItemTooltip("Texture fetches kept in flight per loop iteration.");
+        gui.sliderInt("Gather Side Cones", &f.vxgi.gatherSideCones, 0, 5);
+        gui.sliderInt("Gather Steps", &f.vxgi.gatherSteps, 1, 64);
+        gui.setItemTooltip("Rounds down to a multiple of Gather fetch batch.");
+        gui.sliderInt("Gather Fetch Batch", &f.vxgi.gatherFetchBatch, 1, 8);
     }
 
-    if(ImGui::Button("Show BBOXes")){
+    if(gui.button("Show BBOXes")){
         f.showBBoxes = !f.showBBoxes;
     }
 
-    ImGui::SeparatorText("Sky");
-    ImGui::SliderFloat("Skybox Intensity", &f.skyboxIntensity, 0.0f, 20.0f);
-    ImGui::SetItemTooltip("Radiance multiplier on the skybox cubemap.");
+    gui.separatorText("Sky");
+    gui.sliderFloat("Skybox Intensity", &f.skyboxIntensity, 0.0f, 20.0f);
 
-    ImGui::SeparatorText("Tonemap / Exposure");
+    gui.separatorText("Tonemap / Exposure");
     const char* tonemapOps[] = {"Reinhard", "ACES", "None"};
     int op = static_cast<int>(f.tonemap.op);
-    if(ImGui::Combo("Operator", &op, tonemapOps, IM_ARRAYSIZE(tonemapOps))){
+    if(gui.combo("Operator", &op, tonemapOps, guiArraySize(tonemapOps))){
         f.tonemap.op = static_cast<uint32_t>(op);
     }
-    ImGui::Checkbox("Auto Exposure", &f.tonemap.autoExposure);
+    gui.checkbox("Auto Exposure", &f.tonemap.autoExposure);
     if(f.tonemap.autoExposure){
-        ImGui::SliderFloat("Exposure Comp (EV)", &f.tonemap.exposureComp, -8.0f, 8.0f, "%.2f");
-        ImGui::SetItemTooltip("Bias on the metered exposure; + = brighter.");
-        ImGui::DragFloatRange2("EV clamp", &f.tonemap.minEV, &f.tonemap.maxEV, 0.1f, -10.0f, 20.0f, "min %.1f", "max %.1f");
-        ImGui::SliderFloat("Adaptation Speed", &f.tonemap.adaptationSpeed, 0.1f, 10.0f, "%.2f /s");
-        ImGui::SetItemTooltip("Eye-adaptation rate; higher = snappier, lower = slower fade.");
+        gui.sliderFloat("Exposure Comp (EV)", &f.tonemap.exposureComp, -8.0f, 8.0f, "%.2f");
+        gui.dragFloatRange2("EV clamp", &f.tonemap.minEV, &f.tonemap.maxEV, 0.1f, -10.0f, 20.0f, "min %.1f", "max %.1f");
+        gui.sliderFloat("Adaptation Speed", &f.tonemap.adaptationSpeed, 0.1f, 10.0f, "%.2f /s");
     } else {
-        ImGui::SliderFloat("Exposure (EV100)", &f.tonemap.ev100, -2.0f, 20.0f, "%.2f");
-        ImGui::SetItemTooltip("Higher = darker. ~log2(directionalIntensity) - 3.6 keys whites near clipping.");
-        ImGui::Text("Exposure factor: %.3e", computeExposure(f.tonemap));
+        gui.sliderFloat("Exposure (EV100)", &f.tonemap.ev100, -2.0f, 20.0f, "%.2f");
+        gui.textf("Exposure factor: %.3e", computeExposure(f.tonemap));
     }
 
-    ImGui::End();
+    gui.endWindow();
 }
 
-void showScenesMenu(Scene& scene, BindlessSystem& bindless, RenderBuffers& buffers,SceneLoader& sceneLoader){
-    ImGui::Begin("Scene Manager");
+void showScenesMenu(GUI& gui, Scene& scene, BindlessSystem& bindless, RenderBuffers& buffers,SceneLoader& sceneLoader){
+    // Offset is signed screen px from the anchored corner, so a Right anchor insets with -x.
+    if(!gui.beginWindow("Scene Manager", nullptr, glm::vec2(510, 90), glm::vec2(0, 0),
+                        GUIAnchor::Top | GUIAnchor::Right, GUIWindowFixed | GUIWindowNoSavedSettings)) return;
     static char saveName[128] = "scene";
-    ImGui::SetNextItemWidth(150.0f);
-    ImGui::InputTextWithHint("##saveName", "scene name", saveName, sizeof(saveName));
-    ImGui::SameLine();
-    if(ImGui::Button("Save Scene") && saveName[0] != '\0'){
+    gui.setNextItemWidth(150.0f);
+    gui.inputTextWithHint("##saveName", "scene name", saveName, sizeof(saveName));
+    gui.sameLine();
+    if(gui.button("Save Scene") && saveName[0] != '\0'){
         std::string path(saveName);
         if(std::filesystem::path(path).extension() != ".scn") path += ".scn";
         sceneLoader.saveScene(path, scene);
     }
-    ImGui::SameLine();
-    if(ImGui::Button("Load Scene")){
+    gui.sameLine();
+    if(gui.button("Load Scene")){
         std::string path = openFileDialog("Scene Files\0*.scn\0All Files\0*.*\0");
         if(!path.empty()){
             sceneLoader.loadScene(path, scene, bindless, buffers,
@@ -613,13 +511,13 @@ void showScenesMenu(Scene& scene, BindlessSystem& bindless, RenderBuffers& buffe
                                    buffers.lightBufferIndex);
         }
     }
-    ImGui::SameLine();
-    if(ImGui::Button("Clear Scene")){
+    gui.sameLine();
+    if(gui.button("Clear Scene")){
         sceneLoader.clearScene(scene, bindless, buffers,
                                 buffers.modelMatrixBufferIndex,
                                 buffers.lightBufferIndex);
     }
-    ImGui::End();
+    gui.endWindow();
 }
 
 // Format a byte count as B / KB / MB / GB. Picks the largest unit the value comfortably fits.
@@ -642,14 +540,14 @@ static float mipChainFactor(uint32_t mipLevels) {
     return (1.0f - std::pow(0.25f, (float)mipLevels)) / 0.75f;
 }
 
-void showBufferAllocs(DescriptorSet& descriptorSet, AssetManager& assetManager, const std::vector<DrawIndexedIndirectCommand>& indirectDraws) {
+void showBufferAllocs(GUI& gui, DescriptorSet& descriptorSet, AssetManager& assetManager, const std::vector<DrawIndexedIndirectCommand>& indirectDraws) {
 
-    ImGui::Begin("Buffers");
+    if (!gui.beginWindow("Buffers", nullptr, glm::vec2(430, 400), glm::vec2(830, 320))) return;
 
     vk::DeviceSize bufferUsed = 0;      // bytes actually occupied by live allocations
     vk::DeviceSize bufferCommitted = 0; // bytes reserved on the GPU (full buffer capacity)
 
-    if (ImGui::CollapsingHeader("Variable Buffers", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (gui.collapsingHeader("Variable Buffers", true)) {
         int i = 0;
         for (auto& buffer : descriptorSet.getVariableBuffers()) {
             vk::DeviceSize usedBytes = 0;
@@ -657,13 +555,13 @@ void showBufferAllocs(DescriptorSet& descriptorSet, AssetManager& assetManager, 
                 usedBytes += alloc.capacity;
             const char* label = buffer->name.empty() ? nullptr : buffer->name.c_str();
             if (label)
-                ImGui::Text("%s [%d] : %d allocs", label, i, (int)buffer->allocations.size());
+                gui.textf("%s [%d] : %d allocs", label, i, (int)buffer->allocations.size());
             else
-                ImGui::Text("Buffer %d : %d allocs", i, (int)buffer->allocations.size());
+                gui.textf("Buffer %d : %d allocs", i, (int)buffer->allocations.size());
 
             float fraction = buffer->bufferSize > 0 ? (float)((double)usedBytes / (double)buffer->bufferSize) : 0.0f;
             std::string overlay = formatBytes(usedBytes) + " / " + formatBytes(buffer->bufferSize);
-            ImGui::ProgressBar(fraction, ImVec2(-1, 0), overlay.c_str());
+            gui.progressBar(fraction, glm::vec2(-1, 0), overlay);
 
             bufferUsed += usedBytes;
             bufferCommitted += buffer->bufferSize;
@@ -671,7 +569,7 @@ void showBufferAllocs(DescriptorSet& descriptorSet, AssetManager& assetManager, 
         }
     }
 
-    if (ImGui::CollapsingHeader("Fixed Buffers", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (gui.collapsingHeader("Fixed Buffers", true)) {
         int i = 0;
         for (auto& buffer : descriptorSet.getFixedBuffers()) {
             // Count slots tracked via allocateFixedBuffer + slots streamed via direct memcpy.
@@ -693,13 +591,13 @@ void showBufferAllocs(DescriptorSet& descriptorSet, AssetManager& assetManager, 
             const char* label = buffer->name.empty() ? nullptr : buffer->name.c_str();
             const char* tag = isStreamed ? (buffer->perFrame ? "  (streamed, per-frame)" : "  (streamed)") : buffer->perFrame ? "  (per-frame)" : "";
             if (label)
-                ImGui::Text("%s [%d] : %u / %u slots (%d free)%s", label, i, inUse, displaySlots, (int)buffer->freeSlots.size(), tag);
+                gui.textf("%s [%d] : %u / %u slots (%d free)%s", label, i, inUse, displaySlots, (int)buffer->freeSlots.size(), tag);
             else
-                ImGui::Text("Buffer %d : %u / %u slots (%d free)%s", i, inUse, displaySlots, (int)buffer->freeSlots.size(), tag);
+                gui.textf("Buffer %d : %u / %u slots (%d free)%s", i, inUse, displaySlots, (int)buffer->freeSlots.size(), tag);
 
             float fraction = displaySlots > 0 ? (float)inUse / (float)displaySlots : 0.0f;
             std::string overlay = formatBytes(usedBytes) + " / " + formatBytes(displayBufferSize);
-            ImGui::ProgressBar(fraction, ImVec2(-1, 0), overlay.c_str());
+            gui.progressBar(fraction, glm::vec2(-1, 0), overlay);
 
             // Grand totals use real GPU footprint, not the per-frame display values.
             bufferUsed += usedBytes;
@@ -718,9 +616,9 @@ void showBufferAllocs(DescriptorSet& descriptorSet, AssetManager& assetManager, 
         texCount++;
     }
 
-    if (ImGui::CollapsingHeader("Textures & Samplers", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Text("Textures: %d | ~%s (RGBA8 estimate, includes mips)", texCount, formatBytes(totalTexBytes).c_str());
-        ImGui::Text("Samplers: %d", (int)descriptorSet.getSamplerResources().size());
+    if (gui.collapsingHeader("Textures & Samplers", true)) {
+        gui.textf("Textures: %d | ~%s (RGBA8 estimate, includes mips)", texCount, formatBytes(totalTexBytes).c_str());
+        gui.textf("Samplers: %d", (int)descriptorSet.getSamplerResources().size());
     }
 
     // Mesh stats are derived from variable-buffer allocs and overlap with the Variable Buffers totals
@@ -735,8 +633,8 @@ void showBufferAllocs(DescriptorSet& descriptorSet, AssetManager& assetManager, 
         totalIndexBytes  += (vk::DeviceSize)mesh.indexCount  * sizeof(uint32_t);
     }
 
-    if (ImGui::CollapsingHeader("Meshes", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Text("%d meshes | Verts: %s | Idx: %s | Total: %s",
+    if (gui.collapsingHeader("Meshes", true)) {
+        gui.textf("%d meshes | Verts: %s | Idx: %s | Total: %s",
             meshCount,
             formatBytes(totalVertexBytes).c_str(),
             formatBytes(totalIndexBytes).c_str(),
@@ -746,81 +644,65 @@ void showBufferAllocs(DescriptorSet& descriptorSet, AssetManager& assetManager, 
     uint64_t totalTris = 0;
     for (const auto& cmd : indirectDraws)
         totalTris += cmd.indexCount / 3;
-    ImGui::Separator();
-    ImGui::Text("Triangles: %llu (%u draws)", (unsigned long long)totalTris, (uint32_t)indirectDraws.size());
+    gui.separator();
+    gui.textf("Triangles: %llu (%u draws)", (unsigned long long)totalTris, (uint32_t)indirectDraws.size());
 
-    ImGui::Separator();
+    gui.separator();
     vk::DeviceSize liveUsed  = bufferUsed + totalTexBytes;
     vk::DeviceSize committed = bufferCommitted + totalTexBytes;
-    ImGui::Text("GPU Memory  Used: ~%s | Committed: ~%s",
+    gui.textf("GPU Memory  Used: ~%s | Committed: ~%s",
         formatBytes(liveUsed).c_str(),
         formatBytes(committed).c_str());
 
-    ImGui::End();
+    gui.endWindow();
 }
 
-void showMeshList(Scene& scene, BindlessSystem& bindless, uint32_t whiteTextureIndex) {
-    ImGui::Begin("Meshes");
-
+void showMeshList(GUI& gui, Scene& scene, BindlessSystem& bindless, uint32_t whiteTextureIndex) {
     AssetManager& assetManager = scene.assetManager;
 
-    // ImGui_ImplVulkan_AddTexture allocates a descriptor per call, so cache it. Keyed by image
-    // view so that a re-rendered thumbnail (new view) gets a fresh registration automatically.
-    static std::unordered_map<VkImageView, ImTextureID> imguiTexCache;
+    // No descriptor cache: a thumbnail is drawn straight from its bindless index, so a re-rendered
+    // thumbnail needs no re-registration and there is nothing to key a cache on.
     const std::vector<TextureResource>& textures = bindless.descriptorSet->getTextureResources();
-    const std::vector<SamplerResource>& samplers = bindless.descriptorSet->getSamplerResources();
 
     // Drag-to-place state: pressing and holding a mesh thumbnail spawns a node carrying that
     // mesh, which is tracked under the cursor until the mouse is released (handled below).
     static uint32_t draggedNodeIdx = 0;
     static uint32_t draggedMeshIdx = 0;
 
-    for (uint32_t meshIdx = 0; meshIdx < assetManager.meshes.size(); meshIdx++) {
-        const Mesh& mesh = assetManager.meshes[meshIdx];
-        if (mesh.freed) continue;
+    if (gui.beginWindow("Meshes", nullptr, glm::vec2(240, 400), glm::vec2(620, 20))) {
+        for (uint32_t meshIdx = 0; meshIdx < assetManager.meshes.size(); meshIdx++) {
+            const Mesh& mesh = assetManager.meshes[meshIdx];
+            if (mesh.freed) continue;
 
-        // Use the rendered thumbnail once available, otherwise the white texture as a placeholder.
-        uint32_t texIndex = (mesh.thumbnailTextureIndex != 0xFFFFFFFF) ? mesh.thumbnailTextureIndex : whiteTextureIndex;
-        ImTextureID texId = ImTextureID_Invalid;
-        if (texIndex < textures.size() && !textures[texIndex].isEmpty() && !samplers.empty()) {
-            VkImageView view = static_cast<VkImageView>(**textures[texIndex].imageView);
-            auto it = imguiTexCache.find(view);
-            if (it != imguiTexCache.end()) {
-                texId = it->second;
-            } else {
-                VkDescriptorSet ds = ImGui_ImplVulkan_AddTexture(static_cast<VkSampler>(**samplers[0].sampler),
-                                                                 view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-                texId = (ImTextureID)ds;
-                imguiTexCache.emplace(view, texId);
+            // Use the rendered thumbnail once available, otherwise the white texture as a placeholder.
+            uint32_t texIndex = (mesh.thumbnailTextureIndex != 0xFFFFFFFF) ? mesh.thumbnailTextureIndex : whiteTextureIndex;
+            if (texIndex < textures.size() && !textures[texIndex].isEmpty()) {
+                gui.imageButton(mesh.name, texIndex, glm::vec2(64.0f, 64.0f));
+                // On press: spawn a node with this mesh and start tracking it. The press-capture
+                // keeps the button active while the mouse stays down, even once the cursor leaves
+                // it for the viewport — which is the whole flow.
+                if (draggedNodeIdx == 0 && gui.isItemActivated()) {
+                    uint32_t idx = scene.sceneGraph.addNode(false, SceneGraph::ROOT_INDEX);
+                    Node& node = scene.sceneGraph.getNode(idx);
+                    node.name = scene.sceneGraph.makeUniqueNodeName(mesh.name);
+                    NodeOps::assignMesh(node, meshIdx, scene);
+                    NodeOps::assignMaterial(node, scene.getFallBackMaterial(), scene);
+                    draggedNodeIdx = idx;
+                    draggedMeshIdx = meshIdx;
+                }
             }
+            gui.textf("%s", mesh.name.c_str());
         }
-
-        if (texId != ImTextureID_Invalid) {
-            ImGui::ImageButton(mesh.name.c_str(), texId, ImVec2(64.0f, 64.0f));
-            // On click & hold: spawn a node with this mesh and start tracking it. The button
-            // stays "active" while the mouse stays down, even once the cursor leaves it.
-            if (draggedNodeIdx == 0 && ImGui::IsItemActivated()) {
-                uint32_t idx = scene.sceneGraph.addNode(false, SceneGraph::ROOT_INDEX);
-                Node& node = scene.sceneGraph.getNode(idx);
-                node.name = scene.sceneGraph.makeUniqueNodeName(mesh.name);
-                NodeOps::assignMesh(node, meshIdx, scene);
-                NodeOps::assignMaterial(node, scene.getFallBackMaterial(), scene);
-                draggedNodeIdx = idx;
-                draggedMeshIdx = meshIdx;
-            }
-        }
-        ImGui::Text(mesh.name.c_str());
+        gui.endWindow();
     }
 
-    ImGui::End();
-
-    // Track the dragged node. Done outside the window scope so it keeps updating while the
-    // cursor is over the viewport, and stops the moment the mouse is released.
+    // Track the dragged node. Deliberately outside the window scope: it keeps updating while the
+    // cursor is over the viewport, and now also survives the window being collapsed or scrolled
+    // away mid-drag, which would otherwise strand the node.
     if (draggedNodeIdx != 0) {
-        if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && scene.sceneGraph.isNodeValid(draggedNodeIdx)) {
-            // Use the same GLFW-derived NDC as the selection raycast. ImGui::GetMousePos() would be
-            // wrong under multi-viewports (it reports desktop-global coords), causing the placement
-            // to drift from the cursor by the window's screen position.
+        if (gui.isMouseDown() && scene.sceneGraph.isNodeValid(draggedNodeIdx)) {
+            // Same GLFW-derived NDC as the selection raycast, so the placement can't drift from
+            // the cursor.
             glm::vec2 ndc = InputManager::getCurrentState().ndcMousePos;
             glm::vec3 origin, direction;
             scene.activeCamera.rayFromScreenCoords(ndc.x, ndc.y, origin, direction);
@@ -858,28 +740,18 @@ void showMeshList(Scene& scene, BindlessSystem& bindless, uint32_t whiteTextureI
     }
 }
 
-void showDebugWindow(uint32_t culledCount, float& cullFovScale){
-    ImGui::Begin("Debug");
-    ImGui::Text(("Culled : " + std::to_string(culledCount)).c_str());
-    ImGui::SliderFloat("Cull FOV Scale", &cullFovScale, 0.1f, 1.0f);
-    ImGui::End();
-}
-
-void showTraces() {
-    ImGui::Begin("CPU Timing");
+void showTraces(GUI& gui) {
+    if (!gui.beginWindow("CPU Timing", nullptr, glm::vec2(360, 20), glm::vec2(0, 0), GUIAnchor::Top | GUIAnchor::Left, GUIWindowNoMove | GUIWindowNoSavedSettings)) return;
     auto& traces = tracing::getTraces();
     for(auto& name : tracing::getOrder()){
         auto& trace = traces[name];
     // color each scope with a distinct hue via the golden-ratio sequence
         float hue = fmodf(static_cast<float>(trace.scope) * 0.61803398875f, 1.0f);
-        float r, g, b;
-        ImGui::ColorConvertHSVtoRGB(hue, 0.6f, 0.95f, r, g, b);
-        ImGui::PushStyleColor(ImGuiCol_Text,{r,g,b,1});
+        glm::vec3 rgb = GUI::hsvToRgb(hue, 0.6f, 0.95f);
     // indent 2 spaces per scope level, clamped: a drifted scope counter must cost a wrong indent,
     // never a multi-gigabyte string allocation.
         std::string indent(std::min(trace.scope, 16u) * 2, ' ');
-        ImGui::Text((indent + name + " : " + std::to_string(trace.averageDuration.count() * 1000.0) + " ms").c_str());
-        ImGui::PopStyleColor();
+        gui.textColored(indent + name + " : " + std::to_string(trace.averageDuration.count() * 1000.0) + " ms", glm::vec4(rgb, 1.0f));
     }
-    ImGui::End();
+    gui.endWindow();
 };

@@ -1,5 +1,5 @@
 #pragma once
-#include "imgui.h"
+#include "GUI.h"
 
 #include <string>
 #include <filesystem>
@@ -27,10 +27,11 @@ struct GLFWwindow;
 struct Camera;
 struct DrawIndexedIndirectCommand;
 class Node;
+class GUI;
 struct MaterialEditorState;
 struct RenderFeatures;
 
-//helper functions for IMGUI
+//helper functions for the GUI windows
 
 #ifdef _WIN32
 static std::string openFileDialog(const char* filter = "All Files\0*.*\0") {
@@ -50,10 +51,10 @@ static std::string openFileDialog(const char* filter = "All Files\0*.*\0") {
     return "";
 }
 
-static void browseButton(const char* id, char* pathBuffer, size_t bufferSize) {
-    ImGui::SameLine();
+static void browseButton(GUI& gui, const char* id, char* pathBuffer, size_t bufferSize) {
+    gui.sameLine();
     std::string btnLabel = std::string("Browse##") + id;
-    if (ImGui::Button(btnLabel.c_str())) {
+    if (gui.button(btnLabel)) {
         std::string result = openFileDialog();
         if (!result.empty()) {
             strncpy(pathBuffer, result.c_str(), bufferSize);
@@ -62,15 +63,12 @@ static void browseButton(const char* id, char* pathBuffer, size_t bufferSize) {
     }
 }
 #endif
-void initIMGUI(Device& device, vk::Instance instance, uint32_t graphicsQueueFamily,
-               Swapchain& swapchain, GLFWwindow* window);
-void traverseNodeTree(Node& node, uint32_t level, uint32_t selectedNode, SceneGraph& sceneGraph);
-void showMaterialEditor(MaterialEditorState& state, Scene& scene, BindlessSystem& bindless);
-void showImageViewList(BindlessSystem& bindless, RenderFeatures& features);
-void showActionMenu(uint32_t context, GLFWwindow* window, Camera& camera, SceneGraph& sceneGraph, float posX, float posY);
-void showToggles(RenderFeatures& features);
-void showScenesMenu(Scene& scene, BindlessSystem& bindless, RenderBuffers& buffers,SceneLoader& sceneLoader);
-void showBufferAllocs(DescriptorSet& descriptorSet, AssetManager& assetManager, const std::vector<DrawIndexedIndirectCommand>& indirectDraws);
-void showDebugWindow(uint32_t culledCount, float& cullFovScale);
-void showMeshList(Scene& scene, BindlessSystem& bindless, uint32_t whiteTextureIndex);
-void showTraces();
+void traverseNodeTree(GUI& gui, Node& node, uint32_t level, uint32_t selectedNode, SceneGraph& sceneGraph);
+void showMaterialEditor(GUI& gui, MaterialEditorState& state, Scene& scene, BindlessSystem& bindless);
+void showImageViewList(GUI& gui, BindlessSystem& bindless, RenderFeatures& features);
+void showActionMenu(GUI& gui, uint32_t context, GLFWwindow* window, Camera& camera, SceneGraph& sceneGraph, float posX, float posY);
+void showToggles(GUI& gui, RenderFeatures& features);
+void showScenesMenu(GUI& gui, Scene& scene, BindlessSystem& bindless, RenderBuffers& buffers,SceneLoader& sceneLoader);
+void showBufferAllocs(GUI& gui, DescriptorSet& descriptorSet, AssetManager& assetManager, const std::vector<DrawIndexedIndirectCommand>& indirectDraws);
+void showMeshList(GUI& gui, Scene& scene, BindlessSystem& bindless, uint32_t whiteTextureIndex);
+void showTraces(GUI& gui);

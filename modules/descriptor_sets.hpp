@@ -413,7 +413,7 @@ class DescriptorSet {
     }
 
     //ensure no in-flight command buffers are using this texture when calling this
-    // Defer destruction: the slot may still be read by frames in flight (e.g. an ImGui thumbnail
+    // Defer destruction: the slot may still be read by frames in flight (e.g. a mesh-list thumbnail
     // recorded this frame), so hold its resources until those frames retire, then recycle the slot.
     void freeTexture(uint32_t index) {
         pendingTextureFrees.push_back({index, MAX_FRAMES_IN_FLIGHT + 1});
@@ -674,10 +674,7 @@ class DescriptorSet {
     }
 
     // deviceLocal picks VRAM instead of the default persistently-mapped host-visible memory, and leaves
-    // mappedData null. Use it for buffers the GPU hammers and the CPU never touches — a shader doing
-    // per-fragment atomics on host-visible memory drives every one of them across PCIe. The CPU-upload
-    // helpers (allocateVariableBuffer / updateVariableBuffer / writeVariableBuffer) need the mapping, so
-    // a device-local buffer can only be filled GPU-side (fillBuffer, copies, shader writes).
+    // mappedData null, so a device-local buffer can only be filled GPU-side (fillBuffer, copies, shader writes).
     uint32_t createVariableBuffer(uint32_t maxSizeBytes = 1024 * 1024, vk::BufferUsageFlags usage = vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress, bool perFrame = false, std::string name = "", bool deviceLocal = false) {
         vk::BufferCreateInfo bufferInfo{.size = maxSizeBytes, .usage = usage, .sharingMode = vk::SharingMode::eExclusive};
 

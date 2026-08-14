@@ -14,13 +14,10 @@
 
 /*
 Scene is the "what to draw" container: nodes, meshes, materials, lights,
-camera, shadow atlas — the authoring-time state of the world. Renderer
-holds a Scene& and decides *how* to draw it; external tools (GUI, scene
-loaders, node ops) read and mutate Scene directly.
-
-Scene does NOT own or depend on rendering passes. It does, however, need
-the BindlessSystem + the light buffer index at clearLights time so it can
-free the light slots it allocated. That's passed in rather than stored.
+camera, shadow atlas
+Scene does NOT own or depend on rendering passes. 
+It does need the BindlessSystem + the light buffer index at clearLights time so it can
+free the light slots it allocated.
 */
 class Scene {
   public:

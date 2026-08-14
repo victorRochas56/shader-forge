@@ -125,7 +125,7 @@ struct VoxelDebugSettings {
     uint32_t       maxSteps = 256;
 };
 
-// Runtime VXGI cone-trace tuning, copied into LitPassData each frame. Ints for ImGui sliders;
+// Runtime VXGI cone-trace tuning, copied into LitPassData each frame. Ints for GUI sliders;
 // caps live in shaders/modules/voxel.slang (MAX_HEMISPHERE_RAYS, MAX_FETCH_BATCH).
 struct VXGISettings {
     int hemisphereRays = 5; // side cones at 60° (0..5); the normal cone always runs
@@ -465,6 +465,36 @@ struct GPUBillboard {
     bool alphaBlend;
     float clipThreshold;
 };
+
+// ===== GUI =====
+// One screen-space quad. Mirrors GPUGuiQuad in shaders/gui.slang; std430-clean (vec2s at
+// 8-byte offsets, vec4 at 32, 64 bytes total) so the layouts match without a scalar-layout flag.
+// Rects are in pixels with a top-left origin — same convention as GLFW cursor coords and Vulkan
+// NDC, so hit-testing later needs no flip.
+struct GPUGuiQuad {
+    glm::vec2 minPx;
+    glm::vec2 maxPx;
+    glm::vec2 uvMin;
+    glm::vec2 uvMax;
+    glm::vec4 color;        // multiplied against the atlas sample
+    uint32_t  textureIndex;
+    // Per quad rather than per draw: a font atlas wants Nearest (crisp glyphs, no bleed across
+    // atlas cells) while a 128px material thumbnail scaled to fit wants Linear, and both land in
+    // the same single draw call. Costs a pad word, so the struct stays 64 B.
+    uint32_t  samplerIndex;
+    uint32_t  _pad1;
+    uint32_t  _pad2;
+};
+
+struct GUIPushConstants {
+    uint64_t   quadBufferAddress;
+    glm::uvec2 resolution;
+    uint32_t   quadCount;
+    uint32_t   _pad0;
+};
+
+static_assert(sizeof(GPUGuiQuad) == 64, "must match GPUGuiQuad in gui.slang (std430)");
+static_assert(sizeof(GUIPushConstants) == 24, "must match GUIPushConstants in gui.slang");
 
 // ===== Particle system =====
 // One element of the shared particle pool. All emitters live in a single pool buffer

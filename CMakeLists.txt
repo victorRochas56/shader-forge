@@ -152,16 +152,6 @@ include_directories(
     ${VULKAN_INCLUDE_DIR}
 )
 
-set(IMGUI_SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/imgui.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/imgui_demo.cpp     
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/imgui_draw.cpp     
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/imgui_tables.cpp   
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/imgui_widgets.cpp  
-    # Add your backend files too:
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/imgui_impl_vulkan.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/imgui_impl_glfw.cpp  # or your window backend
-)
 # Find packages
 find_package(Vulkan REQUIRED)
 find_package(glfw3 CONFIG REQUIRED)
@@ -193,7 +183,6 @@ add_executable(shader-forge
     ${CMAKE_CURRENT_SOURCE_DIR}/modules/scene_graph.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/modules/LOD.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/modules/stb_implementations.cpp
-    ${IMGUI_SOURCES}
 )
 
 target_precompile_headers(shader-forge PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/modules/pch.hpp)
@@ -220,7 +209,7 @@ target_link_libraries(shader-forge PRIVATE
     KTX::ktx
 )
 if(TRACY_ENABLE)
-    target_link_libraries(shader-forde PRIVATE TracyClient)
+    target_link_libraries(shader-forge PRIVATE TracyClient)
 endif()
 
 target_include_directories(shader-forge PRIVATE ${Stb_INCLUDE_DIR})

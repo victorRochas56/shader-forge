@@ -81,7 +81,7 @@ class SceneGraph {
     }
 
     // Returns a name not currently used by any alive node, appending a Blender-style ".NNN" suffix
-    // on collision. Used when spawning instances so the node tree (and ImGui IDs) stay unambiguous.
+    // on collision. Used when spawning instances so the node tree (and GUI widget IDs) stay unambiguous.
     std::string makeUniqueNodeName(const std::string& base) {
         auto nameTaken = [&](const std::string& candidate) {
             for (const Node& n : nodes) {

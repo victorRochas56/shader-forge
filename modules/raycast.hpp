@@ -10,7 +10,7 @@
 #include "scene_elements.hpp"
 #include "structs.hpp"
 
-// TODO : Raycasting should be done on the GPU ideally, so we avoid double storing meshes
+// TODO : Raycasting should be done on the GPU ideally
 
 namespace Raycast {
 

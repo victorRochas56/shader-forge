@@ -9,21 +9,21 @@ static std::unordered_map<uint32_t, NodeGuiState> guiStates;
 
 NodeGuiState& getNodeGuiState(uint32_t nodeIndex) { return guiStates[nodeIndex]; }
 
-void showNodeInfo(Node& node, Scene& scene, BindlessSystem& bindless, RenderBuffers& buffers) {
+void showNodeInfo(GUI& gui, Node& node, Scene& scene, BindlessSystem& bindless, RenderBuffers& buffers) {
     if (scene.sceneGraph.selectedNode == 0)
         return;
 
     auto& state = getNodeGuiState(node.nodeIndex);
 
-    ImGui::Begin("selected node");
-    ImGui::Text(node.name.c_str());
+    if (!gui.beginWindow("selected node", nullptr, glm::vec2(360, 620), glm::vec2(950, 20))) return;
+    gui.textf("%s", node.name.c_str());
 
-    showNodeMeshInfo(node, scene);
+    showNodeMeshInfo(gui, node, scene);
     if (state.changingMaterials) {
-        showNodeMaterialDialog(node, scene);
+        showNodeMaterialDialog(gui, node, scene);
     }
 
-    if(ImGui::Button("Make 100!")) {
+    if(gui.button("Make 100!")) {
         for(int i = 0; i < 10; i ++) {
             for(int j = 0; j < 10; j++) {
                 scene.sceneGraph.duplicateNode(node, glm::vec3(i * 0.5f, 0.0f, j * 0.5f));
@@ -31,52 +31,52 @@ void showNodeInfo(Node& node, Scene& scene, BindlessSystem& bindless, RenderBuff
         }
     }
 
-    showNodeLightInfo(node, scene, bindless, buffers.lightBufferIndex);
-    showNodeVolumeInfo(node, scene);
-    showNodeEmitterInfo(node, scene, bindless, buffers);
-    showNodeTransformInfo(node, scene);
+    showNodeLightInfo(gui, node, scene, bindless, buffers.lightBufferIndex);
+    showNodeVolumeInfo(gui, node, scene);
+    showNodeEmitterInfo(gui, node, scene, bindless, buffers);
+    showNodeTransformInfo(gui, node, scene);
     node.transformDirty = true;
 
-    ImGui::Separator();
-    if (ImGui::Button("Delete Node")) {
+    gui.separator();
+    if (gui.button("Delete Node")) {
         uint32_t idx = node.nodeIndex;
         scene.sceneGraph.deSelectNode();
         scene.sceneGraph.removeNode(idx);
-        ImGui::End();
+        gui.endWindow();
         return;
     }
 
-    ImGui::End();
+    gui.endWindow();
 }
 
-void showNodeMeshInfo(Node& node, Scene& scene) {
+void showNodeMeshInfo(GUI& gui, Node& node, Scene& scene) {
     auto& state = getNodeGuiState(node.nodeIndex);
 
     if (!state.changingMesh) {
         if (node.meshIndex < scene.assetManager.meshes.size()) {
-            if (ImGui::Button(scene.assetManager.meshes[node.meshIndex].sourceFile.c_str())) {
+            if (gui.button(scene.assetManager.meshes[node.meshIndex].sourceFile.c_str())) {
                 state.changingMesh = true;
                 state.textBuffer[0] = '\0';
             }
         } else {
-            if (ImGui::Button("Add Mesh")) {
+            if (gui.button("Add Mesh")) {
                 state.changingMesh = true;
                 state.textBuffer[0] = '\0';
             }
         } 
-        if ( ImGui::Button("Show Wireframe") ) {
+        if ( gui.button("Show Wireframe") ) {
             node.toggleWireframe();
         }
     } else {
         InputManager::getInstance().canMove = false;
-        ImGui::SetNextItemWidth(160);
-        ImGui::InputText("mesh source", state.textBuffer, sizeof(state.textBuffer));
-        browseButton("mesh", state.textBuffer, sizeof(state.textBuffer));
-        ImGui::SetNextItemWidth(160);
-        ImGui::InputFloat("import scale", &state.importScale);
-        ImGui::Checkbox("Keep material assignments", &state.keepMaterialAssignments);
+        gui.setNextItemWidth(160);
+        gui.inputText("mesh source", state.textBuffer, sizeof(state.textBuffer));
+        browseButton(gui, "mesh", state.textBuffer, sizeof(state.textBuffer));
+        gui.setNextItemWidth(160);
+        gui.inputFloat("import scale", &state.importScale);
+        gui.checkbox("Keep material assignments", &state.keepMaterialAssignments);
 
-        if (ImGui::Button("Confirm")) {
+        if (gui.button("Confirm")) {
             uint32_t thisNodeIndex = node.nodeIndex; // capture before any vector reallocation
 
             // remove old mesh from render queue
@@ -142,13 +142,13 @@ void showNodeMeshInfo(Node& node, Scene& scene) {
             // node reference is now potentially invalid — return early
             return;
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel")) {
+        gui.sameLine();
+        if (gui.button("Cancel")) {
             state.changingMesh = false;
         }
     }
     if (node.meshIndex < scene.assetManager.meshes.size()) {
-        if (ImGui::Button("Assign Materials")) {
+        if (gui.button("Assign Materials")) {
             state.changingMaterials = !state.changingMaterials;
         }
     }
@@ -167,7 +167,7 @@ void showNodeMeshInfo(Node& node, Scene& scene) {
     }
 }
 
-void showNodeMaterialDialog(Node& node, Scene& scene) {
+void showNodeMaterialDialog(GUI& gui, Node& node, Scene& scene) {
     auto& state = getNodeGuiState(node.nodeIndex);
 
     if (state.materialList.size() != scene.getMaterials().size()) {
@@ -179,50 +179,48 @@ void showNodeMaterialDialog(Node& node, Scene& scene) {
         }
     }
 
-    ImGui::Begin("Change Material");
+    if (!gui.beginWindow("Change Material", nullptr, glm::vec2(300, 200), glm::vec2(620, 300))) return;
 
     uint32_t currentMatIdx = node.materialIndex != 0xFFFFFFFF ? node.materialIndex : 0;
     std::string currentMatName = state.materialList[currentMatIdx];
 
-    ImGui::SetNextItemWidth(200);
-    if (ImGui::BeginCombo("Material", currentMatName.c_str())) {
+    gui.setNextItemWidth(200);
+    if (gui.beginCombo("Material", currentMatName)) {
         for (int n = 0; n < state.materialList.size(); n++) {
             bool is_selected = (currentMatIdx == static_cast<uint32_t>(n));
-            if (ImGui::Selectable(state.materialList[n].c_str(), is_selected)) {
+            if (gui.comboItem(state.materialList[n].c_str(), is_selected)) {
                 if (static_cast<uint32_t>(n) != currentMatIdx) {
                     NodeOps::assignMaterial(node, n, scene);
                 }
             }
             if (is_selected) {
-                ImGui::SetItemDefaultFocus();
             }
         }
-        ImGui::EndCombo();
+        gui.endCombo();
     }
 
-    ImGui::End();
+    gui.endWindow();
 }
 
-void showNodeLightInfo(Node& node, Scene& scene, BindlessSystem& bindless, uint32_t lightBufferIndex) {
+void showNodeLightInfo(GUI& gui, Node& node, Scene& scene, BindlessSystem& bindless, uint32_t lightBufferIndex) {
     auto& state = getNodeGuiState(node.nodeIndex);
 
     if (node.lightIndex != MAX_LIGHTS && node.lightIndex < scene.getLights().size()) {
         auto& light = scene.getLight(node.lightIndex);
         const char* lightTypeNames[] = {"Point", "Directional", "Spot", "Area"};
-        if (ImGui::BeginCombo("Light Type", lightTypeNames[static_cast<int>(light.type)])) {
+        if (gui.beginCombo("Light Type", lightTypeNames[static_cast<int>(light.type)])) {
             for (int i = 0; i < static_cast<int>(LightType::COUNT); i++) {
                 bool isSelected = (static_cast<int>(light.type) == i);
-                if (ImGui::Selectable(lightTypeNames[i], isSelected)) {
+                if (gui.comboItem(lightTypeNames[i], isSelected)) {
                     light.type = static_cast<LightType>(i);
                 }
                 if (isSelected) {
-                    ImGui::SetItemDefaultFocus();
                 }
             }
-            ImGui::EndCombo();
+            gui.endCombo();
         }
         if (light.type != LightType::Directional) {
-            if (ImGui::DragFloat("range", &light.range)) {
+            if (gui.dragFloat("range", &light.range)) {
                 // Range change alters which nodes fall inside the sphere —
                 // flag the light's node so syncDirtyNodes rebuilds the set.
                 node.transformDirty = true;
@@ -233,28 +231,28 @@ void showNodeLightInfo(Node& node, Scene& scene, BindlessSystem& bindless, uint3
             Gizmos::drawLine(Line{.startPoint = scene.sceneGraph.getNode(nodeIdx).getWorldPosition(),.endPoint = node.getWorldPosition(),.color = glm::vec4(1,1,0,1)});
         }
 
-        ImGui::DragFloat("intensity", &light.intensity);
+        gui.dragFloat("intensity", &light.intensity);
         float colR = light.color.r;
         float colG = light.color.g;
         float colB = light.color.b;
         float color[3] = {colR, colG, colB};
-        ImGui::ColorPicker3("color", color);
+        gui.colorPicker3("color", color);
         light.color = glm::vec4(color[0], color[1], color[2], 1);
 
         if (light.type == LightType::Directional) {
 
-            ImGui::DragInt("show cascades", &light.showCascades, 1, 0, 1);
+            gui.dragInt("show cascades", &light.showCascades, 1, 0, 1);
 
             for (int i = 0; i < light.numCascades; i++) {
                 std::string cascadeLabel = "cascade ";
                 cascadeLabel += std::to_string(i);
-                ImGui::DragFloat(cascadeLabel.c_str(), &light.cascades[i].splitDistance);
+                gui.dragFloat(cascadeLabel.c_str(), &light.cascades[i].splitDistance);
             }
         }
 
         if (light.type == LightType::Directional || light.type == LightType::Point) {
             state.lightShadow = light.castsShadows;
-            if (ImGui::Checkbox("Enable Shadows", &state.lightShadow)) {
+            if (gui.checkbox("Enable Shadows", &state.lightShadow)) {
                 if (state.lightShadow) {
                     if(light.type == LightType::Directional)
                         light.shadowResolution = DEFAULT_CSM_SHADOW_RESOLUTION;
@@ -273,22 +271,22 @@ void showNodeLightInfo(Node& node, Scene& scene, BindlessSystem& bindless, uint3
 
         Gizmos::drawSphere(node.getWorldPosition(),light.range, glm::vec4(1,1,0,1));
 
-        if ( ImGui::Button("Remove Light")) {
+        if ( gui.button("Remove Light")) {
             scene.removeLight(bindless, lightBufferIndex, node.lightIndex);
             node.lightIndex = MAX_LIGHTS;
         }
 
-    } else if (ImGui::Button("Add Light")) {
+    } else if (gui.button("Add Light")) {
         Light light = {.type = LightType::Point, .range = 10, .intensity = 1, .color = glm::vec4(1, 1, 1, 1)};
         NodeOps::assignLight(node, light, scene, bindless, lightBufferIndex);
     }
 
 }
 
-void showNodeVolumeInfo(Node& node, Scene& scene) {
+void showNodeVolumeInfo(GUI& gui, Node& node, Scene& scene) {
 
     if(!scene.volumes.contains(node.nodeIndex)) {
-        if(ImGui::Button("Add Volume")){
+        if(gui.button("Add Volume")){
             Volume vol;
             NodeOps::assignVolume(node, vol, scene);
         }
@@ -296,21 +294,21 @@ void showNodeVolumeInfo(Node& node, Scene& scene) {
     else {
         // Edits land in the CPU-side Volume; VolumetricsPass streams it to the GPU next frame,
         // so no explicit re-upload (or transformDirty) is needed here.
-        ImGui::SliderFloat("radius", &scene.volumes[node.nodeIndex].radius,0.0f,20.0f);
-        ImGui::SliderFloat("density", &scene.volumes[node.nodeIndex].density,0.0f,1.0f);
-        ImGui::SliderFloat("phase", &scene.volumes[node.nodeIndex].phase,0.0f,1.0f);
+        gui.sliderFloat("radius", &scene.volumes[node.nodeIndex].radius,0.0f,20.0f);
+        gui.sliderFloat("density", &scene.volumes[node.nodeIndex].density,0.0f,1.0f);
+        gui.sliderFloat("phase", &scene.volumes[node.nodeIndex].phase,0.0f,1.0f);
     }
 }
 
-void showNodeEmitterInfo(Node& node, Scene& scene, BindlessSystem& bindless, const RenderBuffers& buffers) {
+void showNodeEmitterInfo(GUI& gui, Node& node, Scene& scene, BindlessSystem& bindless, const RenderBuffers& buffers) {
     if(node.particleIndex == 0xFFFFFFFF) {
-        if(ImGui::Button("Add Emitter")){
+        if(gui.button("Add Emitter")){
             ParticleEmitter emitter;
             NodeOps::assignEmitter(node, emitter, scene, bindless, buffers);
         }
     }
     else {
-        if ( ImGui::Button("Remove Emitter")) {
+        if ( gui.button("Remove Emitter")) {
             scene.removeEmitter(bindless, buffers, node.particleIndex);
             node.particleIndex = 0xFFFFFFFF;
             return; // emitter gone; don't touch it below
@@ -320,42 +318,42 @@ void showNodeEmitterInfo(Node& node, Scene& scene, BindlessSystem& bindless, con
 
         // These two feed capacity() -> the reserved pool range. Re-reserve when the drag ends
         // (not every frame it's held) so the ring never under-/over-sizes vs the sim.
-        ImGui::DragFloat("Emission Rate", &emitter.emissionRate, 0.5f, 0.0f, 1000.0f);
-        if (ImGui::IsItemDeactivatedAfterEdit()) scene.resizeEmitterPool(bindless, buffers, node.particleIndex);
-        ImGui::DragFloat2("Lifetime (min/max)", &emitter.lifeTime.x, 0.05f, 0.0f, 60.0f);
-        if (ImGui::IsItemDeactivatedAfterEdit()) scene.resizeEmitterPool(bindless, buffers, node.particleIndex);
+        gui.dragFloat("Emission Rate", &emitter.emissionRate, 0.5f, 0.0f, 1000.0f);
+        if (gui.isItemDeactivatedAfterEdit()) scene.resizeEmitterPool(bindless, buffers, node.particleIndex);
+        gui.dragFloat2("Lifetime (min/max)", &emitter.lifeTime.x, 0.05f, 0.0f, 60.0f);
+        if (gui.isItemDeactivatedAfterEdit()) scene.resizeEmitterPool(bindless, buffers, node.particleIndex);
 
         // The rest only flow through toGPU (re-uploaded each frame in ParticlePass::record),
         // so editing the CPU struct is enough — no buffer work.
-        ImGui::SliderFloat("Spread Angle", &emitter.spreadAngle, 0.0f, 180.0f);
-        ImGui::DragFloat("Speed Min", &emitter.speedMin, 0.05f, 0.0f, 1000.0f);
-        ImGui::DragFloat("Speed Max", &emitter.speedMax, 0.05f, 0.0f, 1000.0f);
-        ImGui::DragFloat2("Angular Vel (min/max)", &emitter.angularVelocityRandom.x, 0.05f);
-        ImGui::SliderFloat("Drag", &emitter.drag, 0.0f, 5.0f);
-        ImGui::DragFloat2("Size (min/max)", &emitter.sizeRandom.x, 0.01f, 0.0f, 100.0f);
+        gui.sliderFloat("Spread Angle", &emitter.spreadAngle, 0.0f, 180.0f);
+        gui.dragFloat("Speed Min", &emitter.speedMin, 0.05f, 0.0f, 1000.0f);
+        gui.dragFloat("Speed Max", &emitter.speedMax, 0.05f, 0.0f, 1000.0f);
+        gui.dragFloat2("Angular Vel (min/max)", &emitter.angularVelocityRandom.x, 0.05f);
+        gui.sliderFloat("Drag", &emitter.drag, 0.0f, 5.0f);
+        gui.dragFloat2("Size (min/max)", &emitter.sizeRandom.x, 0.01f, 0.0f, 100.0f);
         // Global transparency multiplier applied to every particle's alpha in the draw shader.
-        ImGui::SliderFloat("Opacity", &emitter.opacity, 0.0f, 1.0f);
+        gui.sliderFloat("Opacity", &emitter.opacity, 0.0f, 1.0f);
 
         // Lit billboards sample scene lighting in the draw shader.
-        ImGui::Checkbox("Lit", &emitter.lit);
+        gui.checkbox("Lit", &emitter.lit);
         // Spherical-impostor bulge for lit shading: 0 = flat card, 1 = sphere, >1 exaggerates.
         if (emitter.lit)
-            ImGui::SliderFloat("Roundness", &emitter.sphereRoundness, 0.0f, 2.0f);
+            gui.sliderFloat("Roundness", &emitter.sphereRoundness, 0.0f, 2.0f);
 
         // Volumetric: particles inject density into the froxel grid (VolumetricsPass pass B).
         // Density Range is the per-particle density and only matters when this is on.
-        ImGui::Checkbox("Volumetric", &emitter.volumetric);
+        gui.checkbox("Volumetric", &emitter.volumetric);
         if (emitter.volumetric) {
-            ImGui::DragFloat2("Density Range", &emitter.densityRange.x, 0.01f, 0.0f, 1.0f);
-            ImGui::DragFloat("Phase", &emitter.volumePhase, 0.01f, 0.0f, 1.0f);
+            gui.dragFloat2("Density Range", &emitter.densityRange.x, 0.01f, 0.0f, 1.0f);
+            gui.dragFloat("Phase", &emitter.volumePhase, 0.01f, 0.0f, 1.0f);
             // Sphere: view-independent radial density (correct when you're inside / fly through it).
             // Off = textured billboard (samples the sprite's alpha, but only reads right from outside).
-            ImGui::Checkbox("Sphere (fly-through)", &emitter.volumetricSphere);
+            gui.checkbox("Sphere (fly-through)", &emitter.volumetricSphere);
         }
         // Soft particles: depth-fade where the billboard meets scene geometry.
-        ImGui::Checkbox("Soft Particles", &emitter.softParticle);
+        gui.checkbox("Soft Particles", &emitter.softParticle);
         if (emitter.softParticle)
-            ImGui::SliderFloat("Soft Radius", &emitter.softRadius, 0.01f, 10.0f);
+            gui.sliderFloat("Soft Radius", &emitter.softRadius, 0.01f, 10.0f);
 
         // Texture picker (like the material editor): seed the buffer from the current texture once,
         // then Browse/type a path and Apply to (re)load it.
@@ -366,28 +364,28 @@ void showNodeEmitterInfo(Node& node, Scene& scene, BindlessSystem& bindless, con
             state.emitterTexBuffer[sizeof(state.emitterTexBuffer) - 1] = '\0';
             state.emitterTexInit = true;
         }
-        ImGui::SetNextItemWidth(200);
-        ImGui::InputText("Texture", state.emitterTexBuffer, sizeof(state.emitterTexBuffer));
-        browseButton("emitterTex", state.emitterTexBuffer, sizeof(state.emitterTexBuffer));        
-        if (ImGui::Button("Apply Texture##emitter") && strlen(state.emitterTexBuffer) > 0) {
+        gui.setNextItemWidth(200);
+        gui.inputText("Texture", state.emitterTexBuffer, sizeof(state.emitterTexBuffer));
+        browseButton(gui, "emitterTex", state.emitterTexBuffer, sizeof(state.emitterTexBuffer));        
+        if (gui.button("Apply Texture##emitter") && strlen(state.emitterTexBuffer) > 0) {
             try { emitter.textureIndex = scene.assetManager.loadTextureFromFile(state.emitterTexBuffer); }
             catch (...) {}
         }
-        ImGui::DragFloat2("Emissive Range", &emitter.emissiveRange.x, 0.01f, 0.0f, 10.0f);
+        gui.dragFloat2("Emissive Range", &emitter.emissiveRange.x, 0.01f, 0.0f, 10.0f);
 
     }
 }
 
-void showNodeTransformInfo(Node& node, Scene& scene) {
+void showNodeTransformInfo(GUI& gui, Node& node, Scene& scene) {
 
     //Gizmos::drawSDFArrow(node.getWorldPosition(),node.right(),0.01f,0.25f,glm::vec4(1,0,0,1));
     //Gizmos::drawSDFArrow(node.getWorldPosition(),node.up(),0.01f,0.25f,glm::vec4(0,1,0,1));
     //Gizmos::drawSDFArrow(node.getWorldPosition(),node.forward(),0.01f,0.25f,glm::vec4(0,0,1,1));
 
-    ImGui::Text("Parent: %s", scene.sceneGraph.getNode(node.parentIndex).name.c_str());
+    gui.textf("Parent: %s", scene.sceneGraph.getNode(node.parentIndex).name.c_str());
 
     const char* currentParentName = scene.sceneGraph.getNode(node.parentIndex).name.c_str();
-    if (ImGui::BeginCombo("Change Parent", currentParentName)) {
+    if (gui.beginCombo("Change Parent", currentParentName)) {
         auto& nodes = scene.sceneGraph.getNodes();
         for (uint32_t i = SceneGraph::ROOT_INDEX; i <= scene.sceneGraph.getLastNode(); i++) {
             if (!scene.sceneGraph.isNodeValid(i)) continue;
@@ -401,49 +399,49 @@ void showNodeTransformInfo(Node& node, Scene& scene) {
             }
             if (isDescendant) continue;
 
-            if (ImGui::Selectable(nodes[i].name.c_str(), false)) {
+            if (gui.comboItem(nodes[i].name.c_str(), false)) {
                 scene.sceneGraph.reparent(node.nodeIndex, i, true);
             }
         }
-        ImGui::EndCombo();
+        gui.endCombo();
     }
 
-    ImGui::Text("position: ");
-    ImGui::SetNextItemWidth(80);
-    ImGui::DragFloat("Pos X", &node.relativePosition.x, 0.1);
-    ImGui::SetNextItemWidth(80);
-    ImGui::DragFloat("Pos Y", &node.relativePosition.y, 0.1);
-    ImGui::SetNextItemWidth(80);
-    ImGui::DragFloat("Pos Z", &node.relativePosition.z, 0.1);
+    gui.textf("position: ");
+    gui.setNextItemWidth(80);
+    gui.dragFloat("Pos X", &node.relativePosition.x, 0.1);
+    gui.setNextItemWidth(80);
+    gui.dragFloat("Pos Y", &node.relativePosition.y, 0.1);
+    gui.setNextItemWidth(80);
+    gui.dragFloat("Pos Z", &node.relativePosition.z, 0.1);
 
-    ImGui::Text("rotation: ");
+    gui.textf("rotation: ");
 
     // absolute world Euler angles
-    ImGui::Text("Euler");
+    gui.textf("Euler");
     glm::vec3 worldEulerDegrees = glm::degrees(node.worldRotationEuler);
     bool absoluteRotationChanged = false;
-    ImGui::SameLine();
-    ImGui::Text("Delta");
+    gui.sameLine();
+    gui.textf("Delta");
     static glm::vec3 worldRotationDelta = glm::vec3(0);
     bool deltaRotationChanged = false;
 
-    ImGui::SetNextItemWidth(80);
-    absoluteRotationChanged |= ImGui::DragFloat("X##abs", &worldEulerDegrees.x, 0.5f, -180.0f, 180.0f, "%.1f°");
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(80);
-    deltaRotationChanged |= ImGui::DragFloat("X##delta", &worldRotationDelta.x, 0.5f, 0.0f, 0.0f, "%.1f°");
+    gui.setNextItemWidth(80);
+    absoluteRotationChanged |= gui.dragFloat("X##abs", &worldEulerDegrees.x, 0.5f, -180.0f, 180.0f, "%.1f°");
+    gui.sameLine();
+    gui.setNextItemWidth(80);
+    deltaRotationChanged |= gui.dragFloat("X##delta", &worldRotationDelta.x, 0.5f, 0.0f, 0.0f, "%.1f°");
 
-    ImGui::SetNextItemWidth(80);
-    absoluteRotationChanged |= ImGui::DragFloat("Y##abs", &worldEulerDegrees.y, 0.5f, -180.0f, 180.0f, "%.1f°");
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(80);
-    deltaRotationChanged |= ImGui::DragFloat("Y##delta", &worldRotationDelta.y, 0.5f, 0.0f, 0.0f, "%.1f°");
+    gui.setNextItemWidth(80);
+    absoluteRotationChanged |= gui.dragFloat("Y##abs", &worldEulerDegrees.y, 0.5f, -180.0f, 180.0f, "%.1f°");
+    gui.sameLine();
+    gui.setNextItemWidth(80);
+    deltaRotationChanged |= gui.dragFloat("Y##delta", &worldRotationDelta.y, 0.5f, 0.0f, 0.0f, "%.1f°");
 
-    ImGui::SetNextItemWidth(80);
-    absoluteRotationChanged |= ImGui::DragFloat("Z##abs", &worldEulerDegrees.z, 0.5f, -180.0f, 180.0f, "%.1f°");
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(80);
-    deltaRotationChanged |= ImGui::DragFloat("Z##delta", &worldRotationDelta.z, 0.5f, 0.0f, 0.0f, "%.1f°");
+    gui.setNextItemWidth(80);
+    absoluteRotationChanged |= gui.dragFloat("Z##abs", &worldEulerDegrees.z, 0.5f, -180.0f, 180.0f, "%.1f°");
+    gui.sameLine();
+    gui.setNextItemWidth(80);
+    deltaRotationChanged |= gui.dragFloat("Z##delta", &worldRotationDelta.z, 0.5f, 0.0f, 0.0f, "%.1f°");
 
     if (absoluteRotationChanged) {
         node.worldRotationEuler = glm::radians(worldEulerDegrees);
@@ -490,11 +488,11 @@ void showNodeTransformInfo(Node& node, Scene& scene) {
         }
     }
 
-    ImGui::Text("scale: ");
-    ImGui::SetNextItemWidth(80);
-    ImGui::DragFloat("Scale X", &node.relativeScale.x, 0.1 * node.relativeScale.x);
-    ImGui::SetNextItemWidth(80);
-    ImGui::DragFloat("Scale Y", &node.relativeScale.y, 0.1 * node.relativeScale.y);
-    ImGui::SetNextItemWidth(80);
-    ImGui::DragFloat("Scale Z", &node.relativeScale.z, 0.1 * node.relativeScale.z);
+    gui.textf("scale: ");
+    gui.setNextItemWidth(80);
+    gui.dragFloat("Scale X", &node.relativeScale.x, 0.1 * node.relativeScale.x);
+    gui.setNextItemWidth(80);
+    gui.dragFloat("Scale Y", &node.relativeScale.y, 0.1 * node.relativeScale.y);
+    gui.setNextItemWidth(80);
+    gui.dragFloat("Scale Z", &node.relativeScale.z, 0.1 * node.relativeScale.z);
 }

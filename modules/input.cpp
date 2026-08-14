@@ -2,14 +2,16 @@
 #include "input.hpp"
 #include "renderer.hpp"
 #include "raycast.hpp"
-#include "imgui.h"
 #include "material_editor_state.hpp"
+#include "GUI.h"
 
 void InputManager::tickInputState() { //should be only called once in the main app loop
     InputManager& inst = getInstance();
 
-    bool canMouse = !ImGui::GetIO().WantCaptureMouseUnlessPopupClose;
-    bool canKB = !ImGui::GetIO().WantCaptureKeyboard;
+    // The GUI's veto on this frame's input. Only meaningful if GUI::hitTest() already ran —
+    // see the ordering in App::mainLoop.
+    bool canMouse = !(inst.gui != nullptr && inst.gui->wantsMouse());
+    bool canKB = !(inst.gui != nullptr && inst.gui->wantsKeyboard());
 
     int w = 0, h = 0;
     glfwGetWindowSize(inst.renderer->gpu.getWindow(), &w, &h);
@@ -105,7 +107,6 @@ void InputManager::tickInputState() { //should be only called once in the main a
     }
 
     if (inst.current.keyStates[GLFW_KEY_ESCAPE] == GLFW_PRESS && inst.previous.keyStates[GLFW_KEY_ESCAPE] != GLFW_PRESS) {
-        ImGui::SetWindowFocus(NULL);
         if (inst.renderer->features.imageVis.imageIndex != 0xFFFFFFFF) {
             inst.renderer->features.imageVis.imageIndex = 0xFFFFFFFF;
         } else if (inst.materialPickMode) {
@@ -123,7 +124,21 @@ void InputManager::tickInputState() { //should be only called once in the main a
     inst.canMove = true;
 }
 
+
+
+void InputManager::consumeKBInput(int keyCode) {
+    getInstance().current.consumedKeyStates.insert(keyCode);
+} 
+
+void InputManager::consumeMouseInput() {
+    getInstance().current.mouse_action_consumed = true;
+}
+
 void InputManager::endFrame() {
     InputManager& inst = getInstance();
     inst.previous = inst.current;
+    // Event streams, not latched state: they describe what arrived during the frame that just
+    // ended, so they reset here while `previous` keeps the copy anyone still wants to compare against.
+    inst.current.scroll = glm::vec2(0);
+    inst.current.charQueue.clear();
 }

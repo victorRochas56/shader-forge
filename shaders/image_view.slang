@@ -95,7 +95,6 @@ float4 fragMain(VertexOutput input) : SV_Target0
     }
 
     float4 color = textures[pc.imageIndex].SampleLevel(samplers[pc.samplerIndex], uv, pc.mipLevel);
-
     if(pc.flags & 1<<2) { // LINEARIZE_DEPTH
         float z = color.r;
         // Reverse-Z: near maps to z=1, far to z=0
@@ -107,5 +106,5 @@ float4 fragMain(VertexOutput input) : SV_Target0
         return float4(color.r,color.r,color.r, 1.0);
     }
 
-    return color;
+    return color * color.a;
 }

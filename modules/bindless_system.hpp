@@ -18,22 +18,6 @@ BindlessSystem bundles the GPU-resource infrastructure: the resource::Context th
 the functional resource module allocates raw Vulkan resources through, the
 DescriptorSet that manages the bindless descriptor table, and the PipelineManager
 that compiles/caches pipelines.
-
-These objects are intertwined: PipelineManager is built against DescriptorSet
-layouts, and the Swapchain (on GpuContext) needs both the resource::Context and
-DescriptorSet for its color/depth attachments. Initialization is split into two
-steps because PipelineManager needs the Swapchain to exist, while Swapchain needs
-the resource::Context + DescriptorSet:
-
-    bindless.initResources(gpu);                       // Context + DS
-    gpu.initSwapchain(*bindless.resourceCtx,
-                      *bindless.descriptorSet);        // swapchain object
-    bindless.initPipelineManager(gpu);                 // PM (needs swapchain)
-    // ... app-level buffer/pipeline setup on bindless.descriptorSet ...
-    bindless.descriptorSet->createDescriptorSet();
-    gpu.createSwapchainAndSync();                       // swap images + sync
-
-Subsystems hold a BindlessSystem& (non-owning). App owns the BindlessSystem.
 */
 class BindlessSystem {
   public:

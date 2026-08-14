@@ -12,11 +12,9 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
  
-#include "imgui.h"
-#include "imgui_impl_glfw.h"
-#include "imgui_impl_vulkan.h"
 
 #include "gizmo.hpp"
+#include "GUI.h"
 #include "node_ops.hpp"
 #include "pipelines.hpp"
 #include "profiling.hpp"
@@ -49,8 +47,8 @@ void calculatePointLightFaceMatrices(Light& light, const glm::vec3& lightPos);
 
 void calculateCascadedLightSpaceMatrices(Light& light, Camera& camera, Renderer* renderer);
 
-Renderer::Renderer(GpuContext& gpu, BindlessSystem& bindless, Scene& scene)
-    : scene(scene), gpu(gpu), bindless(bindless), passResources{.buffers = buffers} {}
+Renderer::Renderer(GpuContext& gpu, BindlessSystem& bindless, Scene& scene, GUI& gui)
+    : scene(scene), gpu(gpu), bindless(bindless), gui(gui), passResources{.buffers = buffers} {}
 Renderer::~Renderer() {
     // Device is idle here (App waits before teardown). No-op when Tracy is disabled.
     #if TRACY_ENABLE
@@ -293,7 +291,7 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
         bindless.pipelineManager->createPipeline<ExposureAdaptPushConstants>(PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone, vk::False,
                                                                vk::False, "shaders/exposure_adapt.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
                                                                vk::Format::eR16Sfloat);
-                                                               
+
     /**
      * post process pipelines added declaratively are added here?
      */
@@ -1486,8 +1484,8 @@ void Renderer::recordOverlayPass(vk::raii::CommandBuffer& cmd, uint32_t imageInd
         cmd.pushConstants<LinePushConstants>(*gizmoPipeline->layout, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, lineConstants);
         cmd.draw(Gizmos::getVertexCount(), 1, 0, 0);
     }
-    // IMGUI
-    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), *cmd);
+    // the whole overlay: one instanced draw for every rect and glyph on screen
+    gui.record(bindless, cmd, gpu.currentFrame, glm::uvec2(extent.width, extent.height));
     cmd.endRendering();
 }
 

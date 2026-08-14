@@ -41,6 +41,7 @@
 struct GLFWwindow;
 struct PipelineBase;
 struct ComputePipelineBase;
+class GUI;
 
 /*
 main rendering engine holds the state of the scene, nodes, meshes, lights, materials etc...
@@ -61,6 +62,8 @@ class Renderer {
   private:
     bool                                framebufferResized = false;
     BindlessSystem&                     bindless;
+    // Owned by App; Renderer only records it in the overlay pass.
+    GUI&                                gui;
     RenderPassResources                 passResources;
 
     // Tracy GPU profiling context (per graphics queue). void* / no-op when TRACY_ENABLE is off.
@@ -167,7 +170,7 @@ class Renderer {
   public:
 
 #pragma region INIT
-    Renderer(GpuContext& gpu, BindlessSystem& bindless, Scene& scene);
+    Renderer(GpuContext& gpu, BindlessSystem& bindless, Scene& scene, GUI& gui);
     ~Renderer();
 
     void initVulkan(uint32_t startWidth, uint32_t startHeight);
