@@ -55,6 +55,11 @@ FragmentOutput litFragImpl<let GI_MODE : int, let DEBUG_CASCADES : bool>(VertexO
     float4 metalTex  = textures[input.texIndices.z].Sample(smp, uv);
     float3 normalTex = textures[input.texIndices.w].Sample(smp, uv).rgb;
 
+    // Base colour factor. Tints the albedo map, and is the whole colour when there is no map —
+    // absent albedo resolves to the 1x1 white default, so the multiply is the only thing there.
+    // Before the alpha test so the colour's alpha clips with it.
+    albedo *= unpackColorRGBA8(input.matInfo.z);
+
     if (alphaClip && albedo.a < input.matParams.z)
         discard;
 

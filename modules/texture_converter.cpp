@@ -35,8 +35,8 @@ stale .ktx2 files afterwards to force a re-encode).
                are going into version control.
   ZSTD_LEVEL   Only affects the cache size and encode time; inflate cost at load is unaffected.
 */
-constexpr ktx_pack_uastc_flags UASTC_LEVEL = KTX_PACK_UASTC_LEVEL_DEFAULT;
-constexpr bool UASTC_RDO = false;
+constexpr ktx_pack_uastc_flags UASTC_LEVEL = 1; //KTX_PACK_UASTC_LEVEL_DEFAULT;
+constexpr bool UASTC_RDO = true;
 constexpr ktx_uint32_t ZSTD_LEVEL = 10;
 
 std::mutex g_logMutex;

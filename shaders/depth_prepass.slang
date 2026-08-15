@@ -40,7 +40,10 @@ FragmentOutput fragMain(VertOutput input)
 
     // Alpha clipping
     if (inst.materialFlags & (1u << 5)) {
-        float alpha = textures[inst.albedoTextureIndex].Sample(samplers[pc.litPassData.samplerIndex], input.texCoord).a;
+        // Same base-colour alpha the lit pass applies — clipping differently here punches holes in
+        // the depth buffer that the lit pass then fills.
+        float alpha = textures[inst.albedoTextureIndex].Sample(samplers[pc.litPassData.samplerIndex], input.texCoord).a
+                    * unpackColorRGBA8(inst.packedColor).a;
         if (alpha < inst.alphaCutoff)
             discard;
     }

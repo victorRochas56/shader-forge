@@ -152,7 +152,8 @@ public:
                          .materialFlags = static_cast<uint32_t>(m.flags),
                          .metallic = m.metallic,
                          .roughness = m.roughness,
-                         .alphaCutoff = m.alphaCutoff };
+                         .alphaCutoff = m.alphaCutoff,
+                         .packedColor = packColorRGBA8(m.color) };
         }
         uint32_t frameInstBase = frame * MAX_MATS;
         bindless.descriptorSet->writeFixedBuffer<LitInstanceData>(instanceBufferIndex, insts.data(), count, frameInstBase, frame);

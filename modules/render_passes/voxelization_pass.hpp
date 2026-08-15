@@ -21,6 +21,9 @@ public:
     static constexpr float    VOXEL_WORLD_EXTENT = 64.0f; // side of the world-space cube the grid covers
     static constexpr uint32_t IRRADIANCE_RESOLUTION = 128; // resolution of the grid in which irradiance is stored
     static_assert(VOXEL_RESOLUTION % IRRADIANCE_RESOLUTION == 0, "gather maps irradiance voxels onto whole radiance mips");
+    // The 8-voxel snap below must land on whole irradiance voxels, or the gather's history offset
+    // stops being an exact integer and every recentre throws the temporal history away.
+    static_assert(8 * IRRADIANCE_RESOLUTION % VOXEL_RESOLUTION == 0, "grid snap must be a whole number of irradiance voxels");
 
     // Grid centre snapped to 8-voxel steps, keeping mips 0-3 phase-stable in world space
     static glm::vec3 snappedGridCenter(const glm::vec3& cameraPos) {
@@ -56,10 +59,52 @@ private:
     uint32_t volumeMipLevels = 0;
 
     // Ambient-cube irradiance volumes (VOXEL_FACE_DIRS order: +X,-X,+Y,-Y,+Z,-Z). Written by the
-    // gather pass, sampled by the lit shader in giMode 1
-    std::array<uint32_t, 6> irradianceTextureIndices{0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF};
-    std::array<uint32_t, 6> irradianceStorageIndices{};
+    // gather pass, sampled by the lit shader in giMode 1.
+    //
+    // Ping-ponged for the temporal blend: the gather reads set 1-irradianceSet as history and writes
+    // the other, so a grid recentre costs an integer read offset instead of a copy pass. Everything
+    // downstream (lit, debug views) reads whatever was written last.
+    static constexpr std::array<uint32_t, 6> UNSET_FACES{0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF};
+    std::array<std::array<uint32_t, 6>, 2> irradianceTextureIndices{UNSET_FACES, UNSET_FACES};
+    std::array<std::array<uint32_t, 6>, 2> irradianceStorageIndices{};
+    uint32_t irradianceSet = 0;
+    glm::mat4 prevGatherVPM{1.0f};      // grid matrix the history was gathered under
+    bool irradianceHistoryValid = false; // cleared when the history can't be reprojected onto this frame
+    uint32_t gatherFrame = 0;           // drives which amortization phase updates
+    bool prevMultiBounce = true;        // edge-detects the GUI toggle (VXGISettings::multiBounce)
+    uint32_t historySnapFrames = 0;     // gathers left to run unblended, so a toggle converges fast
     uint32_t gatherPipelineIndex = 0xFFFFFFFF;
+
+    // Grid clip -> volume UVW, matching worldToGridUVW() in shaders/modules/voxel.slang.
+    static glm::vec3 gridUVW(const glm::mat4& vpm, const glm::vec3& worldPos) {
+        glm::vec4 clip = vpm * glm::vec4(worldPos, 1.0f);
+        glm::vec3 ndc = glm::vec3(clip) / clip.w;
+        return glm::vec3(ndc.x * 0.5f + 0.5f, ndc.y * 0.5f + 0.5f, ndc.z);
+    }
+
+    // How far the grid recentred since the last gather, in irradiance voxels: one world point
+    // through both frames' matrices. Taken from the matrices rather than the world delta so it
+    // stays right whatever axis permutation gridViewProjection's lookAt produces. The snap keeps it
+    // whole; the residual check is the guard for when it somehow isn't. The resolve's bounce lookup
+    // and the gather's history read both index that same set, so both take this same number.
+    struct GridShift { glm::ivec3 voxels{0}; bool usable = false; };
+    GridShift gridShiftSinceGather(const glm::mat4& vpm) const {
+        glm::vec3 probe = snappedGridCenter(scene.activeCamera.position);
+        glm::vec3 shiftF = (gridUVW(prevGatherVPM, probe) - gridUVW(vpm, probe)) * static_cast<float>(IRRADIANCE_RESOLUTION);
+        GridShift s;
+        s.voxels = glm::ivec3(glm::round(shiftF));
+        glm::vec3 residual = glm::abs(shiftF - glm::vec3(s.voxels));
+        s.usable = irradianceHistoryValid
+                && std::max({residual.x, residual.y, residual.z}) < 0.01f
+                && std::max({std::abs(s.voxels.x), std::abs(s.voxels.y), std::abs(s.voxels.z)}) < static_cast<int>(IRRADIANCE_RESOLUTION);
+        return s;
+    }
+
+    // Whether recordGather runs this frame — the faces are only worth feeding back if they're being
+    // kept current. Mirrors the condition in record().
+    bool gatherEnabled() const {
+        return features.vxgi.mode == 1 || (features.voxelDebug.enabled && features.voxelDebug.volumeSelect > 0);
+    }
 
     bool volumeBlanked = false; // volume zeroed since voxelizeScene went off
 
@@ -89,12 +134,12 @@ public:
 
     uint32_t getVolumeTextureIndex() const { return voxelVolumeTextureIndex; }
     uint32_t getVolumeMipLevels() const { return volumeMipLevels; }
-    std::array<uint32_t, 6> getIrradianceTextureIndices() const { return irradianceTextureIndices; }
+    std::array<uint32_t, 6> getIrradianceTextureIndices() const { return irradianceTextureIndices[irradianceSet]; }
 
     // Debug views: selected volume (0 = radiance, 1..6 = irradiance face) and its mip cap.
     uint32_t debugVolumeTexIndex() const {
         int sel = features.voxelDebug.volumeSelect;
-        return sel == 0 ? voxelVolumeTextureIndex : irradianceTextureIndices[sel - 1];
+        return sel == 0 ? voxelVolumeTextureIndex : irradianceTextureIndices[irradianceSet][sel - 1];
     }
     uint32_t debugVolumeMaxMip() const {
         return features.voxelDebug.volumeSelect == 0 ? volumeMipLevels - 1 : 0; // faces are single-mip
@@ -129,7 +174,7 @@ public:
         }
 
         if (voxelVolumeTextureIndex == 0xFFFFFFFF) createVolume();
-        if (irradianceTextureIndices[0] == 0xFFFFFFFF) createIrradianceVolumes();
+        if (irradianceTextureIndices[0][0] == 0xFFFFFFFF) createIrradianceVolumes();
 
         // Trilinear for the cone-widening mips; border-black so cones leaving the grid read zero
         // radiance/opacity instead of smearing the edge voxel or wrapping (defaultSampler is eRepeat).
@@ -172,6 +217,8 @@ public:
         // skipping is safe — the volume rests in ShaderReadOnly with all transitions paired here.
         if (!features.voxelDebug.voxelizeScene) {
             if (!volumeBlanked) {
+                // Before the resolve: also stops the bounce feeding off faces we're about to zero.
+                irradianceHistoryValid = false; // snap the faces to black instead of fading into it
                 clearScatterBuffers(cmd);
                 recordResolve(cmd);
                 recordGather(cmd); // gathers off the blank volume, so the faces zero too
@@ -179,15 +226,25 @@ public:
             }
             return;
         }
+        if (volumeBlanked) irradianceHistoryValid = false; // the history is a gather off a blank volume
         volumeBlanked = false;
+
+        // Toggling the bounce would otherwise creep in or out over the temporal blend — too slow and
+        // too smooth to read as an A/B. Snapping the gather for a few frames drops the smoothing but
+        // keeps the faces valid, so the feedback still compounds a bounce per frame and converges in
+        // about as many frames as there are bounces worth seeing. Invalidating the history instead
+        // would also cut the injection off from the faces it reads, which stalls the ramp.
+        if (features.vxgi.multiBounce != prevMultiBounce) {
+            historySnapFrames = 4;
+            prevMultiBounce = features.vxgi.multiBounce;
+        }
         tracing::startTrace("voxelization");
 
         clearScatterBuffers(cmd);
         recordRaster(cmd);
         recordResolve(cmd);
         // Also gather when a debug view is inspecting a face, so it never shows stale data.
-        if (features.vxgi.mode == 1 || (features.voxelDebug.enabled && features.voxelDebug.volumeSelect > 0))
-            recordGather(cmd);
+        if (gatherEnabled()) recordGather(cmd);
 
         tracing::endTrace("voxelization");
     }
@@ -343,23 +400,26 @@ private:
             volumeMipStorageIndices.push_back(bindless.descriptorSet->allocateStorageImage(*view));
     }
 
-    // Six single-mip volumes for the ambient-cube gather. One view serves both slots:
-    // allocateStorageImage captures the handle before the raii view moves into the texture slot.
+    // Two sets of six single-mip volumes for the ambient-cube gather — the temporal history is the
+    // set the gather isn't writing. One view serves both slots: allocateStorageImage captures the
+    // handle before the raii view moves into the texture slot.
     void createIrradianceVolumes() {
         static constexpr const char* faceNames[6] = {"px", "nx", "py", "ny", "pz", "nz"};
-        for (uint32_t f = 0; f < 6; f++) {
-            vk::raii::Image image = nullptr;
-            vk::raii::DeviceMemory memory = nullptr;
-            resource::create3DImage(*bindless.resourceCtx, IRRADIANCE_RESOLUTION, IRRADIANCE_RESOLUTION, IRRADIANCE_RESOLUTION, 1,
-                                    vk::SampleCountFlagBits::e1, VOXEL_VOLUME_FORMAT, vk::ImageTiling::eOptimal,
-                                    vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled,
-                                    vk::MemoryPropertyFlagBits::eDeviceLocal, image, memory, 1);
-            auto view = resource::create3DImageView(*bindless.resourceCtx, image, VOXEL_VOLUME_FORMAT, vk::ImageAspectFlagBits::eColor, 0, 1);
-            // Resting layout is sampled; recordGather transitions to eGeneral to write.
-            resource::transitionImageLayout(*bindless.resourceCtx, nullptr, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal, 0, 1);
-            irradianceStorageIndices[f] = bindless.descriptorSet->allocateStorageImage(*view);
-            irradianceTextureIndices[f] = bindless.descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(view),
-                std::string("internal/voxel_irradiance_") + faceNames[f], false, IRRADIANCE_RESOLUTION, IRRADIANCE_RESOLUTION);
+        for (uint32_t set = 0; set < 2; set++) {
+            for (uint32_t f = 0; f < 6; f++) {
+                vk::raii::Image image = nullptr;
+                vk::raii::DeviceMemory memory = nullptr;
+                resource::create3DImage(*bindless.resourceCtx, IRRADIANCE_RESOLUTION, IRRADIANCE_RESOLUTION, IRRADIANCE_RESOLUTION, 1,
+                                        vk::SampleCountFlagBits::e1, VOXEL_VOLUME_FORMAT, vk::ImageTiling::eOptimal,
+                                        vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled,
+                                        vk::MemoryPropertyFlagBits::eDeviceLocal, image, memory, 1);
+                auto view = resource::create3DImageView(*bindless.resourceCtx, image, VOXEL_VOLUME_FORMAT, vk::ImageAspectFlagBits::eColor, 0, 1);
+                // Resting layout is sampled; recordGather transitions to eGeneral to write.
+                resource::transitionImageLayout(*bindless.resourceCtx, nullptr, image, vk::ImageLayout::eUndefined, vk::ImageLayout::eShaderReadOnlyOptimal, 0, 1);
+                irradianceStorageIndices[set][f] = bindless.descriptorSet->allocateStorageImage(*view);
+                irradianceTextureIndices[set][f] = bindless.descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(view),
+                    std::string("internal/voxel_irradiance_") + faceNames[f] + (set == 0 ? "_a" : "_b"), false, IRRADIANCE_RESOLUTION, IRRADIANCE_RESOLUTION);
+            }
         }
     }
 
@@ -396,6 +456,18 @@ private:
         pc.skyEnvMapIndex        = scene.getSkyBox();
         pc.skyInjection          = features.skyboxIntensity * features.vxgi.skyStrength;
 
+        // Multi-bounce feedback reads the face set the lit pass is currently on, which the gather
+        // later this frame won't touch (it writes the other one) — so no barrier, and they rest in
+        // the sampled layout this needs. Only worth it when those faces hold a real gather this
+        // frame's grid can reproject onto.
+        GridShift shift = gridShiftSinceGather(pc.vpm);
+        bool bounce = shift.usable && gatherEnabled() && features.vxgi.multiBounce && features.vxgi.bounceStrength > 0.0f;
+        glm::vec3 uvwOffset = glm::vec3(shift.voxels) / static_cast<float>(IRRADIANCE_RESOLUTION);
+        pc.irradianceTextureIndices = irradianceTextureIndices[irradianceSet];
+        pc.volumeSamplerIndex       = shared.volumeSamplerIndex;
+        pc.bounceUVWOffset          = {uvwOffset.x, uvwOffset.y, uvwOffset.z};
+        pc.bounceStrength           = bounce ? features.vxgi.bounceStrength : 0.0f;
+
         vk::Extent2D gridExtent{VOXEL_RESOLUTION, VOXEL_RESOLUTION};
         vk::RenderingInfo renderingInfo = {.renderArea = {.offset = {0, 0}, .extent = gridExtent},
                                            .layerCount = 1,
@@ -425,6 +497,7 @@ private:
             pc.vertexStride       = mesh.vertexStride;
             pc.vertexOffset       = static_cast<uint32_t>(mesh.vertexOffset);
             pc.albedoTextureIndex = material.albedoTextureIndex;
+            pc.packedColor        = packColorRGBA8(material.color);
             cmd.pushConstants<VoxelizationPushConstants>(pipeline.layout,
                 vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eGeometry | vk::ShaderStageFlagBits::eFragment, 0, pc);
             cmd.drawIndexed(mesh.lodIndexCount(0), 1, static_cast<uint32_t>(mesh.indexOffset / sizeof(uint32_t)), 0, 0);
@@ -489,30 +562,51 @@ private:
     // Ambient-cube gather: six axis cone traces per occupied voxel into the per-face irradiance
     // volumes. Reads the radiance volume through its sampled slot — recordResolve's final transition
     // already ordered and flushed those writes — and writes through the storage slots, so only the
-    // face volumes flip to eGeneral around the dispatch.
+    // face volumes being written flip to eGeneral around the dispatch. The history set stays in its
+    // sampled resting layout, which is what the shader's Load() needs.
     void recordGather(vk::raii::CommandBuffer& cmd) {
         tracing::startTrace("voxel gather");
-        for (uint32_t idx : irradianceTextureIndices)
+        uint32_t dstSet = 1 - irradianceSet;
+        for (uint32_t idx : irradianceTextureIndices[dstSet])
             resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *bindless.descriptorSet->getTextureResource(idx).image,
                                             vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eGeneral);
 
         // Recomputed rather than read from voxelCamVPM — deterministic per frame, and the blank path
         // runs without recordRaster having filled the members.
         glm::mat4 vpm = gridViewProjection(scene.activeCamera.position);
+
+        GridShift shift = gridShiftSinceGather(vpm);
+        // A snap frame keeps the faces valid for the bounce lookup but takes the fresh trace whole,
+        // so a toggled setting lands now instead of easing in over the blend.
+        bool useHistory = shift.usable && historySnapFrames == 0;
+
+        // Amortization needs somewhere to carry the untouched voxels from, so without history every
+        // voxel traces. Rounded down to a power of two — the shader phase-tests with a mask.
+        uint32_t phases = 1;
+        if (useHistory) {
+            int p = std::clamp(features.vxgi.updatePhases, 1, 8);
+            phases = p >= 8 ? 8u : p >= 4 ? 4u : p >= 2 ? 2u : 1u;
+        }
+
         VoxelGatherPushConstants pc{
-            .worldToGridClip      = vpm,
-            .gridClipToWorld      = glm::inverse(vpm),
-            .radianceTextureIndex = voxelVolumeTextureIndex,
-            .samplerIndex         = shared.volumeSamplerIndex,
-            .radianceResolution   = VOXEL_RESOLUTION,
-            .irradianceResolution = IRRADIANCE_RESOLUTION,
-            .worldExtent          = VOXEL_WORLD_EXTENT,
-            .faceStorageIndices   = irradianceStorageIndices,
-            .sideCones            = static_cast<uint32_t>(features.vxgi.gatherSideCones),
-            .maxSteps             = static_cast<uint32_t>(features.vxgi.gatherSteps),
-            .fetchBatch           = static_cast<uint32_t>(features.vxgi.gatherFetchBatch),
-            .skyEnvMapIndex       = scene.getSkyBox(),
-            .skyIntensity         = features.skyboxIntensity * features.vxgi.skyStrength,
+            .worldToGridClip       = vpm,
+            .gridClipToWorld       = glm::inverse(vpm),
+            .radianceTextureIndex  = voxelVolumeTextureIndex,
+            .samplerIndex          = shared.volumeSamplerIndex,
+            .radianceResolution    = VOXEL_RESOLUTION,
+            .irradianceResolution  = IRRADIANCE_RESOLUTION,
+            .worldExtent           = VOXEL_WORLD_EXTENT,
+            .faceStorageIndices    = irradianceStorageIndices[dstSet],
+            .historyTextureIndices = irradianceTextureIndices[irradianceSet],
+            .historyOffset         = {shift.voxels.x, shift.voxels.y, shift.voxels.z},
+            .blendWeight           = useHistory ? std::clamp(features.vxgi.temporalBlend, 0.01f, 1.0f) : 1.0f,
+            .phaseMask             = phases - 1,
+            .phase                 = gatherFrame & (phases - 1),
+            .sideCones             = static_cast<uint32_t>(features.vxgi.gatherSideCones),
+            .maxSteps              = static_cast<uint32_t>(features.vxgi.gatherSteps),
+            .fetchBatch            = static_cast<uint32_t>(features.vxgi.gatherFetchBatch),
+            .skyEnvMapIndex        = scene.getSkyBox(),
+            .skyIntensity          = features.skyboxIntensity * features.vxgi.skyStrength,
         };
         auto& pipe = static_cast<ComputePipeline<VoxelGatherPushConstants>&>(*bindless.pipelineManager->getComputePipelines()[gatherPipelineIndex]);
         pipe.pushConstantData = pc;
@@ -524,9 +618,16 @@ private:
         cmd.dispatch(groups, groups, groups);
 
         // Back to sampled; also makes the gather writes visible to the lit pass.
-        for (uint32_t idx : irradianceTextureIndices)
+        for (uint32_t idx : irradianceTextureIndices[dstSet])
             resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *bindless.descriptorSet->getTextureResource(idx).image,
                                             vk::ImageLayout::eGeneral, vk::ImageLayout::eShaderReadOnlyOptimal);
+
+        // What was just written is what everything downstream reads, and next frame's history.
+        irradianceSet = dstSet;
+        prevGatherVPM = vpm;
+        irradianceHistoryValid = true;
+        if (historySnapFrames > 0) historySnapFrames--;
+        gatherFrame++;
         tracing::endTrace("voxel gather");
     }
 };

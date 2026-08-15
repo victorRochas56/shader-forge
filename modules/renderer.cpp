@@ -819,7 +819,7 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
 // Finest LOD whose average triangle still covers kMinAvgTrianglePixels on screen 
 // Foreshortening and backfaces shrink real coverage further; the target constant absorbs that on average.
 static uint32_t selectLOD(const Mesh& mesh, float areaToPixels2) {
-    constexpr float kMinAvgTrianglePixels = 12.0f;
+    constexpr float kMinAvgTrianglePixels = 8.0f;
     if (mesh.surfaceArea <= 0.0f) return 0;
     uint32_t lod = 0;
     while (lod + 1 < mesh.LODs.size()) {
@@ -1049,7 +1049,8 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
                                         .materialFlags         = static_cast<uint32_t>(material.flags),
                                         .metallic              = material.metallic,
                                         .roughness             = material.roughness,
-                                        .alphaCutoff           = material.alphaCutoff});});
+                                        .alphaCutoff           = material.alphaCutoff,
+                                        .packedColor           = packColorRGBA8(material.color)});});
 
     // Backfill firstInstance into each LitMeshDrawData so shaders can compute the absolute instance
     // index as mesh.firstInstance + SV_InstanceID (independent of how Slang maps SV_InstanceID).

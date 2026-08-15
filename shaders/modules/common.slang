@@ -11,8 +11,14 @@ struct LitInstanceData {
     float metallic;
     float roughness;
     float alphaCutoff;
-    uint padding;
+    uint packedColor; // material base colour, RGBA8 linear (was padding)
 };
+
+// Unpacks LitInstanceData.packedColor. Mirrors packColorRGBA8() in structs.hpp; linear, not sRGB,
+// so it multiplies straight onto a decoded albedo sample.
+float4 unpackColorRGBA8(uint c) {
+    return float4((c >> 24) & 0xFFu, (c >> 16) & 0xFFu, (c >> 8) & 0xFFu, c & 0xFFu) * (1.0 / 255.0);
+}
 
 struct LitMeshDrawData {
     uint vertexAllocationOffset;
@@ -161,7 +167,7 @@ struct VertexOutput
     // that per-fragment instance -> texture-index -> descriptor -> sample chain was the lit
     // pass's dominant stall. Attribute reads don't hit the memory scoreboard.
     nointerpolation uint4  texIndices : TEX_INDICES; // albedo, roughness, metallic, normal
-    nointerpolation uint2  matInfo    : MAT_INFO;    // x environmentMapIndex, y materialFlags
+    nointerpolation uint3  matInfo    : MAT_INFO;    // x environmentMapIndex, y materialFlags, z packed base colour
     nointerpolation float3 matParams  : MAT_PARAMS;  // x metallic, y roughness, z alphaCutoff
 };
 
@@ -468,7 +474,7 @@ VertexOutput litVertMain(uint vertexID, uint instanceID, uint drawID)
     output.drawID = drawID;
     output.instanceID = absInstance;
     output.texIndices = uint4(draw.albedoTextureIndex, draw.roughnessTextureIndex, draw.metallicTextureIndex, draw.normalTextureIndex);
-    output.matInfo = uint2(draw.environmentMapIndex, draw.materialFlags);
+    output.matInfo = uint3(draw.environmentMapIndex, draw.materialFlags, draw.packedColor);
     output.matParams = float3(draw.metallic, draw.roughness, draw.alphaCutoff);
     return output;
 }

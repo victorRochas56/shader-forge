@@ -42,8 +42,12 @@ public static const float3 VOXEL_FACE_DIRS[6] = {
     float3( 0, 0, 1), float3( 0, 0,-1),
 };
 
+public float4 voxelLoadTexel(uint textureIndex, uint3 coord, uint mip) {
+    return textures3D[textureIndex].Load(int4(coord, mip));
+}
+
 public float voxelLoadCoverage(uint textureIndex, uint3 coord, uint mip) {
-    return textures3D[textureIndex].Load(int4(coord, mip)).a;
+    return voxelLoadTexel(textureIndex, coord, mip).a;
 }
 
 // Voxel center in world space. Grid clip is orthographic, so w == 1 and the inverse is exact.
@@ -184,11 +188,14 @@ public struct AmbientCubeTaps {
     public float3 w; // N² face weights, sum to 1
 };
 
-public AmbientCubeTaps sampleAmbientCubeTaps(uint faceIndices[6], uint samplerIndex, float4x4 worldToGridClip,
-                                             float3 worldPos, float3 N) {
+// uvwBias shifts the lookup into the grid the faces were gathered under — the voxelization pass
+// reads last frame's set through this frame's matrix, so it has a recentre to undo. Readers already
+// in the gather's own frame (the lit pass) pass zero.
+public AmbientCubeTaps sampleAmbientCubeTapsBiased(uint faceIndices[6], uint samplerIndex, float4x4 worldToGridClip,
+                                                   float3 worldPos, float3 N, float3 uvwBias) {
     SamplerState smp = samplers[samplerIndex];
     N = normalize(N);
-    float3 uvw = worldToGridUVW(worldPos, worldToGridClip);
+    float3 uvw = worldToGridUVW(worldPos, worldToGridClip) + uvwBias;
     uint fx = N.x < 0.0 ? 1 : 0;
     uint fy = N.y < 0.0 ? 3 : 2;
     uint fz = N.z < 0.0 ? 5 : 4;
@@ -198,6 +205,11 @@ public AmbientCubeTaps sampleAmbientCubeTaps(uint faceIndices[6], uint samplerIn
     t.s1 = textures3D[faceIndices[fy]].SampleLevel(smp, uvw, 0);
     t.s2 = textures3D[faceIndices[fz]].SampleLevel(smp, uvw, 0);
     return t;
+}
+
+public AmbientCubeTaps sampleAmbientCubeTaps(uint faceIndices[6], uint samplerIndex, float4x4 worldToGridClip,
+                                             float3 worldPos, float3 N) {
+    return sampleAmbientCubeTapsBiased(faceIndices, samplerIndex, worldToGridClip, worldPos, N, float3(0.0));
 }
 
 public float3 resolveAmbientCubeGI(AmbientCubeTaps t) {

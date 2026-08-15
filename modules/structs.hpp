@@ -73,7 +73,7 @@ struct SkyBoxPushConstants {
 };
 
 // Mirror of VoxelizationPushConstants in shaders/voxelization.slang.
-// 176 bytes — above the 128-byte Vulkan floor, so this needs maxPushConstantsSize >= 256 (NVIDIA
+// 244 bytes — above the 128-byte Vulkan floor, so this needs maxPushConstantsSize >= 256 (NVIDIA
 // has it, most AMD/Intel report 128). To get back under, fold vpm*model into one mvp on the CPU.
 struct VoxelizationPushConstants {
     glm::mat4 vpm;                  // orthographic voxel-grid view-projection
@@ -91,7 +91,16 @@ struct VoxelizationPushConstants {
     uint32_t  voxelResolution;      // cubic grid side; index = x + res*(y + res*z)
     uint32_t  skyEnvMapIndex;
     float     skyInjection;         // sky irradiance scale; 0 disables the injection
+    uint32_t  packedColor;          // material base colour, RGBA8 linear
+    // Multi-bounce feedback: last frame's gathered irradiance, read back through this fragment's
+    // normal. Cosine-weighted rather than an isotropic voxel average — this is the only stage that
+    // still knows the normal, which is why the injection lives here and not in the resolve.
+    std::array<uint32_t, 6> irradianceTextureIndices; // VOXEL_FACE_DIRS order
+    uint32_t  volumeSamplerIndex;   // clamp-to-border; the default sampler's repeat wraps the grid
+    std::array<float, 3> bounceUVWOffset; // grid recentre since that gather, in volume UVW
+    float     bounceStrength;       // 0 disables
 };
+static_assert(sizeof(VoxelizationPushConstants) <= 256, "voxelization push constants exceed the 256-byte device limit");
 
 // Mirror of VoxelResolvePushConstants in shaders/voxel_resolve.slang. Shared by both entry points:
 // resolveMain unpacks the atomic buffers into mip 0, downsampleMain folds src -> dst one level down.
@@ -140,6 +149,16 @@ struct VXGISettings {
     int gatherSideCones = 5;
     int gatherSteps = 12;
     int gatherFetchBatch = 3;
+    // Temporal amortization of the gather. blend is the weight a fresh trace gets against the
+    // reprojected history — the flicker fix, since re-voxelizing rebins triangles every frame.
+    // Below ~0.05 the unorm8 faces quantize the increment to nothing and convergence stalls.
+    float temporalBlend = 0.12f; // 1 = no history
+    int updatePhases = 1;        // power of two, 1..8: a voxel re-traces every N frames
+    // Multi-bounce: fraction of last frame's gathered irradiance re-injected at resolve time. 1 is
+    // the energy-consistent value; the isotropic lookup under-reads, so it errs dim rather than hot.
+    // Separate toggle so an A/B doesn't cost the strength you dialled in.
+    bool multiBounce = true;
+    float bounceStrength = 1.0f;
 };
 
 // Mirror of VoxelGatherPushConstants in shaders/voxel_gather.slang.
@@ -151,13 +170,21 @@ struct VoxelGatherPushConstants {
     uint32_t radianceResolution;   // cone-trace grid: voxel size and mip cap
     uint32_t irradianceResolution; // dispatch/storage grid; divides radianceResolution
     float    worldExtent;
-    std::array<uint32_t, 6> faceStorageIndices; // VOXEL_FACE_DIRS order: +X,-X,+Y,-Y,+Z,-Z
+    std::array<uint32_t, 6> faceStorageIndices;   // VOXEL_FACE_DIRS order: +X,-X,+Y,-Y,+Z,-Z
+    std::array<uint32_t, 6> historyTextureIndices; // last frame's faces, sampled slots
+    std::array<int32_t, 3>  historyOffset;         // history coord = id + offset (grid recentre)
+    float    blendWeight;  // weight of a fresh trace; 1 = replace, no usable history
+    uint32_t phaseMask;    // updatePhases-1; 0 traces every voxel every frame
+    uint32_t phase;        // which phase updates this frame
     uint32_t sideCones;
     uint32_t maxSteps;
     uint32_t fetchBatch;
     uint32_t skyEnvMapIndex;
     float    skyIntensity; // cone-miss sky radiance scale; 0 disables
 };
+// Scalar-packed to match Slang; already past the 128-byte spec floor, so it needs a device that
+// reports 256 (desktop NVIDIA/Intel do; some AMD drivers cap at 128).
+static_assert(sizeof(VoxelGatherPushConstants) == 240, "gather push constants must stay under 256 bytes");
 
 // Mirror of VoxelCubePushConstants in shaders/voxel_cubes.slang. Shared by extractMain and the cube
 // draw — one struct because two push-constant blocks in one module would collide.
@@ -788,8 +815,15 @@ struct LitInstanceData {
     float    metallic;
     float    roughness;
     float    alphaCutoff;
-    uint32_t _padding;
+    uint32_t packedColor; // material base colour, RGBA8 linear (reuses what was padding)
 };
+
+// Material base colour into LitInstanceData.packedColor. Linear, no sRGB encode — the shader
+// multiplies it onto an already-decoded albedo sample. Mirrors unpackColorRGBA8() in common.slang.
+inline uint32_t packColorRGBA8(const glm::vec4& c) {
+    auto q = [](float v) { return static_cast<uint32_t>(std::clamp(v, 0.0f, 1.0f) * 255.0f + 0.5f); };
+    return (q(c.r) << 24) | (q(c.g) << 16) | (q(c.b) << 8) | q(c.a);
+}
 
 // Frame-level push constants for the lit indirect pass (per-draw data moved to LitDrawData buffer)
 struct LitPushConstants {
@@ -925,7 +959,10 @@ struct Material {
     // 5th bit : hasNormal
     uint32_t usageCount;
     uint32_t materialID;
-    glm::vec4 color;
+    // Base colour factor, multiplied onto the albedo map in the lit pass. White = untinted; GLM
+    // leaves vec4 default-uninitialized, so without this a default-constructed Material tints by
+    // whatever was on the stack.
+    glm::vec4 color = glm::vec4(1.0f);
     uint32_t albedoTextureIndex;
     float metallic;
     uint32_t metallicTextureIndex;

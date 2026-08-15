@@ -40,6 +40,7 @@ void resolveMain(uint3 id : SV_DispatchThreadID) {
 
     float3 albedo   = unpackVoxel(packedAlbedo);
     float3 radiance = voxelToneMapInv(unpackVoxel(packedRadiance));
+
     // Albedo modulates the radiance so a single bounce off this voxel is already tinted. Modulate in
     // linear, then back through Reinhard for the unorm volume.
     storageImages3D[vpc.dstStorageIndex][int3(id)] = float4(voxelToneMap(radiance * albedo), 1.0);

@@ -466,6 +466,20 @@ void showToggles(GUI& gui, RenderFeatures& f){
         gui.sliderInt("Gather Steps", &f.vxgi.gatherSteps, 1, 64);
         gui.setItemTooltip("Rounds down to a multiple of Gather fetch batch.");
         gui.sliderInt("Gather Fetch Batch", &f.vxgi.gatherFetchBatch, 1, 8);
+        gui.sliderFloat("Gather Blend", &f.vxgi.temporalBlend, 0.02f, 1.0f, "%.2f");
+        gui.setItemTooltip("Weight a fresh gather gets against the reprojected history. 1 = no temporal filtering, which flickers as the grid rebins geometry; under ~0.05 the 8-bit faces stop converging.");
+        const char* rateItems[] = {"Every frame", "1/2 per frame", "1/4 per frame", "1/8 per frame"};
+        int rateSel = f.vxgi.updatePhases >= 8 ? 3 : f.vxgi.updatePhases >= 4 ? 2 : f.vxgi.updatePhases >= 2 ? 1 : 0;
+        if(gui.combo("Gather Rate", &rateSel, rateItems, guiArraySize(rateItems))){
+            f.vxgi.updatePhases = 1 << rateSel;
+        }
+        gui.setItemTooltip("Share of voxels re-traced per frame, in 4-voxel blocks; the rest carry history forward. Cuts gather cost, at proportionally slower GI response.");
+        gui.checkbox("GI Multi-Bounce", &f.vxgi.multiBounce);
+        gui.setItemTooltip("Re-injects last frame's irradiance during voxelization, cosine-weighted by the surface normal, so bounces compound one per frame. Off = single bounce. Toggling resets the temporal history so the change lands in one frame instead of fading.");
+        if(f.vxgi.multiBounce){
+            gui.sliderFloat("GI Bounce", &f.vxgi.bounceStrength, 0.0f, 2.0f, "%.2f");
+            gui.setItemTooltip("1 is the energy-consistent value. A second bounce is intrinsically far dimmer than the first, and the unorm8 radiance volume quantizes small increments away on bright voxels — raise it to make the effect legible.");
+        }
     }
 
     if(gui.button("Show BBOXes")){
