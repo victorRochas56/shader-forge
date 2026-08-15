@@ -85,7 +85,13 @@ public:
 
         tracing::startTrace("material thumb pass");
         auto& materials = scene.getMaterials();
-        if (materials.empty()) return;
+        // A full lit draw per material per frame, and nothing samples the targets while the
+        // Materials list is collapsed — so skip the whole pass. Targets stay in
+        // eShaderReadOnlyOptimal, so they are still valid to sample the frame the list reopens.
+        if (materials.empty() || !features.materialPreviewsVisible) {
+            tracing::endTrace("material thumb pass");
+            return;
+        }
         uint32_t count = std::min<uint32_t>(static_cast<uint32_t>(materials.size()), MAX_MATS);
         if (materials.size() > MAX_MATS) {
             static bool warned = false;
@@ -218,8 +224,8 @@ public:
             cmd.endRendering();
 
             resource::transitionImageLayout(*bindless.resourceCtx, &cmd, targetImage, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
-            tracing::endTrace("material thumb pass");
         }
+        tracing::endTrace("material thumb pass");
     }
 
 private:

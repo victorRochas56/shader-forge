@@ -425,30 +425,39 @@ class AssetManager {
         rawMeshDataCache.clear();
     }
 
-    uint32_t loadTextureFromFile(std::string filePath, vk::Format format = vk::Format::eR8G8B8A8Srgb) {
+    // colorSpace only matters the first time a source image is seen, when it drives the KTX encode.
+    // Auto derives it from `format`; normal maps have to say so explicitly since they are linear
+    // but need the encoder's RDO turned off.
+    uint32_t loadTextureFromFile(std::string filePath, vk::Format format = vk::Format::eR8G8B8A8Srgb,
+                                 textureconv::ColorSpace colorSpace = textureconv::ColorSpace::Auto) {
         if (loadedTextures.contains(filePath)) {
             return loadedTextures[filePath];
         }
 
-        auto [image, memory, view, texW, texH] = resource::loadTextureFromFile(*resourceCtx, filePath, format);
-        uint32_t allocIndex = descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(view), filePath, false, texW, texH);
+        resource::LoadedTexture texture = resource::loadTextureFromFile(*resourceCtx, filePath, format, colorSpace);
+        uint32_t allocIndex = descriptorSet->allocateTexture(std::move(texture.image), std::move(texture.memory), std::move(texture.view), filePath, false, texture.width,
+                                                             texture.height, texture.ktxPath, texture.mipLevels);
         loadedTextures[filePath] = allocIndex;
         return allocIndex;
     }
 
-    uint32_t loadCubemapFromFile(std::string posX, std::string posY, std::string posZ, std::string negX, std::string negY, std::string negZ, uint32_t width = 2048,
-                                 uint32_t height = 2048) {
+    uint32_t loadCubemapFromFile(std::string posX, std::string posY, std::string posZ, std::string negX, std::string negY, std::string negZ) {
         std::string cubemapKey = posX + "|" + negX + "|" + posY + "|" + negY + "|" + posZ + "|" + negZ;
 
         if (loadedCubemaps.contains(cubemapKey)) {
             return loadedCubemaps[cubemapKey];
         }
 
-        auto [image, memory, view] = resource::loadCubeMapFromFile(*resourceCtx, posX, negX, posY, negY, posZ, negZ, width, height);
-        uint32_t allocIndex = descriptorSet->allocateTexture(std::move(image), std::move(memory), std::move(view), cubemapKey, true, width, height);
+        resource::LoadedTexture texture = resource::loadCubeMapFromFile(*resourceCtx, posX, negX, posY, negY, posZ, negZ);
+        uint32_t allocIndex = descriptorSet->allocateTexture(std::move(texture.image), std::move(texture.memory), std::move(texture.view), cubemapKey, true, texture.width,
+                                                             texture.height, texture.ktxPath, texture.mipLevels);
         loadedCubemaps[cubemapKey] = allocIndex;
         return allocIndex;
     }
+
+    // Encodes any missing/stale .ktx2 caches for a batch of textures in parallel. Loading them one
+    // at a time still works, it just serialises every encode on a cold import.
+    void prewarmTextureCache(const std::vector<textureconv::Job>& jobs) { textureconv::convertBatch(jobs); }
 
     std::string getTexturePathFromIndex(uint32_t textureIndex) {
         for (const auto& [path, index] : loadedTextures) {

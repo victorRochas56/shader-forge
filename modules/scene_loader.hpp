@@ -65,6 +65,10 @@ class SceneLoader {
             return;
         }
 
+        // The per-material loads below are serial, so on a cold import every missing .ktx2 would be
+        // encoded one after another. Scan the file for texture paths first and encode them in parallel.
+        prewarmTextureCache(filePath, scene);
+
         // Clear existing scene (except root node)
         clearSceneInternal(scene, bindless, buffers, modelMatrixBufferIndex, lightBufferIndex);
 
@@ -90,6 +94,35 @@ class SceneLoader {
   private:
     std::fstream ofs;
     std::unordered_set<uint32_t> savedMaterialIDs;
+
+    // Cheap pre-parse of the scene file that only looks for texture paths, so the KTX encoder can
+    // work through the whole set at once before any of it is needed.
+    void prewarmTextureCache(const std::string& filePath, Scene& scene) {
+        std::ifstream scan(filePath);
+        if (!scan.is_open())
+            return;
+
+        std::vector<textureconv::Job> jobs;
+        std::string line, key, value;
+        while (std::getline(scan, line)) {
+            if (!parseKeyValue(line, key, value) || value.empty())
+                continue;
+
+            if (key == "AlbedoTexture" || key == "Texture") {
+                jobs.push_back({{value}, textureconv::ColorSpace::Srgb});
+            } else if (key == "MetallicTexture" || key == "RoughnessTexture") {
+                jobs.push_back({{value}, textureconv::ColorSpace::Linear});
+            } else if (key == "NormalTexture") {
+                jobs.push_back({{value}, textureconv::ColorSpace::NormalMap});
+            } else if (key == "EnvironmentMap") {
+                // stored as posX|negX|posY|negY|posZ|negZ, which is already KTX face order
+                auto parts = split(value, '|');
+                if (parts.size() == 6)
+                    jobs.push_back({parts, textureconv::ColorSpace::Srgb});
+            }
+        }
+        scene.assetManager.prewarmTextureCache(jobs);
+    }
 
     // trims whitespace from line
     void trim(std::string& str) {
@@ -285,7 +318,7 @@ class SceneLoader {
 
         if (!normalPath.empty()) {
             try {
-                material.normalTextureIndex = scene.assetManager.loadTextureFromFile(normalPath, vk::Format::eR8G8B8A8Unorm);
+                material.normalTextureIndex = scene.assetManager.loadTextureFromFile(normalPath, vk::Format::eR8G8B8A8Unorm, textureconv::ColorSpace::NormalMap);
             } catch (const std::exception& e) {
                 std::cerr << "Failed to load normal texture: " << normalPath << " - " << e.what() << std::endl;
                 material.normalTextureIndex = scene.getMaterials()[scene.getFallBackMaterial()].normalTextureIndex;

@@ -6,10 +6,9 @@
 #define VULKAN_HPP_NO_CONSTRUCTORS 1 // for structs constructors
 #endif
 
-#include <stb_image.h>
 #include <tiny_obj_loader.h>
 #include <vulkan/vulkan.hpp>
-#include <vulkan/vulkan_raii.hpp>
+#include <ktx.h>
 
 #define GLM_FORCE_RADIANS
 #define GLM_DEPTH_ZERO_TO_ONE
@@ -20,6 +19,7 @@
 
 #include "devices.hpp"
 #include "structs.hpp"
+#include "texture_converter.hpp"
 #include "utils.hpp"
 
 struct MeshEntry {
@@ -643,59 +643,256 @@ inline std::tuple<vk::raii::Image, vk::raii::DeviceMemory, vk::raii::ImageView> 
     return std::make_tuple(std::move(image), std::move(imageMemory), std::move(imageView));
 }
 
-struct TextureData {
-    unsigned char* data;
-    int width, height;
-    ~TextureData() {
-        if (data)
-            stbi_image_free(data);
+// A texture loaded from disk. mipLevels/ktxPath come from the .ktx2 cache; ktxPath is empty when
+// the cache was unusable and the source image had to be decoded directly.
+struct LoadedTexture {
+    vk::raii::Image image = nullptr;
+    vk::raii::DeviceMemory memory = nullptr;
+    vk::raii::ImageView view = nullptr;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint32_t mipLevels = 1;
+    std::string ktxPath;
+};
+
+inline bool isSrgbFormat(vk::Format format) {
+    switch (format) {
+    case vk::Format::eR8G8B8A8Srgb:
+    case vk::Format::eB8G8R8A8Srgb:
+    case vk::Format::eBc7SrgbBlock:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// BC7 is core Vulkan but optional in the feature set, so a device can legitimately lack it.
+// Checked once per load; the transcoder falls back to plain RGBA8 when it's missing.
+inline bool supportsBC7(const Context& ctx) {
+    vk::FormatProperties props = ctx.device.getPhysicalDevice().getFormatProperties(vk::Format::eBc7UnormBlock);
+    return static_cast<bool>(props.optimalTilingFeatures & vk::FormatFeatureFlagBits::eSampledImage);
+}
+
+// Owns a ktxTexture2 for the duration of an upload.
+struct KtxHandle {
+    ktxTexture2* tex = nullptr;
+    KtxHandle() = default;
+    KtxHandle(const KtxHandle&) = delete;
+    KtxHandle& operator=(const KtxHandle&) = delete;
+    ~KtxHandle() {
+        if (tex)
+            ktxTexture_Destroy(ktxTexture(tex));
     }
 };
 
-inline TextureData loadTextureFromFileImpl(const std::string& path) {
-    int width, height, channels;
-    unsigned char* data = stbi_load(path.c_str(), &width, &height, &channels, STBI_rgb_alpha);
-    if (!data) {
-        throw std::runtime_error("Failed to load texture: " + path);
-    }
-    return {data, width, height};
-}
+// Transcodes a supercompressed KTX into something the device can sample and returns the format to
+// create the image with. The caller's requested format only decides sRGB vs UNORM — the base format
+// comes from what the file actually holds.
+inline vk::Format transcodeToDeviceFormat(const Context& ctx, ktxTexture2* tex, vk::Format requested) {
+    const bool wantSrgb = isSrgbFormat(requested);
 
-inline std::tuple<vk::raii::Image, vk::raii::DeviceMemory, vk::raii::ImageView, uint32_t, uint32_t> loadTextureFromFile(const Context& ctx, const std::string& path, vk::Format format = vk::Format::eR8G8B8A8Srgb,
-                                                                                                                        vk::ImageType imageType = vk::ImageType::e2D,
-                                                                                                                        vk::ImageViewType viewType = vk::ImageViewType::e2D) {
-    auto textureData = loadTextureFromFileImpl(path);
-    auto [image, memory, imageView] = createTexture(ctx, textureData.data, textureData.width, textureData.height, format, imageType, viewType);
-    return std::make_tuple(std::move(image), std::move(memory), std::move(imageView),
-                           static_cast<uint32_t>(textureData.width), static_cast<uint32_t>(textureData.height));
-}
-
-inline std::tuple<vk::raii::Image, vk::raii::DeviceMemory, vk::raii::ImageView> loadCubeMapFromFile(const Context& ctx, std::string posX, std::string negX, std::string posY, std::string negY,
-                                                                                                    std::string posZ, std::string negZ, uint32_t width, uint32_t height) {
-    // TODO need to get imdgwidth and height from stbi load first so it doesnt have to be entered manually
-    std::vector<std::string> faceFiles = {posX, negX, posY, negY, posZ, negZ};
-    // Load all 6 face data into a single buffer
-    size_t faceSize = width * height * 4;
-    size_t totalSize = faceSize * 6;
-    std::vector<unsigned char> allFaceData(totalSize);
-
-    for (int face = 0; face < 6; face++) {
-        int imgWidth, imgHeight, channels;
-        unsigned char* imageData = stbi_load(faceFiles[face].c_str(), &imgWidth, &imgHeight, &channels, STBI_rgb_alpha);
-        if (!imageData) {
-            throw std::runtime_error("Failed to load face: " + faceFiles[face]);
+    if (ktxTexture2_NeedsTranscoding(tex)) {
+        const bool bc7 = supportsBC7(ctx);
+        KTX_error_code result = ktxTexture2_TranscodeBasis(tex, bc7 ? KTX_TTF_BC7_RGBA : KTX_TTF_RGBA32, 0);
+        if (result != KTX_SUCCESS) {
+            throw std::runtime_error(std::string("ktx transcode failed: ") + ktxErrorString(result));
         }
+        if (bc7)
+            return wantSrgb ? vk::Format::eBc7SrgbBlock : vk::Format::eBc7UnormBlock;
+        return wantSrgb ? vk::Format::eR8G8B8A8Srgb : vk::Format::eR8G8B8A8Unorm;
+    }
 
-        // Copy face data to the combined buffer
-        memcpy(allFaceData.data() + face * faceSize, imageData, faceSize);
-        stbi_image_free(imageData);
+    // Already a plain format — a hand-written .ktx2, or one from an uncompressed cache.
+    switch (static_cast<vk::Format>(tex->vkFormat)) {
+    case vk::Format::eR8G8B8A8Unorm:
+    case vk::Format::eR8G8B8A8Srgb:
+        return wantSrgb ? vk::Format::eR8G8B8A8Srgb : vk::Format::eR8G8B8A8Unorm;
+    case vk::Format::eBc7UnormBlock:
+    case vk::Format::eBc7SrgbBlock:
+        return wantSrgb ? vk::Format::eBc7SrgbBlock : vk::Format::eBc7UnormBlock;
+    default:
+        return static_cast<vk::Format>(tex->vkFormat);
+    }
+}
+
+// Uploads every level and face of an already-transcoded ktxTexture2 in one command buffer. The KTX
+// carries a full mip chain, so unlike createTexture nothing is blitted here.
+inline LoadedTexture uploadKtxTexture(const Context& ctx, ktxTexture2* tex, vk::Format format, vk::ImageViewType viewType) {
+    const bool isCubemap = (viewType == vk::ImageViewType::eCube);
+    const uint32_t layerCount = tex->numFaces; // 6 for a cubemap, 1 otherwise
+    const uint32_t mipLevels = tex->numLevels;
+
+    vk::ImageCreateInfo imageInfo{.flags = isCubemap ? vk::ImageCreateFlagBits::eCubeCompatible : vk::ImageCreateFlags{},
+                                  .imageType = vk::ImageType::e2D,
+                                  .format = format,
+                                  .extent = {tex->baseWidth, tex->baseHeight, 1},
+                                  .mipLevels = mipLevels,
+                                  .arrayLayers = layerCount,
+                                  .samples = vk::SampleCountFlagBits::e1,
+                                  .tiling = vk::ImageTiling::eOptimal,
+                                  .usage = vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferSrc,
+                                  .sharingMode = vk::SharingMode::eExclusive,
+                                  .initialLayout = vk::ImageLayout::eUndefined};
+
+    vk::raii::Image image(ctx.device.getDevice(), imageInfo);
+    vk::MemoryRequirements memRequirements = image.getMemoryRequirements();
+    vk::MemoryAllocateInfo allocInfo{.allocationSize = memRequirements.size,
+                                     .memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eDeviceLocal, ctx.device)};
+    vk::raii::DeviceMemory imageMemory(ctx.device.getDevice(), allocInfo);
+    image.bindMemory(*imageMemory, 0);
+
+    // Stage the whole level/face pyramid in one buffer — it is already laid out contiguously.
+    const vk::DeviceSize dataSize = ktxTexture_GetDataSize(ktxTexture(tex));
+    vk::BufferCreateInfo bufferInfo{.size = dataSize, .usage = vk::BufferUsageFlagBits::eTransferSrc, .sharingMode = vk::SharingMode::eExclusive};
+    vk::raii::Buffer stagingBuffer(ctx.device.getDevice(), bufferInfo);
+    vk::MemoryRequirements stagingRequirements = stagingBuffer.getMemoryRequirements();
+    vk::MemoryAllocateInfo stagingAllocInfo{
+        .allocationSize = stagingRequirements.size,
+        .memoryTypeIndex = findMemoryType(stagingRequirements.memoryTypeBits, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, ctx.device)};
+    vk::raii::DeviceMemory stagingMemory(ctx.device.getDevice(), stagingAllocInfo);
+    stagingBuffer.bindMemory(*stagingMemory, 0);
+
+    void* mappedData = stagingMemory.mapMemory(0, dataSize);
+    memcpy(mappedData, ktxTexture_GetData(ktxTexture(tex)), dataSize);
+    stagingMemory.unmapMemory();
+
+    // bufferRowLength/bufferImageHeight stay 0: each image is tightly packed, so the driver derives
+    // the pitch from imageExtent — which is what block-compressed mips below 4x4 need.
+    std::vector<vk::BufferImageCopy> regions;
+    regions.reserve(static_cast<size_t>(mipLevels) * layerCount);
+    for (uint32_t level = 0; level < mipLevels; level++) {
+        for (uint32_t face = 0; face < layerCount; face++) {
+            ktx_size_t offset = 0;
+            if (ktxTexture_GetImageOffset(ktxTexture(tex), level, 0, face, &offset) != KTX_SUCCESS) {
+                throw std::runtime_error("ktx: failed to resolve image offset");
+            }
+            regions.push_back(vk::BufferImageCopy{
+                .bufferOffset = offset,
+                .bufferRowLength = 0,
+                .bufferImageHeight = 0,
+                .imageSubresource = {.aspectMask = vk::ImageAspectFlagBits::eColor, .mipLevel = level, .baseArrayLayer = face, .layerCount = 1},
+                .imageOffset = {0, 0, 0},
+                .imageExtent = {std::max(1u, tex->baseWidth >> level), std::max(1u, tex->baseHeight >> level), 1}});
+        }
+    }
+
+    vk::raii::CommandBuffer commandBuffer = beginSingleTimeCommands(ctx);
+    executeImageTransition(commandBuffer, *image, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, 0, mipLevels, 0, layerCount);
+    commandBuffer.copyBufferToImage(*stagingBuffer, *image, vk::ImageLayout::eTransferDstOptimal, regions);
+    executeImageTransition(commandBuffer, *image, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, 0, mipLevels, 0, layerCount);
+    endSingleTimeCommands(ctx, commandBuffer);
+
+    vk::ImageViewCreateInfo viewInfo{
+        .image = *image,
+        .viewType = viewType,
+        .format = format,
+        .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor, .baseMipLevel = 0, .levelCount = mipLevels, .baseArrayLayer = 0, .layerCount = layerCount}};
+
+    LoadedTexture loaded;
+    loaded.image = std::move(image);
+    loaded.memory = std::move(imageMemory);
+    loaded.view = vk::raii::ImageView(ctx.device.getDevice(), viewInfo);
+    loaded.width = tex->baseWidth;
+    loaded.height = tex->baseHeight;
+    loaded.mipLevels = mipLevels;
+    return loaded;
+}
+
+inline LoadedTexture loadKtxFile(const Context& ctx, const std::string& ktxPath, vk::Format format, vk::ImageViewType viewType) {
+    KtxHandle handle;
+    KTX_error_code result = ktxTexture2_CreateFromNamedFile(ktxPath.c_str(), KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &handle.tex);
+    if (result != KTX_SUCCESS) {
+        throw std::runtime_error("failed to open " + ktxPath + ": " + ktxErrorString(result));
+    }
+    vk::Format imageFormat = transcodeToDeviceFormat(ctx, handle.tex, format);
+    LoadedTexture loaded = uploadKtxTexture(ctx, handle.tex, imageFormat, viewType);
+    loaded.ktxPath = ktxPath;
+    return loaded;
+}
+
+/*
+Loads a texture through its .ktx2 cache, converting the source image first if the cache is missing
+or stale. A cache that exists but won't load is re-encoded once; if that fails too the source is
+decoded straight to an RGBA8 texture so a broken encoder still leaves the scene renderable.
+*/
+inline LoadedTexture loadTextureFromFile(const Context& ctx, const std::string& path, vk::Format format = vk::Format::eR8G8B8A8Srgb,
+                                         textureconv::ColorSpace colorSpace = textureconv::ColorSpace::Auto) {
+    if (colorSpace == textureconv::ColorSpace::Auto) {
+        colorSpace = isSrgbFormat(format) ? textureconv::ColorSpace::Srgb : textureconv::ColorSpace::Linear;
+    }
+    const std::string ktxPath = textureconv::ktxPathFor(path);
+    const int attempts = textureconv::isKtxPath(path) ? 1 : 2;
+
+    for (int attempt = 0; attempt < attempts; attempt++) {
+        const bool force = (attempt > 0);
+        try {
+            if (force || textureconv::needsConversion(path)) {
+                textureconv::convert(path, colorSpace, force);
+            }
+            return loadKtxFile(ctx, ktxPath, format, vk::ImageViewType::e2D);
+        } catch (const std::exception& e) {
+            std::cerr << "[ktx] " << path << ": " << e.what() << (attempt + 1 < attempts ? " - re-converting" : " - decoding source directly") << std::endl;
+        }
+    }
+
+    textureconv::SourceImage source = textureconv::loadSourceImage(path);
+    auto [image, memory, imageView] = createTexture(ctx, source.pixels.data(), source.width, source.height, format);
+
+    LoadedTexture loaded;
+    loaded.image = std::move(image);
+    loaded.memory = std::move(memory);
+    loaded.view = std::move(imageView);
+    loaded.width = source.width;
+    loaded.height = source.height;
+    loaded.mipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(source.width, source.height)))) + 1;
+    return loaded;
+}
+
+// Faces are given in Vulkan/KTX layer order: +X -X +Y -Y +Z -Z. Dimensions come from the file, so
+// unlike the old stb path there is nothing to enter by hand.
+inline LoadedTexture loadCubeMapFromFile(const Context& ctx, const std::string& posX, const std::string& negX, const std::string& posY, const std::string& negY,
+                                         const std::string& posZ, const std::string& negZ) {
+    const std::vector<std::string> faceFiles = {posX, negX, posY, negY, posZ, negZ};
+    const std::string ktxPath = textureconv::cubemapKtxPathFor(posX);
+    const int attempts = textureconv::isKtxPath(posX) ? 1 : 2;
+
+    for (int attempt = 0; attempt < attempts; attempt++) {
+        const bool force = (attempt > 0);
+        try {
+            if (force || textureconv::cubemapNeedsConversion(faceFiles)) {
+                textureconv::convertCubemap(faceFiles, textureconv::ColorSpace::Srgb, force);
+            }
+            return loadKtxFile(ctx, ktxPath, vk::Format::eR8G8B8A8Srgb, vk::ImageViewType::eCube);
+        } catch (const std::exception& e) {
+            std::cerr << "[ktx] " << posX << ": " << e.what() << (attempt + 1 < attempts ? " - re-converting" : " - decoding faces directly") << std::endl;
+        }
+    }
+
+    // Fallback: decode the 6 faces into one buffer and use the runtime mipmap path.
+    std::vector<unsigned char> allFaceData;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    for (int face = 0; face < 6; face++) {
+        textureconv::SourceImage source = textureconv::loadSourceImage(faceFiles[face]);
+        if (face == 0) {
+            width = source.width;
+            height = source.height;
+            allFaceData.resize(static_cast<size_t>(width) * height * 4 * 6);
+        } else if (source.width != width || source.height != height) {
+            throw std::runtime_error("Cubemap face size mismatch: " + faceFiles[face]);
+        }
+        memcpy(allFaceData.data() + static_cast<size_t>(face) * width * height * 4, source.pixels.data(), source.pixels.size());
     }
     auto [image, memory, imageView] = createTexture(ctx, allFaceData.data(), width, height, vk::Format::eR8G8B8A8Srgb, vk::ImageType::e2D, vk::ImageViewType::eCube);
-#if DEBUG == 1
-    uint32_t expectedMipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(width, height)))) + 1;
-    std::cout << "Cubemap should have " << expectedMipLevels << " mip levels" << std::endl;
-#endif
-    return std::make_tuple(std::move(image), std::move(memory), std::move(imageView));
+
+    LoadedTexture loaded;
+    loaded.image = std::move(image);
+    loaded.memory = std::move(memory);
+    loaded.view = std::move(imageView);
+    loaded.width = width;
+    loaded.height = height;
+    loaded.mipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(width, height)))) + 1;
+    return loaded;
 }
 
 // only handles obj for now (TODO expand this)

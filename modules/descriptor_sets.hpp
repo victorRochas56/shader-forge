@@ -33,7 +33,12 @@ struct TextureResource {
     std::optional<vk::raii::ImageView> imageView;
     std::optional<vk::raii::Image> image;
     std::optional<vk::raii::DeviceMemory> memory;
+    // source is the authored image (png/jpg, or the '|'-joined face list for a cubemap) and stays
+    // the identity used by the GUI and by scene serialisation. ktxPath is the .ktx2 cache actually
+    // uploaded, sitting next to the source; empty for runtime textures and for the fallback path
+    // where the source had to be decoded directly.
     std::string source;
+    std::string ktxPath;
     uint32_t width = 0;
     uint32_t height = 0;
     uint32_t mipLevels = 1;
@@ -42,6 +47,7 @@ struct TextureResource {
         image.reset();
         memory.reset();
         source.clear();
+        ktxPath.clear();
         width = 0;
         height = 0;
         mipLevels = 1;
@@ -311,8 +317,11 @@ class DescriptorSet {
         return device.getBufferAddress(vk::BufferDeviceAddressInfo{.buffer = *buffer});
     }
 
-    //allocates a texture on the gpu in the bindless set, returns its index
-    uint32_t allocateTexture(vk::raii::Image image, vk::raii::DeviceMemory memory, vk::raii::ImageView imageView, std::string source = "", bool isCubeMap = false, uint32_t texWidth = 0, uint32_t texHeight = 0) {
+    // allocates a texture on the gpu in the bindless set, returns its index.
+    // mipLevelCount overrides the level count derived from the dimensions — file-loaded textures pass
+    // what the .ktx2 actually contains rather than assuming a full chain.
+    uint32_t allocateTexture(vk::raii::Image image, vk::raii::DeviceMemory memory, vk::raii::ImageView imageView, std::string source = "", bool isCubeMap = false, uint32_t texWidth = 0, uint32_t texHeight = 0,
+                             std::string ktxPath = "", uint32_t mipLevelCount = 0) {
 #if DEBUG == 1
         debugDescriptorSetState("before_texture_allocation");
 #endif
@@ -320,7 +329,8 @@ class DescriptorSet {
         if (textureResources.size() >= MAX_TEXTURES && freeTextureSlots.empty()) {
             throw std::runtime_error("Maximum bindless textures exceeded");
         }
-        uint32_t mipLevels = (texWidth > 0 && texHeight > 0)
+        uint32_t mipLevels = mipLevelCount > 0 ? mipLevelCount
+                             : (texWidth > 0 && texHeight > 0)
                                  ? static_cast<uint32_t>(std::floor(std::log2(std::max(texWidth, texHeight)))) + 1
                                  : 1;
         uint32_t index;
@@ -331,6 +341,7 @@ class DescriptorSet {
             textureResources[index].image = std::move(image);
             textureResources[index].memory = std::move(memory);
             textureResources[index].source = source;
+            textureResources[index].ktxPath = ktxPath;
             textureResources[index].width = texWidth;
             textureResources[index].height = texHeight;
             textureResources[index].mipLevels = mipLevels;
@@ -341,6 +352,7 @@ class DescriptorSet {
             resource.image = std::move(image);
             resource.memory = std::move(memory);
             resource.source = source;
+            resource.ktxPath = ktxPath;
             resource.width = texWidth;
             resource.height = texHeight;
             resource.mipLevels = mipLevels;
@@ -359,14 +371,17 @@ class DescriptorSet {
         return index;
     }
 
-    void updateTexture(uint32_t index, vk::raii::Image image, vk::raii::DeviceMemory memory, vk::raii::ImageView imageView, std::string source = "", bool isCubeMap = false, uint32_t texWidth = 0, uint32_t texHeight = 0) {
+    void updateTexture(uint32_t index, vk::raii::Image image, vk::raii::DeviceMemory memory, vk::raii::ImageView imageView, std::string source = "", bool isCubeMap = false, uint32_t texWidth = 0, uint32_t texHeight = 0,
+                       std::string ktxPath = "", uint32_t mipLevelCount = 0) {
         textureResources[index].imageView = std::move(imageView);
         textureResources[index].image = std::move(image);
         textureResources[index].memory = std::move(memory);
         textureResources[index].source = source;
+        textureResources[index].ktxPath = ktxPath;
         textureResources[index].width = texWidth;
         textureResources[index].height = texHeight;
-        textureResources[index].mipLevels = (texWidth > 0 && texHeight > 0)
+        textureResources[index].mipLevels = mipLevelCount > 0 ? mipLevelCount
+                                            : (texWidth > 0 && texHeight > 0)
                                                 ? static_cast<uint32_t>(std::floor(std::log2(std::max(texWidth, texHeight)))) + 1
                                                 : 1;
 

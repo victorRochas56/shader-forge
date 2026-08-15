@@ -224,7 +224,7 @@ class App {
         }
         guiMark("nodeInfo");
 
-        showMaterialEditor(gui, materialEditorState, scene, bindless);
+        showMaterialEditor(gui, materialEditorState, scene, bindless, renderer.features);
         guiMark("materialEditor");
         showImageViewList(gui, bindless, renderer.features);
         guiMark("imageViewList");

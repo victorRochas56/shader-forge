@@ -161,6 +161,14 @@ find_package(Stb REQUIRED) #no config
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(Ktx CONFIG REQUIRED) # !upper case K
 
+# Always use the optimised libktx, even in Debug builds. The .ktx2 texture cache is produced by the
+# basisu encoder living inside this DLL, and its debug build is slow enough that a first-run import
+# of a large texture looks like a hang. libktx exposes a C API and allocates/frees its own memory,
+# so pairing the release DLL with a debug-CRT app is safe. Drop this to step into libktx itself.
+if(TARGET KTX::ktx)
+    set_target_properties(KTX::ktx PROPERTIES MAP_IMPORTED_CONFIG_DEBUG Release)
+endif()
+
 # --- Tracy profiler client (repo/tracy is a sibling of this project) ---
 # Set Tracy options before add_subdirectory; option() honors these normal vars (CMP0077).
 set(TRACY_ENABLE OFF CACHE BOOL "Enable Tracy profiling" FORCE)
@@ -182,6 +190,7 @@ add_executable(shader-forge
     ${CMAKE_CURRENT_SOURCE_DIR}/modules/material_editor_state.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/modules/scene_graph.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/modules/LOD.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/texture_converter.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/modules/stb_implementations.cpp
 )
 
@@ -211,6 +220,14 @@ target_link_libraries(shader-forge PRIVATE
 if(TRACY_ENABLE)
     target_link_libraries(shader-forge PRIVATE TracyClient)
 endif()
+
+# vcpkg's applocal step copies debug/bin/ktx.dll next to a Debug exe, which would shadow the release
+# one selected by MAP_IMPORTED_CONFIG_DEBUG above -- both are named ktx.dll. Added after the target
+# so this POST_BUILD runs last and wins.
+add_custom_command(TARGET shader-forge POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:KTX::ktx>" "$<TARGET_FILE_DIR:shader-forge>"
+    COMMENT "Using optimised ktx.dll: $<TARGET_FILE:KTX::ktx>"
+)
 
 target_include_directories(shader-forge PRIVATE ${Stb_INCLUDE_DIR})
 

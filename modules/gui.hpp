@@ -64,7 +64,7 @@ static void browseButton(GUI& gui, const char* id, char* pathBuffer, size_t buff
 }
 #endif
 void traverseNodeTree(GUI& gui, Node& node, uint32_t level, uint32_t selectedNode, SceneGraph& sceneGraph);
-void showMaterialEditor(GUI& gui, MaterialEditorState& state, Scene& scene, BindlessSystem& bindless);
+void showMaterialEditor(GUI& gui, MaterialEditorState& state, Scene& scene, BindlessSystem& bindless, RenderFeatures& features);
 void showImageViewList(GUI& gui, BindlessSystem& bindless, RenderFeatures& features);
 void showActionMenu(GUI& gui, uint32_t context, GLFWwindow* window, Camera& camera, SceneGraph& sceneGraph, float posX, float posY);
 void showToggles(GUI& gui, RenderFeatures& features);

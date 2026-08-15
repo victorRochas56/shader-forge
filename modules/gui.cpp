@@ -49,10 +49,15 @@ void traverseNodeTree(GUI& gui, Node& node, uint32_t level, uint32_t selectedNod
     }
 }
 
-void showMaterialEditor(GUI& gui, MaterialEditorState& state, Scene& scene, BindlessSystem& bindless) {
+void showMaterialEditor(GUI& gui, MaterialEditorState& state, Scene& scene, BindlessSystem& bindless, RenderFeatures& features) {
     auto& materials = scene.getMaterials();
 
-    if (!gui.beginWindow("Materials", nullptr, glm::vec2(300, 420), glm::vec2(20, 20))) return;
+    // This list is the only consumer of the material thumbnails, and the pass redraws every one of
+    // them every frame. Tell it whether the list is actually on screen. drawGui runs before
+    // drawFrame, so the pass reads this the same frame it is written.
+    bool listVisible = gui.beginWindow("Materials", nullptr, glm::vec2(300, 420), glm::vec2(20, 20));
+    features.materialPreviewsVisible = listVisible;
+    if (!listVisible) return;
 
     // No thumbnail descriptor cache. The custom GUI draws any bindless texture by index, so the
     // per-image-view descriptor map this used to keep is simply gone.
@@ -223,7 +228,7 @@ void showMaterialEditor(GUI& gui, MaterialEditorState& state, Scene& scene, Bind
 
         if (strlen(state.normalPath) > 0) {
             try {
-                mat.normalTextureIndex = scene.assetManager.loadTextureFromFile(state.normalPath, vk::Format::eR8G8B8A8Unorm);
+                mat.normalTextureIndex = scene.assetManager.loadTextureFromFile(state.normalPath, vk::Format::eR8G8B8A8Unorm, textureconv::ColorSpace::NormalMap);
                 matFlags |= MaterialFlags::HAS_NORMAL;
             } catch (...) { mat.normalTextureIndex = defaultMat.normalTextureIndex; }
         } else {

@@ -298,6 +298,8 @@ struct RenderFeatures {
     float skyboxIntensity = 5.0f; // radiance multiplier on the skybox draw
     bool showGizmos = true;
     bool showBBoxes = false;
+    // Set by the Materials window each frame; MaterialThumbnailPass skips itself when it's false.
+    bool materialPreviewsVisible = false;
 };
 
 struct TonemapPushConstants {
