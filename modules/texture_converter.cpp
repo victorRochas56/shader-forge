@@ -164,22 +164,18 @@ void encode(const std::vector<std::string>& sources, const std::string& outPath,
         }
     }
 
+    // TODO test the different params
     ktxBasisParams params{};
     params.structSize = sizeof(params);
     params.uastc = KTX_TRUE;
     params.threadCount = encodeThreads;
     params.uastcFlags = UASTC_LEVEL;
     const bool isNormalMap = (colorSpace == ColorSpace::NormalMap);
-    // Deliberately NOT setting params.normalMap. It looks like the right flag, but libktx reads it
-    // as "repack this as a 2-channel normal map": it applies an rrrg swizzle, putting X in RGB and Y
-    // in alpha and discarding Z for the shader to reconstruct. Our shaders sample .rgb directly, so
-    // that silently turns every normal into (X, X, X). The only other thing the flag does is force
-    // endpoint/selector RDO off, which is ETC1S-only and irrelevant to UASTC.
+    // TODO : need to make my normal maps compatible with this?
     params.normalMap = KTX_FALSE;
-    // Still skipped for normal maps regardless of the global setting: RDO works by making blocks
-    // more repetitive, which reads as faceting once the vectors are renormalised in the shader.
+    // skipped for normal maps
     params.uastcRDO = (UASTC_RDO && !isNormalMap) ? KTX_TRUE : KTX_FALSE;
-    params.uastcRDOQualityScalar = 1.0f;
+    params.uastcRDOQualityScalar = 2.0f;
     params.uastcRDODictSize = 4096;
     params.uastcRDOMaxSmoothBlockErrorScale = 10.0f;
     params.uastcRDOMaxSmoothBlockStdDev = 18.0f;
@@ -192,8 +188,7 @@ void encode(const std::vector<std::string>& sources, const std::string& outPath,
     if (result != KTX_SUCCESS)
         throw std::runtime_error(ktxError("zstd supercompression failed", result));
 
-    // Write to a sibling temp file and rename, so an interrupted encode can't leave a half-written
-    // .ktx2 that later runs would happily try to load.
+    // Write to a sibling temp file and rename, so an interrupted encode can't leave a half-written .ktx2
     fs::path finalPath(outPath);
     fs::path tempPath = finalPath;
     tempPath += ".tmp";
