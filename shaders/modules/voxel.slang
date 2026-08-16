@@ -72,19 +72,47 @@ public float3 worldToGridUVW(float3 worldPos, float4x4 worldToGridClip) {
 #define MAX_HEMISPHERE_RAYS 5
 #define MAX_FETCH_BATCH 8
 
-// Crassin's cone fan: one along the normal plus up to MAX_HEMISPHERE_RAYS at 60°, ~60° aperture each.
-// Tangent-space, z = normal. Weights are cosine-lobe-ish; renormalized at trace time by however many
-// cones actually run.
+// Crassin's cone fan: one along the normal plus up to MAX_HEMISPHERE_RAYS side cones, ~60° aperture
+// each. Tangent-space, z = normal. Weights are cosine-lobe-ish; renormalized at trace time by however
+// many cones actually run.
+//
+// Side cones sit at 45°, not Crassin's 60°. A tap's trilinear footprint is a box of side = the cone
+// diameter centred on the axis, so its underside sits at h + d*cos(theta) - d*CONE_TAN above the
+// surface: with CONE_TAN 0.577 the fan only stays clear of its own tangent plane while
+// cos(theta) >= CONE_TAN, i.e. theta <= 54.7°. At 60° every side cone eats the surface it started
+// from — that read is ~2% coverage at mip 5, which the old uncorrected compositing threw away and
+// the density integral does not, so all five side cones self-occlude and only the normal cone
+// (weight 0.25) survives to see sky. 45° leaves the underside climbing at 0.13d.
 static const float3 CONE_DIRS[MAX_HEMISPHERE_RAYS + 1] = {
     float3( 0.0,       0.0,      1.0),
-    float3( 0.866025,  0.0,      0.5),
-    float3( 0.267617,  0.823639, 0.5),
-    float3(-0.700629,  0.509037, 0.5),
-    float3(-0.700629, -0.509037, 0.5),
-    float3( 0.267617, -0.823639, 0.5),
+    float3( 0.707107,  0.0,      0.707107),
+    float3( 0.218508,  0.672499, 0.707107),
+    float3(-0.572061,  0.415627, 0.707107),
+    float3(-0.572061, -0.415627, 0.707107),
+    float3( 0.218508, -0.672499, 0.707107),
 };
 static const float CONE_WEIGHTS[MAX_HEMISPHERE_RAYS + 1] = { 0.25, 0.15, 0.15, 0.15, 0.15, 0.15 };
 static const float CONE_TAN = 0.577; // tan(30°) half-angle
+
+// Ceiling on the density exponent in traceCone's composite. Coverage is treated as occupancy
+// distributed along the ray, which is right for a thin occluder across the cone and wrong for a wall
+// beside it — and an isotropic mip chain cannot tell the two apart. Unbounded, the exponent reaches
+// 2^8 and any coverage at all reads as solid, so a cone crossing an atrium is killed by the arcades
+// sitting at the edge of its footprint. This is the leak/darkness trade knob: 1 disables the
+// correction (raw compositing, thin ceilings leak sky), higher occludes harder in open space.
+static const float CONE_DENSITY_MAX = 4.0;
+
+// Cap on the cone's footprint, as a mip level. This is what makes occlusion selective on an
+// isotropic chain: an occluder only reads as opaque while the footprint is comparable to its own
+// thickness. At mip 3 the box is 2 m (8 voxels), so a 0.5 m arcade ceiling reads 0.25 coverage and
+// seals, while the arcades 6 m to either side of a courtyard cone are not in the box at all.
+// Unbounded, the footprint reaches 64 m and the two collapse to the same number — which is why no
+// value of CONE_DENSITY_MAX separates them.
+//
+// The cost is steps: past this the cone stops widening and marches at a fixed 2 m, so crossing the
+// grid takes ~20 taps rather than 12. Raise Gather Steps to match. It also stops integrating its
+// solid angle out there, so distant radiance is sampled sharper than the cone should see it.
+static const float CONE_MAX_MIP = 3.0;
 
 // Front-to-back march along one cone. The volume holds (Reinhard-compressed radiance, coverage),
 // colour not premultiplied, so each tap decodes then composites as a * rgb. Mip follows the cone
@@ -105,30 +133,52 @@ float3 traceCone(Texture3D<float4> volume, SamplerState smp, float4x4 worldToGri
     float3 uvwDir = float3(clipDir.xy * 0.5, clipDir.z);
 
     // Clamp the march at the grid exit (slab test) instead of bounds-checking every step.
-    float3 tFar = (step(0.0, uvwDir) - uvwOrigin) / uvwDir;
+    //
+    // The gather traces VOXEL_FACE_DIRS, so its centre cone is exactly axis-aligned and two uvwDir
+    // components are zero — and a matrix product reaches zero as -0.0 as easily as +0.0. Dividing by
+    // that gives -inf (or NaN once a compiler folds it), tExit goes negative, and the march is
+    // skipped entirely. Clamp the direction away from zero with the sign kept, so a parallel axis
+    // just reports a very distant exit. Note -0.0 < 0.0 is false, which is what we want: either zero
+    // maps to +epsilon.
+    float3 dirSign = float3(uvwDir.x < 0.0 ? -1.0 : 1.0,
+                            uvwDir.y < 0.0 ? -1.0 : 1.0,
+                            uvwDir.z < 0.0 ? -1.0 : 1.0);
+    float3 safeDir = dirSign * max(abs(uvwDir), float3(1e-8));
+    float3 tFar = (step(0.0, safeDir) - uvwOrigin) / safeDir;
     maxDist = min(maxDist, min(min(tFar.x, tFar.y), tFar.z));
 
     float4 acc = float4(0.0);
     float dist = voxelSize;
     for (uint i = 0; i < maxSteps / fetchBatch && dist < maxDist && acc.a < 0.99; i++) {
         float4 s[MAX_FETCH_BATCH];
+        float stepVoxels[MAX_FETCH_BATCH];
         float d = dist;
         for (uint j = 0; j < fetchBatch; j++) {
-            float diameter = max(voxelSize, 2.0 * CONE_TAN * d);
+            // Clamped both ways, so mip, step length and density exponent all cap together — a
+            // widening cone past CONE_MAX_MIP would sample a footprint it no longer steps over.
+            float diameter = clamp(2.0 * CONE_TAN * d, voxelSize, voxelSize * exp2(maxMip));
             float mip = clamp(log2(diameter / voxelSize), 0.0, maxMip);
             s[j] = volume.SampleLevel(smp, uvwOrigin + uvwDir * d, mip);
-            d += diameter; // half-diameter steps against banding
+            stepVoxels[j] = diameter / voxelSize; // mip-0 voxels this tap stands for
+            d += diameter; // one cone diameter, so the taps tile the cone without overlap
         }
+        // Coverage at mip m is mean occupancy over a (2^m)^3 block, not opacity along the ray — a
+        // 1-voxel wall inside a 16-voxel footprint reads 1/16 and the cone walks straight through it.
+        // Integrate it as a density over the step's length instead, clamped by CONE_DENSITY_MAX
+        // because the model stops holding once the footprint outgrows the geometry.
         for (uint j = 0; j < fetchBatch; j++) {
-            acc.rgb += (1.0 - acc.a) * s[j].a * voxelToneMapInv(s[j].rgb);
-            acc.a   += (1.0 - acc.a) * s[j].a;
+            float a = 1.0 - pow(max(1.0 - s[j].a, 0.0), min(stepVoxels[j], CONE_DENSITY_MAX));
+            acc.rgb += (1.0 - acc.a) * a * voxelToneMapInv(s[j].rgb);
+            acc.a   += (1.0 - acc.a) * a;
         }
         dist = d;
     }
     // Whatever transmittance survives the march sees sky: sample the env map along the cone at a
     // coarse mip standing in for the ~60° aperture. Occluded cones (acc.a ~ 1) get nothing, so this
-    // is soft sky visibility for free. Assumes anything past maxDist is open sky.
-    if (skyIntensity > 0.0) {
+    // is soft sky visibility for free. The miss needs the cone to have reached maxDist — the grid
+    // exit or the caller's range cap, both of which mean "assume open sky beyond". A cone that
+    // stopped short only ran out of step budget, and calling that sky is a leak.
+    if (skyIntensity > 0.0 && dist >= maxDist) {
         uint w, h, mips;
         voxelCubemaps[envMapIndex].GetDimensions(0, w, h, mips);
         acc.rgb += (1.0 - acc.a) * skyIntensity * voxelCubemaps[envMapIndex].SampleLevel(smp, dir, float(mips) - 2.0).rgb;
@@ -143,7 +193,7 @@ public float3 coneTraceVXGI(uint voxel3DTextureIndex, uint voxelSamplerIndex, fl
     Texture3D<float4> volume = textures3D[voxel3DTextureIndex];
     SamplerState smp = samplers[voxelSamplerIndex];
     float voxelSize = worldExtent / resolution;
-    float maxMip = log2(float(resolution));
+    float maxMip = min(log2(float(resolution)), CONE_MAX_MIP);
     uint rays  = min(hemisphereRays, uint(MAX_HEMISPHERE_RAYS));
     uint batch = min(max(fetchBatch, 1u), uint(MAX_FETCH_BATCH));
 

@@ -135,12 +135,16 @@ struct VXGISettings {
     int fetchBatch = 4;     // taps issued per batch
     int mode = 1;           // 0 = per-pixel cone trace, 1 = ambient-cube lookup
     float strength = 1.0f;  // scales the GI term in both modes; 1 = untouched
-    // Sky seen by GI, relative to skyboxIntensity: scales both the cone-miss sky term and the
-    // voxelization sky injection. 0 = no sky in GI.
-    float skyStrength = 0.025f;
+    // Sky seen by GI, relative to skyboxIntensity. The two paths are separate knobs because they
+    // behave differently: the cone-miss term is occlusion-aware (only cones that leave the grid
+    // collect it), while injection assumes visibility 1 and so adds a flat, occlusion-blind ambient
+    // to every voxelized surface. Driving both from one slider makes sky look uniform — the flat
+    // term rises with the directional one and swamps the contrast.
+    float skyStrength = 0.5f;    // cone-miss sky: direct sky visibility, occlusion-aware
+    float skyInjection = 0.1f;   // sky injected into voxel radiance: buys sky bounce, flat
     // Gather-pass tuning. Runs per occupied voxel, so it can afford more steps than the per-pixel path.
     int gatherSideCones = 5;
-    int gatherSteps = 12;
+    int gatherSteps = 24;
     int gatherFetchBatch = 3;
     // Temporal amortization of the gather. blend is the weight a fresh trace gets against the
     // reprojected history — the flicker fix, since re-voxelizing rebins triangles every frame.

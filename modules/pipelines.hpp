@@ -23,7 +23,9 @@ BEFORE_GEOMETRY is only used by shadow rendering
 GEOMETRY is the main pass with 2 color attachments (color + roughness/metallic)
 POSTPROCESS are passes that process color attachments
 */
-enum class PipelineCategory { BEFORE_GEOMETRY, LIT_GEOMETRY, ALPHA_GEOMETRY, POSTPROCESS, POSTPROCESS_MULTIPLY, POSTPROCESS_ALPHA_BLEND, POSTPROCESS_VOLUMETRIC, SHADOW, DEPTH_PREPASS, THUMBNAIL, MATERIAL_THUMBNAIL, VOXELIZATION };
+// COMPUTE is not a graphics category — it has no target vector, and indexes computePipelines
+// instead. It exists so compute pipelines can share the hot-reload registry with the graphics ones.
+enum class PipelineCategory { BEFORE_GEOMETRY, LIT_GEOMETRY, ALPHA_GEOMETRY, POSTPROCESS, POSTPROCESS_MULTIPLY, POSTPROCESS_ALPHA_BLEND, POSTPROCESS_VOLUMETRIC, SHADOW, DEPTH_PREPASS, THUMBNAIL, MATERIAL_THUMBNAIL, VOXELIZATION, COMPUTE };
 
 class PipelineManager;
 
@@ -75,6 +77,7 @@ struct ComputePipelineBase {
     vk::raii::DescriptorSet* descriptorSet = nullptr;
     vk::raii::DescriptorSetLayout* descriptorSetLayout = nullptr;
     std::string shaderPath;
+    std::string entryPoint; // one VkPipeline per entry point, so recreation needs to know which
     ComputePipelineBase() = default;
     virtual ~ComputePipelineBase() = default;
 };
@@ -127,7 +130,8 @@ class PipelineManager {
             // in-flight command buffers still reference these pipelines; destroying them mid-use is a device-lost
             device.getDevice().waitIdle();
             for (const auto& [category, index] : entry.second) {
-                recreatePipelineAtIndex(category, index);
+                if (category == PipelineCategory::COMPUTE) recreateComputePipelineAtIndex(index);
+                else recreatePipelineAtIndex(category, index);
             }
         }
     }
@@ -198,6 +202,19 @@ class PipelineManager {
     std::vector<std::unique_ptr<PipelineBase>> geometryPipelines;
     std::vector<std::unique_ptr<PipelineBase>> postProcessPipelines;
     std::vector<std::unique_ptr<ComputePipelineBase>> computePipelines;
+
+    // Compute has no fixed-function state to rebuild, and the layout (descriptor set + push constant
+    // size) is unchanged by a source edit, so only the VkPipeline and its module are replaced. That
+    // keeps this off the templated recreate path — the push-constant type isn't needed here.
+    void recreateComputePipelineAtIndex(uint32_t index) {
+        if (index >= computePipelines.size()) throw std::out_of_range("Invalid compute pipeline index");
+        ComputePipelineBase& p = *computePipelines[index];
+        vk::raii::ShaderModule module = createShaderModule(readFile(p.shaderPath));
+        vk::PipelineShaderStageCreateInfo stage{
+            .stage = vk::ShaderStageFlagBits::eCompute, .module = module, .pName = p.entryPoint.c_str()};
+        vk::ComputePipelineCreateInfo info{.stage = stage, .layout = p.layout};
+        p.pipeline = vk::raii::Pipeline(device.getDevice(), nullptr, info);
+    }
 
     void recreatePipelineAtIndex(PipelineCategory pipelineCategory, uint32_t index) {
         std::vector<std::unique_ptr<PipelineBase>>* targetVector = getTargetVector(pipelineCategory);
@@ -636,11 +653,23 @@ public:
         pipeline->layout = vk::raii::PipelineLayout(device.getDevice(), layoutInfo);
         pipeline->descriptorSet = &descriptorSet;
         pipeline->descriptorSetLayout = &setLayout;
+        pipeline->shaderPath = shaderPath;
+        pipeline->entryPoint = entryPoint;
         vk::ComputePipelineCreateInfo info{.stage = stage, .layout = pipeline->layout};
         pipeline->pipeline = vk::raii::Pipeline(device.getDevice(), nullptr, info);
 
         computePipelines.push_back(std::move(pipeline));
-        return computePipelines.size() - 1; // 0-based index, matching the graphics path
+        uint32_t newIndex = computePipelines.size() - 1; // 0-based index, matching the graphics path
+
+        // Register for hot reload, same as the graphics path. Several entry points can share one
+        // .spv (voxel_resolve's resolve/downsample, the particle kernels), and each gets its own
+        // vector entry under the same path, so one recompile recreates all of them.
+        std::string slangSrc = slangSourceForSpv(shaderPath);
+        if (std::filesystem::exists(slangSrc)) {
+            shaderPathToIndices[shaderPath].first = std::filesystem::last_write_time(slangSrc);
+        }
+        shaderPathToIndices[shaderPath].second.push_back({PipelineCategory::COMPUTE, newIndex});
+        return newIndex;
     }
 };
 

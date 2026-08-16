@@ -456,6 +456,9 @@ void showToggles(GUI& gui, RenderFeatures& f){
     gui.setItemTooltip("Cone trace per pixel, or sample the per-voxel 6-face irradiance volumes.");
     gui.sliderFloat("GI Strength", &f.vxgi.strength, 0.0f, 4.0f);
     gui.sliderFloat("GI Sky Strength", &f.vxgi.skyStrength, 0.0f, 2.0f);
+    gui.setItemTooltip("Sky collected by cones that leave the grid. Occlusion-aware: open areas gain, enclosed ones don't.");
+    gui.sliderFloat("GI Sky Injection", &f.vxgi.skyInjection, 0.0f, 2.0f);
+    gui.setItemTooltip("Sky added to every voxelized surface so sky-lit geometry bounces. Visibility is assumed 1, so this is a flat ambient — raising it washes out the contrast from Sky Strength.");
     if (f.vxgi.mode == 0) {
         gui.sliderInt("GI Side Cones", &f.vxgi.hemisphereRays, 0, 5);
         gui.sliderInt("GI Steps", &f.vxgi.maxSteps, 1, 64);

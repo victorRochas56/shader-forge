@@ -440,7 +440,7 @@ private:
         pc.samplerIndex          = shared.defaultSamplerIndex;
         pc.voxelResolution       = VOXEL_RESOLUTION;
         pc.skyEnvMapIndex        = scene.getSkyBox();
-        pc.skyInjection          = features.skyboxIntensity * features.vxgi.skyStrength;
+        pc.skyInjection          = features.skyboxIntensity * features.vxgi.skyInjection;
 
         vk::Extent2D gridExtent{VOXEL_RESOLUTION, VOXEL_RESOLUTION};
         vk::RenderingInfo renderingInfo = {.renderArea = {.offset = {0, 0}, .extent = gridExtent},
