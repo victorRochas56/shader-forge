@@ -94,19 +94,45 @@ class Scene {
 
     // Fills the hot-light mirror for a lit frame UBO. Zeroed slots read as disabled
     // sentinels (intensity 0), matching the sparse GPULight buffer. Returns the loop bound.
-    uint32_t fillHotLights(GPULightHot* dst) {
+    //
+    // Shadow-casting directional lights also get their 3 cascades copied into the flat
+    // cascade pool, with the base slot stored in typeFlags.w — that keeps the lit pass's
+    // shadow lookup out of the BDA Light buffer entirely. Directional casters past the pool
+    // are demoted to non-casting rather than left pointing at another light's cascades.
+    uint32_t fillHotLights(GPULightHot* dst, GPUCascadeHot* cascadeDst) {
         std::memset(dst, 0, sizeof(GPULightHot) * MAX_UBO_LIGHTS);
+        std::memset(cascadeDst, 0, sizeof(GPUCascadeHot) * MAX_UBO_CASCADES);
         uint32_t bound = 0;
+        uint32_t cascadeSlot = 0;
         for (auto& [idx, light] : lights) {
             if (idx >= MAX_UBO_LIGHTS) continue;
             auto& node = sceneGraph.getNode(light.nodeIndex);
             glm::vec3 pos = node.getWorldPosition();
             glm::vec3 dir = node.forward();
+
+            uint32_t castsShadows = static_cast<uint32_t>(light.castsShadows);
+            uint32_t cascadeBase = 0;
+            if (castsShadows && light.type == LightType::Directional) {
+                uint32_t count = std::min(light.numCascades, 3u);
+                if (cascadeSlot + count <= MAX_UBO_CASCADES) {
+                    cascadeBase = cascadeSlot;
+                    for (uint32_t c = 0; c < count; c++) {
+                        GPUCascadeHot& ch = cascadeDst[cascadeSlot + c];
+                        ch.lightSpaceMatrix = light.cascades[c].lightSpaceMatrix;
+                        ch.shadowAtlasRange = light.cascades[c].shadowAtlasUVRange;
+                        ch.texelSizes = glm::vec4(light.cascades[c].texelSize, light.cascades[c].worldTexelSize, 0.0f, 0.0f);
+                    }
+                    cascadeSlot += count;
+                } else {
+                    castsShadows = 0; // pool exhausted; light stays lit rather than sampling a stale tile
+                }
+            }
+
             GPULightHot& h = dst[idx];
             h.positionRange = glm::vec4(pos, light.range);
             h.direction = glm::vec4(dir, 0.0f);
             h.colorIntensity = glm::vec4(glm::vec3(light.color), light.intensity);
-            h.typeFlags = glm::uvec4(static_cast<uint32_t>(light.type), static_cast<uint32_t>(light.castsShadows), light.numCascades, 0u);
+            h.typeFlags = glm::uvec4(static_cast<uint32_t>(light.type), castsShadows, light.numCascades, cascadeBase);
             h.cascadeSplits = glm::vec4(light.cascades[0].splitDistance, light.cascades[1].splitDistance, light.cascades[2].splitDistance, 0.0f);
             bound = std::max(bound, idx + 1);
         }

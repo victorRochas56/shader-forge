@@ -567,13 +567,15 @@ void Renderer::createShadowAtlas(uint32_t resolution) {
 
     vk::raii::ImageView view = resource::createImageView(*bindless.resourceCtx, image,format,vk::ImageAspectFlagBits::eDepth,1);
 
-    // Atlas rests in eShaderReadOnlyOptimal so it matches its bindless descriptor's recorded layout —
-    // required for the froxel light pass to sample it correctly from compute (VolumetricsPass C).
-    // Seed via depth-read-only (Undefined can't go straight to shader-read for a depth aspect here).
+    // Atlas rests in eDepthReadOnlyOptimal, which is what its bindless descriptor records below.
+    // That layout is valid for sampling from any shader stage (so the froxel light pass still
+    // reads it correctly from compute, VolumetricsPass C) and, unlike the generic
+    // eShaderReadOnlyOptimal, lets drivers keep Z-compression instead of decompressing the whole
+    // surface on every transition out of attachment layout.
     resource::transitionImageLayout(*bindless.resourceCtx, nullptr, *image, vk::ImageLayout::eUndefined, vk::ImageLayout::eDepthReadOnlyOptimal);
-    resource::transitionImageLayout(*bindless.resourceCtx, nullptr, *image, vk::ImageLayout::eDepthReadOnlyOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
 
-    scene.shadowAtlas.textureIndex = bindless.descriptorSet->allocateTexture(std::move(image),std::move(memory),std::move(view),"internal/scene.shadowAtlas",false,resolution,resolution);
+    scene.shadowAtlas.textureIndex = bindless.descriptorSet->allocateTexture(std::move(image),std::move(memory),std::move(view),"internal/scene.shadowAtlas",false,resolution,resolution,
+                                                                            "",0,vk::ImageLayout::eDepthReadOnlyOptimal);
 }
 
 void Renderer::createRoughnessMetalResources(uint32_t width, uint32_t height) {
@@ -755,7 +757,7 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
 
     tracing::startTrace("record shadow pass");
     
-    resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *bindless.descriptorSet->getTextureResource(scene.shadowAtlas.textureIndex).image, vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
+    resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *bindless.descriptorSet->getTextureResource(scene.shadowAtlas.textureIndex).image, vk::ImageLayout::eDepthReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
     uint32_t shadowSlot = 0;
     for (auto& [lightId, light] : scene.lights) {
         if (light.castsShadows != 1) continue;
@@ -769,7 +771,7 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
         if (light.type == LightType::Point) light.shadowDirty = false;
         shadowSlot++;
     }
-    resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *bindless.descriptorSet->getTextureResource(scene.shadowAtlas.textureIndex).image, vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+    resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *bindless.descriptorSet->getTextureResource(scene.shadowAtlas.textureIndex).image, vk::ImageLayout::eDepthStencilAttachmentOptimal, vk::ImageLayout::eDepthReadOnlyOptimal);
 
     tracing::endTrace("record shadow pass");
 
@@ -1089,7 +1091,7 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
 
     // Mirror the hot pass + light data into this frame's UBO slot (constant-cache path for lit).
     GPULitFrameUniforms& uf = *litFrameStaging;
-    uint32_t hotBound = scene.fillHotLights(uf.lights);
+    uint32_t hotBound = scene.fillHotLights(uf.lights, uf.cascades);
     uf.setPassData(litPassData);
     uf.indicesA.y = std::min(hotBound, MAX_UBO_LIGHTS);
     memcpy(bindless.descriptorSet->getUniformBufferMapped(litFrameUniformsIndex[gpu.currentFrame]), &uf, sizeof(uf));

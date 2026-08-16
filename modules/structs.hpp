@@ -869,10 +869,23 @@ struct GPULightHot {
     glm::vec4 positionRange = glm::vec4(0);   // xyz world position, w range
     glm::vec4 direction = glm::vec4(0);       // xyz normalized direction, w unused
     glm::vec4 colorIntensity = glm::vec4(0);  // rgb color, w intensity (<= 0 -> disabled slot)
-    glm::uvec4 typeFlags = glm::uvec4(0);     // x LightType, y castsShadows, z numCascades, w unused
+    glm::uvec4 typeFlags = glm::uvec4(0);     // x LightType, y castsShadows, z numCascades, w cascade base slot
     glm::vec4 cascadeSplits = glm::vec4(0);   // CSM split distances (xyz)
 };
 static_assert(sizeof(GPULightHot) == 80, "must match LightHot in common.slang (std140)");
+
+// Per-cascade shadow data mirrored into the lit frame UBO (CascadeHot in common.slang).
+// Keeps the lit pass's shadow lookup off the BDA Light buffer: reading lightSpaceMatrix /
+// atlasRange / texel sizes through a device-address pointer at dynamic stride 96 put a global
+// load directly in front of the compare-fetch, so the two memory waits serialized. From the
+// UBO these are uniform-per-light constant-cache reads the compiler can hoist and scalarize.
+// vec4-only members so std140 layout == this struct byte-for-byte.
+struct GPUCascadeHot {
+    glm::mat4 lightSpaceMatrix = glm::mat4(1.0f);
+    glm::vec4 shadowAtlasRange = glm::vec4(0);  // xy atlas UV min, zw atlas UV max
+    glm::vec4 texelSizes = glm::vec4(0);        // x texelSize (tile-normalized), y worldTexelSize, zw unused
+};
+static_assert(sizeof(GPUCascadeHot) == 96, "must match CascadeHot in common.slang (std140)");
 
 // Mirror of LitFrameUniforms in common.slang: the lit pass's hot pass/light data, read through
 // the constant cache instead of per-fragment BDA loads. One UBO slot per frame in flight; the
@@ -887,6 +900,8 @@ struct GPULitFrameUniforms {
     glm::uvec4 giIrradianceA = glm::uvec4(0);  // irradiance volume indices 0-3
     glm::uvec4 giIrradianceB = glm::uvec4(0);  // xy irradiance indices 4-5, zw unused
     glm::vec4 giFloats = glm::vec4(0);         // x giSkyIntensity, yzw unused
+    // Flat pool of directional cascades; GPULightHot::typeFlags.w is a light's base slot.
+    GPUCascadeHot cascades[MAX_UBO_CASCADES];
     GPULightHot lights[MAX_UBO_LIGHTS];
 
     void setPassData(const LitPassData& pd) {
@@ -901,7 +916,7 @@ struct GPULitFrameUniforms {
         giFloats = glm::vec4(pd.giSkyIntensity, 0.0f, 0.0f, 0.0f);
     }
 };
-static_assert(sizeof(GPULitFrameUniforms) == 192 + sizeof(GPULightHot) * MAX_UBO_LIGHTS,
+static_assert(sizeof(GPULitFrameUniforms) == 192 + sizeof(GPUCascadeHot) * MAX_UBO_CASCADES + sizeof(GPULightHot) * MAX_UBO_LIGHTS,
               "must match LitFrameUniforms in common.slang (std140)");
 
 // matches VkDrawIndexedIndirectCommand)

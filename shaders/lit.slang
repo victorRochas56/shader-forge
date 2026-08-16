@@ -128,7 +128,7 @@ FragmentOutput litFragImpl<let GI_MODE : int, let DEBUG_CASCADES : bool>(VertexO
             }
             shadow = calculateShadowHot(input.worldPos, cameraPos, cameraForward, N_world, L,
                                         typeFlags.x, currentLight, shadowAtlasIdx,
-                                        UF.lights[i].cascadeSplits.xyz, typeFlags.z);
+                                        UF.lights[i].cascadeSplits.xyz, typeFlags.z, typeFlags.w);
         }
 
         float3 H = normalize(V + L);

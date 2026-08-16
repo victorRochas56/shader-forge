@@ -42,6 +42,11 @@ struct TextureResource {
     uint32_t width = 0;
     uint32_t height = 0;
     uint32_t mipLevels = 1;
+    // Layout recorded in this texture's descriptor; the image must be in it whenever a shader
+    // samples the texture. Depth images sampled as depth (the shadow atlas) use
+    // eDepthReadOnlyOptimal so drivers can keep Z-compression instead of decompressing on the
+    // transition out of attachment layout. Stored so updateTexture can't silently reset it.
+    vk::ImageLayout descriptorLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
     void reset() {
         imageView.reset();
         image.reset();
@@ -321,7 +326,8 @@ class DescriptorSet {
     // mipLevelCount overrides the level count derived from the dimensions — file-loaded textures pass
     // what the .ktx2 actually contains rather than assuming a full chain.
     uint32_t allocateTexture(vk::raii::Image image, vk::raii::DeviceMemory memory, vk::raii::ImageView imageView, std::string source = "", bool isCubeMap = false, uint32_t texWidth = 0, uint32_t texHeight = 0,
-                             std::string ktxPath = "", uint32_t mipLevelCount = 0) {
+                             std::string ktxPath = "", uint32_t mipLevelCount = 0,
+                             vk::ImageLayout descriptorLayout = vk::ImageLayout::eShaderReadOnlyOptimal) {
 #if DEBUG == 1
         debugDescriptorSetState("before_texture_allocation");
 #endif
@@ -345,6 +351,7 @@ class DescriptorSet {
             textureResources[index].width = texWidth;
             textureResources[index].height = texHeight;
             textureResources[index].mipLevels = mipLevels;
+            textureResources[index].descriptorLayout = descriptorLayout;
         } else {
             index = textureResources.size();
             TextureResource resource;
@@ -356,9 +363,10 @@ class DescriptorSet {
             resource.width = texWidth;
             resource.height = texHeight;
             resource.mipLevels = mipLevels;
+            resource.descriptorLayout = descriptorLayout;
             textureResources.emplace_back(std::move(resource));
         }
-        vk::DescriptorImageInfo imageInfo{.imageView = *textureResources[index].imageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal};
+        vk::DescriptorImageInfo imageInfo{.imageView = *textureResources[index].imageView, .imageLayout = descriptorLayout};
         vk::WriteDescriptorSet write{.sType = vk::StructureType::eWriteDescriptorSet,
                                      .dstSet = *descriptorSet,
                                      .dstBinding = isCubeMap ? cubemapBindingIndex : textureBindingIndex,
@@ -385,7 +393,8 @@ class DescriptorSet {
                                                 ? static_cast<uint32_t>(std::floor(std::log2(std::max(texWidth, texHeight)))) + 1
                                                 : 1;
 
-        vk::DescriptorImageInfo imageInfo{.imageView = *textureResources[index].imageView, .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal};
+        // Keeps whatever layout the slot was allocated with (see TextureResource::descriptorLayout).
+        vk::DescriptorImageInfo imageInfo{.imageView = *textureResources[index].imageView, .imageLayout = textureResources[index].descriptorLayout};
         vk::WriteDescriptorSet write{.dstSet = *descriptorSet,
                                      .dstBinding = isCubeMap ? cubemapBindingIndex : textureBindingIndex,
                                      .dstArrayElement = index,

@@ -70,6 +70,7 @@ struct LitPass {
 };
 
 #define MAX_UBO_LIGHTS 256
+#define MAX_UBO_CASCADES 24 // == MAX_SHADOW_CASTERS * 3 in constants.hpp
 
 // Hot per-light data mirrored into the lit frame UBO (GPULightHot in structs.hpp).
 // vec4-only members so std140 layout == the C++ struct byte-for-byte.
@@ -77,8 +78,18 @@ struct LightHot {
     float4 positionRange;   // xyz world position, w range
     float4 direction;       // xyz normalized direction, w unused
     float4 colorIntensity;  // rgb color, w intensity (<= 0 -> disabled sentinel slot)
-    uint4  typeFlags;       // x LightType, y castsShadows, z numCascades, w unused
+    uint4  typeFlags;       // x LightType, y castsShadows, z numCascades, w cascade base slot
     float4 cascadeSplits;   // CSM split distances (xyz)
+};
+
+// Per-cascade shadow data mirrored into the lit frame UBO (GPUCascadeHot in structs.hpp).
+// Reading these from the BDA Light buffer put a global load in front of the compare-fetch,
+// so the two memory waits serialized; from the UBO they are uniform-per-light constant-cache
+// reads. vec4-only members so std140 layout == the C++ struct byte-for-byte.
+struct CascadeHot {
+    float4x4 lightSpaceMatrix;
+    float4 shadowAtlasRange;  // xy atlas UV min, zw atlas UV max
+    float4 texelSizes;        // x texelSize (tile-normalized), y worldTexelSize, zw unused
 };
 
 // Per-frame uniform block for the lit pass (GPULitFrameUniforms in structs.hpp). Hot pass/light
@@ -94,6 +105,8 @@ struct LitFrameUniforms {
     uint4  giIrradianceA;         // irradiance volume indices 0-3 (VOXEL_FACE_DIRS order)
     uint4  giIrradianceB;         // xy irradiance indices 4-5, zw unused
     float4 giFloats;              // x giSkyIntensity, yzw unused
+    // Flat pool of directional cascades; LightHot::typeFlags.w is a light's base slot.
+    CascadeHot cascades[MAX_UBO_CASCADES];
     LightHot lights[MAX_UBO_LIGHTS];
 };
 
@@ -300,11 +313,18 @@ float calculateShadow(float3 fragWorldPos, float3 cameraPos, float3 cameraForwar
     return 0.0;
 }
 
-// Lit-pass shadow path: cascade selection comes from UBO-provided splits instead of the
-// stride-96 walk over light.cascades[i].splitDistance, and there is no showCascades branch,
-// so the compiler can sink the compare-fetch wait past independent BRDF math at the call site.
+// Lit-pass shadow path. Differs from calculateDirectionalShadow in three ways:
+//   - cascade selection uses UBO-provided splits instead of the stride-96 walk over
+//     light.cascades[i].splitDistance, and there is no showCascades branch, so the compiler
+//     can sink the compare-fetch wait past independent BRDF math at the call site;
+//   - the cascade payload comes from the frame UBO's cascade pool rather than the BDA Light
+//     buffer, so no global load gates the fetch's address math;
+//   - the outward walk only *selects* a cascade. The fetch is issued once after the loop, so
+//     a warp straddling a cascade seam costs one compare-fetch, not one per iteration into
+//     as many different atlas tiles.
+// L is expected normalized (both call sites normalize).
 float calculateDirectionalShadowHot(float3 fragWorldPos, float3 cameraPos, float3 cameraForward,
-                                    float3 geometricNormal, float3 L, Light* light, uint shadowAtlasIdx,
+                                    float3 geometricNormal, float3 L, uint cascadeBase, uint shadowAtlasIdx,
                                     float3 cascadeSplits, uint numCascades)
 {
     float viewDepth = dot(fragWorldPos - cameraPos, cameraForward);
@@ -317,48 +337,58 @@ float calculateDirectionalShadowHot(float3 fragWorldPos, float3 cameraPos, float
         }
     }
 
-    // Same outward walk as calculateDirectionalShadow.
+    float NdotL = abs(dot(geometricNormal, L));
+
+    // Same outward walk as calculateDirectionalShadow, but select-only.
+    float2 atlasUV = float2(0.0);
+    float currentDepth = 0.0;
+    bool hit = false;
     for (int c = cascadeIndex; c < int(numCascades); c++) {
-        float NdotL = abs(dot(geometricNormal, normalize(L + float3(1e-8))));
-        float normalOffset = light.cascades[c].worldTexelSize * (1.0 - NdotL) * 2.0;
+        CascadeHot cascade = litFrame[pc.frameUniformsIndex].cascades[cascadeBase + uint(c)];
+
+        float normalOffset = cascade.texelSizes.y * (1.0 - NdotL) * 2.0;
         float3 biasedPos = fragWorldPos + geometricNormal * normalOffset;
 
-        float4 fragPosLightSpace = mul(light.cascades[c].lightSpaceMatrix, float4(biasedPos, 1.0));
+        float4 fragPosLightSpace = mul(cascade.lightSpaceMatrix, float4(biasedPos, 1.0));
         float3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
         projCoords.x = projCoords.x * 0.5 + 0.5;
         projCoords.y = projCoords.y * 0.5 + 0.5;
 
-        float texelSize = light.cascades[c].texelSize;
+        float texelSize = cascade.texelSizes.x;
         if (projCoords.x < texelSize || projCoords.x > 1.0 - texelSize ||
             projCoords.y < texelSize || projCoords.y > 1.0 - texelSize ||
             projCoords.z < 0.0 || projCoords.z > 1.0) {
             continue;
         }
 
-        float currentDepth = projCoords.z - 0.0001f;
-
-        float4 atlasRange = light.cascades[c].shadowAtlasRange;
+        float4 atlasRange = cascade.shadowAtlasRange;
         float2 rangeMin  = atlasRange.xy;
         float2 rangeSpan = atlasRange.zw - atlasRange.xy;
 
-        float2 atlasUV = rangeMin + projCoords.xy * rangeSpan;
-        float lit = textures[shadowAtlasIdx].SampleCmpLevelZero(
-            shadowCmpSampler,
-            atlasUV,
-            currentDepth
-        );
-        return 1.0 - lit;
+        atlasUV = rangeMin + projCoords.xy * rangeSpan;
+        currentDepth = projCoords.z - 0.0001f;
+        hit = true;
+        break;
     }
-    return 0.0;
+
+    if (!hit) return 0.0;
+
+    float lit = textures[shadowAtlasIdx].SampleCmpLevelZero(
+        shadowCmpSampler,
+        atlasUV,
+        currentDepth
+    );
+    return 1.0 - lit;
 }
 
 float calculateShadowHot(float3 fragWorldPos, float3 cameraPos, float3 cameraForward, float3 geometricNormal,
                          float3 L, uint lightType, Light* light, uint shadowAtlasIdx,
-                         float3 cascadeSplits, uint numCascades)
+                         float3 cascadeSplits, uint numCascades, uint cascadeBase)
 {
     if (lightType == 1) { // Directional
-        return calculateDirectionalShadowHot(fragWorldPos, cameraPos, cameraForward, geometricNormal, L, light, shadowAtlasIdx, cascadeSplits, numCascades);
+        return calculateDirectionalShadowHot(fragWorldPos, cameraPos, cameraForward, geometricNormal, L, cascadeBase, shadowAtlasIdx, cascadeSplits, numCascades);
     } else if (lightType == 0) { // Point
+        // Point faces still read shadowMaps[faceIndex] through the BDA Light buffer.
         return calculatePointShadow(fragWorldPos, geometricNormal, L, light, shadowAtlasIdx);
     }
     return 0.0;

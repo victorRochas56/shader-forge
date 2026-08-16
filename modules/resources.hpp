@@ -161,10 +161,10 @@ inline vk::ImageMemoryBarrier2 buildBarrier(const vk::Image& image, const vk::Im
         barrier.subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eDepth, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1};
     }
 
-    // Depth-read-only -> generic shader-read-only (and back). Lets a compute pass sample a depth
-    // image (the shadow atlas, VolumetricsPass pass C) with a descriptor recorded as
-    // eShaderReadOnlyOptimal — eDepthReadOnlyOptimal mismatches that descriptor and is undefined in
-    // compute on some drivers. Read->read: contents preserved, only the layout/visibility changes.
+    // Depth-read-only <-> generic shader-read-only. Read->read: contents preserved, only the
+    // layout/visibility changes. Needed when a depth image's descriptor records the generic
+    // layout; the shadow atlas no longer does (its descriptor is eDepthReadOnlyOptimal, which
+    // is valid for sampling in any stage and keeps Z-compression), so these are currently unused.
     else if (oldLayout == vk::ImageLayout::eDepthReadOnlyOptimal && newLayout == vk::ImageLayout::eShaderReadOnlyOptimal) {
         barrier.srcAccessMask = vk::AccessFlagBits2::eShaderRead;
         barrier.dstAccessMask = vk::AccessFlagBits2::eShaderRead;
@@ -204,7 +204,8 @@ inline vk::ImageMemoryBarrier2 buildBarrier(const vk::Image& image, const vk::Im
         barrier.srcAccessMask = {};
         barrier.dstAccessMask = vk::AccessFlagBits2::eShaderRead;
         barrier.srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe;
-        barrier.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader;
+        // Compute in dst: this seeds the shadow atlas, which the froxel light pass samples from compute.
+        barrier.dstStageMask = vk::PipelineStageFlagBits2::eFragmentShader | vk::PipelineStageFlagBits2::eComputeShader;
         barrier.subresourceRange = {
             .aspectMask = vk::ImageAspectFlagBits::eDepth, .baseMipLevel = 0, .levelCount = mipLevelCount, .baseArrayLayer = 0, .layerCount = layerCount};
     }

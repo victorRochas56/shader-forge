@@ -133,7 +133,7 @@ public:
 
         // Mirror the pass + hot lights into this pass's own frame UBO (lit reads hot data there).
         GPULitFrameUniforms& uf = *frameUniformsStaging;
-        uint32_t hotBound = scene.fillHotLights(uf.lights);
+        uint32_t hotBound = scene.fillHotLights(uf.lights, uf.cascades);
         uf.setPassData(pd);
         uf.indicesA.y = std::min(hotBound, MAX_UBO_LIGHTS);
         std::memcpy(bindless.descriptorSet->getUniformBufferMapped(frameUniformsIndex[frame]), &uf, sizeof(uf));
