@@ -536,6 +536,137 @@ void showScenesMenu(GUI& gui, Scene& scene, BindlessSystem& bindless, RenderBuff
     gui.endWindow();
 }
 
+// ---- skybox picker ----
+
+// One cubemap on disk. Faces are in loadCubemapFromFile's argument order.
+struct SkyboxSet {
+    std::string name;     // path relative to the scan root, what the list shows
+    std::string faces[6]; // posX, posY, posZ, negX, negY, negZ
+};
+
+// The key AssetManager files a loaded cubemap under. Its face order is not the load call's.
+static std::string skyboxKey(const SkyboxSet& set) {
+    return set.faces[0] + "|" + set.faces[3] + "|" + set.faces[1] + "|" + set.faces[4] + "|" + set.faces[2] + "|" + set.faces[5];
+}
+
+// Fills `faces` from `dir`, or returns false if any of the six is missing. Resolves to the source
+// images; loadCubeMapFromFile picks up the .ktx2 cache next to them on its own.
+static bool collectCubemapFaces(const std::filesystem::path& dir, std::string (&faces)[6]) {
+    static const char* faceNames[6] = {"posx", "posy", "posz", "negx", "negy", "negz"};
+    static const char* extensions[] = {".jpg", ".jpeg", ".png", ".tga", ".bmp", ".hdr"};
+    for (int i = 0; i < 6; i++) {
+        faces[i].clear();
+        for (const char* ext : extensions) {
+            std::filesystem::path candidate = dir / (std::string(faceNames[i]) + ext);
+            std::error_code ec;
+            if (std::filesystem::exists(candidate, ec)) {
+                faces[i] = candidate.generic_string();
+                break;
+            }
+        }
+        if (faces[i].empty()) return false;
+    }
+    return true;
+}
+
+// Every folder under `root` (root itself included) holding a full set of faces.
+static std::vector<SkyboxSet> scanSkyboxes(const std::string& root) {
+    std::vector<SkyboxSet> sets;
+    std::error_code rootEc;
+    if (!std::filesystem::is_directory(root, rootEc)) return sets;
+
+    auto consider = [&](const std::filesystem::path& dir) {
+        SkyboxSet set;
+        if (!collectCubemapFaces(dir, set.faces)) return;
+        std::error_code ec;
+        std::filesystem::path rel = std::filesystem::relative(dir, root, ec);
+        set.name = (ec || rel.empty() || rel == ".") ? std::filesystem::path(root).generic_string() : rel.generic_string();
+        sets.push_back(std::move(set));
+    };
+
+    consider(root);
+    std::error_code walkEc;
+    auto end = std::filesystem::recursive_directory_iterator();
+    auto it = std::filesystem::recursive_directory_iterator(root, std::filesystem::directory_options::skip_permission_denied, walkEc);
+    for (; !walkEc && it != end; it.increment(walkEc)) {
+        std::error_code entryEc;
+        if (!std::filesystem::is_directory(it->path(), entryEc) || entryEc) continue;
+        if (it.depth() >= 2) it.disable_recursion_pending(); // asset trees get deep, sky folders do not
+        consider(it->path());
+    }
+
+    std::sort(sets.begin(), sets.end(), [](const SkyboxSet& a, const SkyboxSet& b) { return a.name < b.name; });
+    return sets;
+}
+
+// Folder of a stored cubemap key, ie. "textures/sky2".
+static std::string skyboxLabelFromKey(const std::string& key) {
+    if (key.empty()) return "<none>";
+    std::string posX = key.substr(0, key.find('|'));
+    std::string folder = std::filesystem::path(posX).parent_path().generic_string();
+    return folder.empty() ? posX : folder;
+}
+
+void showSkyboxMenu(GUI& gui, Scene& scene) {
+    if (!gui.beginWindow("Skybox", nullptr, glm::vec2(300, 260), glm::vec2(20, 790))) return;
+
+    // Scanned once and again on demand — the folder list only changes when the user adds files.
+    static std::vector<SkyboxSet> sets = scanSkyboxes("textures");
+    static std::string status;
+
+    std::string currentKey = scene.assetManager.getCubemapPathFromIndex(scene.getSkyBox());
+    gui.textf("Current: %s", skyboxLabelFromKey(currentKey).c_str());
+    gui.separator();
+
+    // Drags along every material that was pointed at the old sky: the fallback material is wired
+    // that way at startup and anything without its own cubemap inherits it. Custom ones are left be.
+    auto applySkybox = [&](const SkyboxSet& set) {
+        try {
+            uint32_t index = scene.assetManager.loadCubemapFromFile(set.faces[0], set.faces[1], set.faces[2],
+                                                                    set.faces[3], set.faces[4], set.faces[5]);
+            uint32_t previous = scene.getSkyBox();
+            scene.setSkyBox(index);
+            for (Material& mat : scene.getMaterials()) {
+                if (mat.environmentMapIndex == previous) mat.environmentMapIndex = index;
+            }
+            status = "Loaded " + set.name;
+        } catch (const std::exception& e) {
+            status = std::string("Failed: ") + e.what();
+        } catch (...) {
+            status = "Failed to load " + set.name;
+        }
+    };
+
+    if (sets.empty()) gui.textColored("No cubemaps found under textures/", glm::vec4(1, 1, 0, 1));
+    for (const SkyboxSet& set : sets) {
+        if (gui.selectable(set.name, skyboxKey(set) == currentKey)) applySkybox(set);
+        gui.setItemTooltip(set.faces[0]);
+    }
+
+    gui.separator();
+    if (gui.button("Browse...")) {
+        std::string face = openFileDialog("Cubemap Face\0*.jpg;*.jpeg;*.png;*.tga;*.bmp;*.hdr\0All Files\0*.*\0");
+        if (!face.empty()) {
+            std::filesystem::path dir = std::filesystem::path(face).parent_path();
+            SkyboxSet set;
+            if (collectCubemapFaces(dir, set.faces)) {
+                set.name = dir.generic_string();
+                applySkybox(set);
+            } else {
+                status = "No posx/negx/... set in " + dir.generic_string();
+            }
+        }
+    }
+    gui.setItemTooltip("Pick any face of a folder holding posx/negx/posy/negy/posz/negz.");
+    gui.sameLine();
+    if (gui.button("Rescan")) sets = scanSkyboxes("textures");
+
+    // A sky seen for the first time is encoded to a .ktx2 cache here, which stalls for a few seconds.
+    if (!status.empty()) gui.textf("%s", status.c_str());
+
+    gui.endWindow();
+}
+
 // Format a byte count as B / KB / MB / GB. Picks the largest unit the value comfortably fits.
 static std::string formatBytes(vk::DeviceSize bytes) {
     constexpr double KB = 1024.0;

@@ -204,7 +204,7 @@ class App {
     void drawGui() {
         // timing for finding windows eating a slow drawGui (in [slow loop])
         using guiClk = std::chrono::steady_clock;
-        std::array<std::pair<const char*, guiClk::time_point>, 14> guiMarks;
+        std::array<std::pair<const char*, guiClk::time_point>, 16> guiMarks;
         size_t guiMarkCount = 0;
         auto guiMark = [&](const char* name) { guiMarks[guiMarkCount++] = {name, guiClk::now()}; };
         guiMark("start");
@@ -246,6 +246,8 @@ class App {
         guiMark("toggles");
         showScenesMenu(gui, scene, bindless, renderer.buffers, sceneLoader);
         guiMark("scenesMenu");
+        showSkyboxMenu(gui, scene);
+        guiMark("skyboxMenu");
         showMeshList(gui, scene, bindless, renderer.defaultAlbedoIndex);
         guiMark("meshList");
         // after every widget call: retires anything this frame stopped drawing

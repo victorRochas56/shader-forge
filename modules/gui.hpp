@@ -69,6 +69,7 @@ void showImageViewList(GUI& gui, BindlessSystem& bindless, RenderFeatures& featu
 void showActionMenu(GUI& gui, uint32_t context, GLFWwindow* window, Camera& camera, SceneGraph& sceneGraph, float posX, float posY);
 void showToggles(GUI& gui, RenderFeatures& features);
 void showScenesMenu(GUI& gui, Scene& scene, BindlessSystem& bindless, RenderBuffers& buffers,SceneLoader& sceneLoader);
+void showSkyboxMenu(GUI& gui, Scene& scene);
 void showBufferAllocs(GUI& gui, DescriptorSet& descriptorSet, AssetManager& assetManager, const std::vector<DrawIndexedIndirectCommand>& indirectDraws);
 void showMeshList(GUI& gui, Scene& scene, BindlessSystem& bindless, uint32_t whiteTextureIndex);
 void showTraces(GUI& gui);
