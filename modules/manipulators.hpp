@@ -12,21 +12,37 @@ enum ManipAction {
     SCALE
 };
 
-bool wasClick = false;
-ManipAction prevAction;
-int prevAxis = 0;
-int hoveredAxis = 0;
-ManipAction hoveredAction = ROTATE;
-glm::quat baseRotation;
-glm::vec3 basePosition;
-glm::vec3 dragStartVec;
-glm::vec3 ringAxisWorld;
-glm::vec3 ringCenterWorld;
-glm::vec3 rotLocalAxis;
-glm::vec3 moveParentAxis;
-float dragStartT = 0.0f;
+inline bool wasClick = false;
+inline ManipAction prevAction;
+inline int prevAxis = 0;
+inline int hoveredAxis = 0;
+inline ManipAction hoveredAction = ROTATE;
+inline glm::quat baseRotation;
+inline glm::vec3 basePosition;
+inline glm::vec3 dragStartVec;
+inline glm::vec3 ringAxisWorld;
+inline glm::vec3 ringCenterWorld;
+inline glm::vec3 rotLocalAxis;
+inline glm::vec3 moveParentAxis;
+inline float dragStartT = 0.0f;
 
-void handleInput(Node& node, Camera& camera, const glm::vec2& ndcMousePos, SceneGraph& sceneGraph) {
+inline float snapIncrement = 0.5f;
+inline bool doSnap = false;
+inline float snapAngleIncrement = 45.0f; // degrees
+inline bool doSnapAngle = false;
+
+/*
+Angle of q about `axis` (unit) in radians — the twist half of a swing-twist split.
+Post-multiplying q by a rotation about that same axis adds to this exactly, which is what lets a
+drag snap an absolute orientation rather than its own travel.
+*/
+inline float twistAngle(const glm::quat& q, const glm::vec3& axis) {
+    float proj = glm::dot(glm::vec3(q.x, q.y, q.z), axis);
+    if (glm::abs(proj) < 1e-6f && glm::abs(q.w) < 1e-6f) return 0.0f; // pure 180 swing, twist undefined
+    return 2.0f * glm::atan(proj, q.w);
+}
+
+inline void handleInput(Node& node, Camera& camera, const glm::vec2& ndcMousePos, SceneGraph& sceneGraph) {
 
     glm::vec3 origin;
     glm::vec3 direction;
@@ -141,6 +157,14 @@ void handleInput(Node& node, Camera& camera, const glm::vec2& ndcMousePos, Scene
                         glm::vec3 currentVec = glm::normalize(v);
                         float angle = glm::atan(glm::dot(glm::cross(dragStartVec, currentVec), ringAxisWorld),
                                                 glm::dot(dragStartVec, currentVec));
+                        // same absolute-not-delta rule as the move snap — the node's own angle about
+                        // the drag axis is what lands on the increment, so an off-grid orientation is
+                        // corrected on the first drag instead of carrying its offset along.
+                        if (doSnapAngle && snapAngleIncrement > 0.0f) {
+                            float step = glm::radians(snapAngleIncrement);
+                            float baseAngle = twistAngle(baseRotation, rotLocalAxis);
+                            angle = glm::round((baseAngle + angle) / step) * step - baseAngle;
+                        }
                         node.relativeRotation = glm::rotate(baseRotation, angle, rotLocalAxis);
                         node.transformDirty = true;
                     }
@@ -153,8 +177,15 @@ void handleInput(Node& node, Camera& camera, const glm::vec2& ndcMousePos, Scene
                     float d = glm::dot(ringAxisWorld, w0);
                     float e = glm::dot(direction, w0);
                     float currentT = (b * e - d) / denom;
-                    float delta = currentT - dragStartT;
-                    node.relativePosition = basePosition + delta * moveParentAxis;
+                    // ringAxisWorld is unit length, so the drag runs in world units along it and
+                    // the node's world coordinate on that axis is what the grid quantises. Snapping
+                    // that absolute coordinate rather than the travel puts an off-grid node onto the
+                    // grid on the first drag, instead of carrying its offset along forever.
+                    float baseCoord = glm::dot(ringCenterWorld, ringAxisWorld);
+                    float coord = baseCoord + (currentT - dragStartT);
+                    if (doSnap && snapIncrement > 0.0f)
+                        coord = glm::round(coord / snapIncrement) * snapIncrement;
+                    node.relativePosition = basePosition + (coord - baseCoord) * moveParentAxis;
                     node.transformDirty = true;
                 }
             }
@@ -165,7 +196,7 @@ void handleInput(Node& node, Camera& camera, const glm::vec2& ndcMousePos, Scene
     }
 }
 
-void drawGizmos(Node& node, Camera& camera) {
+inline void drawGizmos(Node& node, Camera& camera) {
     float cameraDist = glm::distance(camera.position, node.getWorldPosition());
     glm::vec3 worldPos = node.getWorldPosition();
 

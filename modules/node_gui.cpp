@@ -4,6 +4,7 @@
 #include "node_ops.hpp"
 #include "scene.hpp"
 #include "gizmo.hpp"
+#include "manipulators.hpp"
 
 static std::unordered_map<uint32_t, NodeGuiState> guiStates;
 
@@ -14,7 +15,8 @@ void showNodeInfo(GUI& gui, Node& node, Scene& scene, BindlessSystem& bindless, 
         return;
 
     auto& state = getNodeGuiState(node.nodeIndex);
-
+   
+    showTransformModifiers(gui);
     if (!gui.beginWindow("selected node", nullptr, glm::vec2(360, 620), glm::vec2(950, 20))) return;
     gui.textf("%s", node.name.c_str());
 
@@ -495,4 +497,27 @@ void showNodeTransformInfo(GUI& gui, Node& node, Scene& scene) {
     gui.dragFloat("Scale Y", &node.relativeScale.y, 0.1 * node.relativeScale.y);
     gui.setNextItemWidth(80);
     gui.dragFloat("Scale Z", &node.relativeScale.z, 0.1 * node.relativeScale.z);
+}
+
+void showTransformModifiers(GUI& gui) {
+    GUIStyle& style = gui.getStyle();
+    // widen to fit whichever increment slider is showing — 8px of window padding per side. With
+    // both off it only has to hold the checkbox: its box, the gap, and the caption.
+    bool anySnap = Manip::doSnap || Manip::doSnapAngle;
+    float width = anySnap ? style.itemWidth + 16.0f : gui.measureText("Angle Snap").x + 48.0f;
+    gui.setNextWindowSize(glm::vec2(width, 200));
+    if (gui.beginWindow("Transform", nullptr,glm::vec2(50,200) , glm::vec2(0, 0),
+                        GUIAnchor::Right | GUIAnchor::Center, GUIWindowFixed | GUIWindowNoSavedSettings)) {
+
+        gui.checkbox("Move Snap", &Manip::doSnap);
+        if( Manip::doSnap) {
+            gui.sliderFloat("Increment",&Manip::snapIncrement,0.0f,5.0f,"%.1f",false);
+        }
+        gui.separator();
+        gui.checkbox("Angle Snap", &Manip::doSnapAngle);
+        if (Manip::doSnapAngle) {
+            gui.sliderFloat("Degrees", &Manip::snapAngleIncrement, 0.0f, 90.0f, "%.1f", false);
+        }
+        gui.endWindow();
+    }
 }

@@ -24,6 +24,7 @@ struct NodeGuiState {
 NodeGuiState& getNodeGuiState(uint32_t nodeIndex);
 
 void showNodeInfo(GUI& gui, Node& node, Scene& scene, BindlessSystem& bindless, RenderBuffers& buffers);
+void showTransformModifiers(GUI& gui);
 void showNodeMeshInfo(GUI& gui, Node& node, Scene& scene);
 void showNodeMaterialDialog(GUI& gui, Node& node, Scene& scene);
 void showNodeLightInfo(GUI& gui, Node& node, Scene& scene, BindlessSystem& bindless, uint32_t lightBufferIndex);

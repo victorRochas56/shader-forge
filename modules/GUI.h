@@ -606,6 +606,17 @@ public:
             if (GUIRect* existing = get(imItems[id].element)) existing->offset = nextWindowPos;
         }
 
+        // setNextWindowSize overrides the stored size. restoreHeight follows, or a collapse/expand
+        // would snap back to the height this window happened to have before.
+        if (hasNextWindowSize) {
+            state.size = nextWindowSize;
+            state.restoreHeight = nextWindowSize.y;
+            hasNextWindowSize = false;
+            // drawWindowChrome runs after this and re-applies the collapsed height, so a collapsed
+            // window keeps its title bar and takes the new size on expand.
+            if (GUIRect* existing = get(imItems[id].element)) existing->size = nextWindowSize;
+        }
+
         bool hasTitleBar = !(flags & GUIWindowNoTitleBar);
 
         GUIItemSlot& slot = imItems[id];
@@ -820,6 +831,14 @@ public:
         hasNextWindowPos = true;
     }
 
+    // Sizes the next window this frame, overriding its stored size — the defaultSize argument only
+    // applies the first time a window is seen, so this is the way to drive a size that changes.
+    // On a resizeable window, calling it every frame fights the grips.
+    void setNextWindowSize(glm::vec2 size) {
+        nextWindowSize = size;
+        hasNextWindowSize = true;
+    }
+
     // Returns true on the frame it is toggled, and writes through the pointer — ImGui's contract.
     bool checkbox(std::string_view label, bool* value) {
         if (value == nullptr) return false;
@@ -915,8 +934,12 @@ public:
     also skips the jump-to-cursor, so a fine adjustment starts from the value that is already set.
     Double click to type a number in instead — see numericField.
     */
-    bool sliderFloat(std::string_view label, float* value, float min, float max, const char* format = "%.3f") {
+    bool sliderFloat(std::string_view label, float* value, float min, float max, const char* format = "%.3f", bool samelineLabel = true) {
         if (value == nullptr) return false;
+
+        if(!samelineLabel)
+            addLabel(label);
+
         std::string_view display = displayPart(label);
         uint64_t id = hashID(label, currentID());
         if (editingItem(id)) return numericField(id, label, value, min, max);
@@ -983,8 +1006,9 @@ public:
         char valueText[64];
         snprintf(valueText, sizeof(valueText), format, *value);
         captionChild(hashID("##value", id), track, glm::vec2(width, height), valueText, style.text);
-
-        labelAfter(label);
+        
+        if(samelineLabel)
+            labelAfter(label);
         // the caption is an item of its own and moved these; the queries have to answer about the
         // slider, not its label
         setLastItem(track, id);
@@ -2063,6 +2087,17 @@ private:
         if (GUIRect* caption = get(lastItem)) caption->offset.y += style.framePaddingY;
     }
 
+    void addLabel(std::string_view label) {
+        std::string_view display = displayPart(label);
+        if (display.empty()) return;
+        pushID(label);
+        textColored(display, style.text);
+        popID();
+        // A framed widget is framePaddingY taller than its own text, so a caption placed at the
+        // row's top edge sits high against it. Nudge it onto the frame's centre line.
+        if (GUIRect* caption = get(lastItem)) caption->offset.y += style.framePaddingY;
+    }
+
     // Id for an item with no label of its own 
     uint64_t nextAutoID(std::string_view kind) {
         uint64_t id = hashID(kind, currentID());
@@ -2761,6 +2796,9 @@ private:
     // pending setNextWindowPos, consumed by the next beginWindow
     glm::vec2 nextWindowPos = glm::vec2(0);
     bool hasNextWindowPos = false;
+    // pending setNextWindowSize, same contract
+    glm::vec2 nextWindowSize = glm::vec2(0);
+    bool hasNextWindowSize = false;
 
     // Per-window position/size/collapse, surviving the element. Keyed by window id; savedLayout is
     // the same thing read from disk, keyed by name because that is what is stable across runs.
