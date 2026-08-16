@@ -71,8 +71,6 @@ private:
     glm::mat4 prevGatherVPM{1.0f};      // grid matrix the history was gathered under
     bool irradianceHistoryValid = false; // cleared when the history can't be reprojected onto this frame
     uint32_t gatherFrame = 0;           // drives which amortization phase updates
-    bool prevMultiBounce = true;        // edge-detects the GUI toggle (VXGISettings::multiBounce)
-    uint32_t historySnapFrames = 0;     // gathers left to run unblended, so a toggle converges fast
     uint32_t gatherPipelineIndex = 0xFFFFFFFF;
 
     // Grid clip -> volume UVW, matching worldToGridUVW() in shaders/modules/voxel.slang.
@@ -85,8 +83,7 @@ private:
     // How far the grid recentred since the last gather, in irradiance voxels: one world point
     // through both frames' matrices. Taken from the matrices rather than the world delta so it
     // stays right whatever axis permutation gridViewProjection's lookAt produces. The snap keeps it
-    // whole; the residual check is the guard for when it somehow isn't. The resolve's bounce lookup
-    // and the gather's history read both index that same set, so both take this same number.
+    // whole; the residual check is the guard for when it somehow isn't.
     struct GridShift { glm::ivec3 voxels{0}; bool usable = false; };
     GridShift gridShiftSinceGather(const glm::mat4& vpm) const {
         glm::vec3 probe = snappedGridCenter(scene.activeCamera.position);
@@ -217,7 +214,6 @@ public:
         // skipping is safe — the volume rests in ShaderReadOnly with all transitions paired here.
         if (!features.voxelDebug.voxelizeScene) {
             if (!volumeBlanked) {
-                // Before the resolve: also stops the bounce feeding off faces we're about to zero.
                 irradianceHistoryValid = false; // snap the faces to black instead of fading into it
                 clearScatterBuffers(cmd);
                 recordResolve(cmd);
@@ -228,16 +224,6 @@ public:
         }
         if (volumeBlanked) irradianceHistoryValid = false; // the history is a gather off a blank volume
         volumeBlanked = false;
-
-        // Toggling the bounce would otherwise creep in or out over the temporal blend — too slow and
-        // too smooth to read as an A/B. Snapping the gather for a few frames drops the smoothing but
-        // keeps the faces valid, so the feedback still compounds a bounce per frame and converges in
-        // about as many frames as there are bounces worth seeing. Invalidating the history instead
-        // would also cut the injection off from the faces it reads, which stalls the ramp.
-        if (features.vxgi.multiBounce != prevMultiBounce) {
-            historySnapFrames = 4;
-            prevMultiBounce = features.vxgi.multiBounce;
-        }
         tracing::startTrace("voxelization");
 
         clearScatterBuffers(cmd);
@@ -456,18 +442,6 @@ private:
         pc.skyEnvMapIndex        = scene.getSkyBox();
         pc.skyInjection          = features.skyboxIntensity * features.vxgi.skyStrength;
 
-        // Multi-bounce feedback reads the face set the lit pass is currently on, which the gather
-        // later this frame won't touch (it writes the other one) — so no barrier, and they rest in
-        // the sampled layout this needs. Only worth it when those faces hold a real gather this
-        // frame's grid can reproject onto.
-        GridShift shift = gridShiftSinceGather(pc.vpm);
-        bool bounce = shift.usable && gatherEnabled() && features.vxgi.multiBounce && features.vxgi.bounceStrength > 0.0f;
-        glm::vec3 uvwOffset = glm::vec3(shift.voxels) / static_cast<float>(IRRADIANCE_RESOLUTION);
-        pc.irradianceTextureIndices = irradianceTextureIndices[irradianceSet];
-        pc.volumeSamplerIndex       = shared.volumeSamplerIndex;
-        pc.bounceUVWOffset          = {uvwOffset.x, uvwOffset.y, uvwOffset.z};
-        pc.bounceStrength           = bounce ? features.vxgi.bounceStrength : 0.0f;
-
         vk::Extent2D gridExtent{VOXEL_RESOLUTION, VOXEL_RESOLUTION};
         vk::RenderingInfo renderingInfo = {.renderArea = {.offset = {0, 0}, .extent = gridExtent},
                                            .layerCount = 1,
@@ -576,9 +550,7 @@ private:
         glm::mat4 vpm = gridViewProjection(scene.activeCamera.position);
 
         GridShift shift = gridShiftSinceGather(vpm);
-        // A snap frame keeps the faces valid for the bounce lookup but takes the fresh trace whole,
-        // so a toggled setting lands now instead of easing in over the blend.
-        bool useHistory = shift.usable && historySnapFrames == 0;
+        bool useHistory = shift.usable;
 
         // Amortization needs somewhere to carry the untouched voxels from, so without history every
         // voxel traces. Rounded down to a power of two — the shader phase-tests with a mask.
@@ -626,7 +598,6 @@ private:
         irradianceSet = dstSet;
         prevGatherVPM = vpm;
         irradianceHistoryValid = true;
-        if (historySnapFrames > 0) historySnapFrames--;
         gatherFrame++;
         tracing::endTrace("voxel gather");
     }

@@ -169,6 +169,11 @@ public float3 coneTraceVXGI(uint voxel3DTextureIndex, uint voxelSamplerIndex, fl
 // Irradiance faces store (Reinhard(irradiance) * valid, valid) — premultiplied so hardware trilinear
 // against empty black neighbours renormalizes on the divide instead of dimming. The 0.25 floor makes
 // mostly-empty neighbourhoods fade out rather than amplify unorm8 quantization noise.
+//
+// unorm8 makes this an imperfect temporal accumulator: once a blend step falls below half a code
+// value the store rounds back and convergence stalls, so a face charged by a bright transient keeps
+// a small residual instead of decaying to black. fp16 fixes it but costs ~100MB over the 12 volumes,
+// which measured as not worth it. Keep Gather Blend high enough that the step clears a code value.
 float3 decodeIrradiance(float4 s) {
     return voxelToneMapInv(s.rgb / max(s.a, 0.25));
 }
@@ -188,14 +193,11 @@ public struct AmbientCubeTaps {
     public float3 w; // N² face weights, sum to 1
 };
 
-// uvwBias shifts the lookup into the grid the faces were gathered under — the voxelization pass
-// reads last frame's set through this frame's matrix, so it has a recentre to undo. Readers already
-// in the gather's own frame (the lit pass) pass zero.
-public AmbientCubeTaps sampleAmbientCubeTapsBiased(uint faceIndices[6], uint samplerIndex, float4x4 worldToGridClip,
-                                                   float3 worldPos, float3 N, float3 uvwBias) {
+public AmbientCubeTaps sampleAmbientCubeTaps(uint faceIndices[6], uint samplerIndex, float4x4 worldToGridClip,
+                                             float3 worldPos, float3 N) {
     SamplerState smp = samplers[samplerIndex];
     N = normalize(N);
-    float3 uvw = worldToGridUVW(worldPos, worldToGridClip) + uvwBias;
+    float3 uvw = worldToGridUVW(worldPos, worldToGridClip);
     uint fx = N.x < 0.0 ? 1 : 0;
     uint fy = N.y < 0.0 ? 3 : 2;
     uint fz = N.z < 0.0 ? 5 : 4;
@@ -205,11 +207,6 @@ public AmbientCubeTaps sampleAmbientCubeTapsBiased(uint faceIndices[6], uint sam
     t.s1 = textures3D[faceIndices[fy]].SampleLevel(smp, uvw, 0);
     t.s2 = textures3D[faceIndices[fz]].SampleLevel(smp, uvw, 0);
     return t;
-}
-
-public AmbientCubeTaps sampleAmbientCubeTaps(uint faceIndices[6], uint samplerIndex, float4x4 worldToGridClip,
-                                             float3 worldPos, float3 N) {
-    return sampleAmbientCubeTapsBiased(faceIndices, samplerIndex, worldToGridClip, worldPos, N, float3(0.0));
 }
 
 public float3 resolveAmbientCubeGI(AmbientCubeTaps t) {

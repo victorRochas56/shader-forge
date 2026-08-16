@@ -27,13 +27,6 @@ struct VoxelizationPushConstants {
     uint     skyEnvMapIndex;
     float    skyInjection; // sky irradiance scale; 0 disables the injection
     uint     packedColor;  // material base colour, RGBA8 linear
-    // Multi-bounce feedback: last frame's gathered irradiance, read back through this fragment's
-    // normal. Cosine-weighted rather than an isotropic voxel average, which is the whole reason it
-    // lives here and not in the resolve — this is the only stage that still knows the normal.
-    uint     irradianceTextureIndices[6]; // VOXEL_FACE_DIRS order
-    uint     volumeSamplerIndex;          // clamp-to-border; the default sampler's repeat wraps the grid
-    float    bounceUVWOffset[3];          // grid recentre since that gather, in volume UVW
-    float    bounceStrength;              // 0 disables
 };
 
 [[vk::push_constant]]
@@ -112,20 +105,6 @@ void fragMain(VoxelGSOut input)
     if (any(icoord < 0) || any(icoord >= (int)res)) return;
     uint idx = voxelIndex((uint3)icoord, res);
 
-    // Bounce taps first: they need only worldPos + normal, so the three volume fetches stay in
-    // flight through the albedo sample, the sky tap and the whole light loop. Same taps/resolve
-    // split the lit pass uses, for the same reason.
-    AmbientCubeTaps bounceTaps;
-    bounceTaps.s0 = float4(0.0);
-    bounceTaps.s1 = float4(0.0);
-    bounceTaps.s2 = float4(0.0);
-    bounceTaps.w  = float3(0.0);
-    if (voxelPc.bounceStrength > 0.0) {
-        float3 uvwBias = float3(voxelPc.bounceUVWOffset[0], voxelPc.bounceUVWOffset[1], voxelPc.bounceUVWOffset[2]);
-        bounceTaps = sampleAmbientCubeTapsBiased(voxelPc.irradianceTextureIndices, voxelPc.volumeSamplerIndex,
-                                                 voxelPc.vpm, input.worldPos, input.normal, uvwBias);
-    }
-
     // Fixed coarse mip: a voxel (~0.2m at 128^3 over 25m) is far bigger than a texel, so the
     // prefiltered average is both cheaper and closer to the right answer than mip 0.
     // Base colour factor, same as the lit pass — without it a tinted untextured material voxelizes
@@ -170,12 +149,6 @@ void fragMain(VoxelGSOut input)
         radiance += (1 - shadow) * max(dot(N,L),0.0) * currentLight.color.rgb * currentLight.intensity * attenuation / 3.14159265;
 
     }
-
-    // No albedo here, same as the direct term above — the resolve tints once by the winning albedo.
-    // Incident irradiance is albedo-independent, so this is the right side of that multiply.
-    if (voxelPc.bounceStrength > 0.0)
-        radiance += voxelPc.bounceStrength * resolveAmbientCubeGI(bounceTaps);
-
     InterlockedMax(voxelPc.voxelAlbedo[idx],   packVoxel(albedo));
     InterlockedMax(voxelPc.voxelRadiance[idx], packVoxel(voxelToneMap(radiance)));
 }

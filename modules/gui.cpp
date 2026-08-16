@@ -474,12 +474,6 @@ void showToggles(GUI& gui, RenderFeatures& f){
             f.vxgi.updatePhases = 1 << rateSel;
         }
         gui.setItemTooltip("Share of voxels re-traced per frame, in 4-voxel blocks; the rest carry history forward. Cuts gather cost, at proportionally slower GI response.");
-        gui.checkbox("GI Multi-Bounce", &f.vxgi.multiBounce);
-        gui.setItemTooltip("Re-injects last frame's irradiance during voxelization, cosine-weighted by the surface normal, so bounces compound one per frame. Off = single bounce. Toggling resets the temporal history so the change lands in one frame instead of fading.");
-        if(f.vxgi.multiBounce){
-            gui.sliderFloat("GI Bounce", &f.vxgi.bounceStrength, 0.0f, 2.0f, "%.2f");
-            gui.setItemTooltip("1 is the energy-consistent value. A second bounce is intrinsically far dimmer than the first, and the unorm8 radiance volume quantizes small increments away on bright voxels — raise it to make the effect legible.");
-        }
     }
 
     if(gui.button("Show BBOXes")){

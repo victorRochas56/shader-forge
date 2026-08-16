@@ -73,7 +73,7 @@ struct SkyBoxPushConstants {
 };
 
 // Mirror of VoxelizationPushConstants in shaders/voxelization.slang.
-// 244 bytes — above the 128-byte Vulkan floor, so this needs maxPushConstantsSize >= 256 (NVIDIA
+// 200 bytes — above the 128-byte Vulkan floor, so this needs maxPushConstantsSize >= 256 (NVIDIA
 // has it, most AMD/Intel report 128). To get back under, fold vpm*model into one mvp on the CPU.
 struct VoxelizationPushConstants {
     glm::mat4 vpm;                  // orthographic voxel-grid view-projection
@@ -92,13 +92,6 @@ struct VoxelizationPushConstants {
     uint32_t  skyEnvMapIndex;
     float     skyInjection;         // sky irradiance scale; 0 disables the injection
     uint32_t  packedColor;          // material base colour, RGBA8 linear
-    // Multi-bounce feedback: last frame's gathered irradiance, read back through this fragment's
-    // normal. Cosine-weighted rather than an isotropic voxel average — this is the only stage that
-    // still knows the normal, which is why the injection lives here and not in the resolve.
-    std::array<uint32_t, 6> irradianceTextureIndices; // VOXEL_FACE_DIRS order
-    uint32_t  volumeSamplerIndex;   // clamp-to-border; the default sampler's repeat wraps the grid
-    std::array<float, 3> bounceUVWOffset; // grid recentre since that gather, in volume UVW
-    float     bounceStrength;       // 0 disables
 };
 static_assert(sizeof(VoxelizationPushConstants) <= 256, "voxelization push constants exceed the 256-byte device limit");
 
@@ -154,11 +147,6 @@ struct VXGISettings {
     // Below ~0.05 the unorm8 faces quantize the increment to nothing and convergence stalls.
     float temporalBlend = 0.12f; // 1 = no history
     int updatePhases = 1;        // power of two, 1..8: a voxel re-traces every N frames
-    // Multi-bounce: fraction of last frame's gathered irradiance re-injected at resolve time. 1 is
-    // the energy-consistent value; the isotropic lookup under-reads, so it errs dim rather than hot.
-    // Separate toggle so an A/B doesn't cost the strength you dialled in.
-    bool multiBounce = true;
-    float bounceStrength = 1.0f;
 };
 
 // Mirror of VoxelGatherPushConstants in shaders/voxel_gather.slang.
