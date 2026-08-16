@@ -145,8 +145,8 @@ struct VXGISettings {
     // Temporal amortization of the gather. blend is the weight a fresh trace gets against the
     // reprojected history — the flicker fix, since re-voxelizing rebins triangles every frame.
     // Below ~0.05 the unorm8 faces quantize the increment to nothing and convergence stalls.
-    float temporalBlend = 0.12f; // 1 = no history
-    int updatePhases = 1;        // power of two, 1..8: a voxel re-traces every N frames
+    float temporalBlend = 0.25f; // 1 = no history
+    int updatePhases = 2;        // power of two, 1..8: a voxel re-traces every N frames
 };
 
 // Mirror of VoxelGatherPushConstants in shaders/voxel_gather.slang.
