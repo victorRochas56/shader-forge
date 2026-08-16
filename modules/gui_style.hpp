@@ -33,6 +33,10 @@ struct GUIStyle {
 
     // seconds the cursor must rest on an item before its tooltip appears
     float tooltipDelay = 0.45f;
+    // seconds between two clicks on one item for the second to count as a double click
+    float doubleClickTime = 0.30f;
+    // travel a slider or drag keeps while the fine modifier (shift) is held
+    float fineDragScale = 0.1f;
     // a popup taller than this scrolls instead of running off the screen
     float popupMaxHeight = 260.0f;
     // seconds per caret blink phase

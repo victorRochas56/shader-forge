@@ -199,6 +199,10 @@ struct GUIItemSlot {
     bool open = false;
     // stops a DefaultOpen flag re-opening a node the user closed on every subsequent frame.
     bool openInitialised = false;
+    // slider/drag double-clicked into typing mode: the slot draws a text field over itself
+    bool editing = false;
+    // nothing typed into that field yet, so the first character replaces the seeded value
+    bool editFresh = false;
 };
 
 
@@ -559,6 +563,7 @@ public:
             if (it->second.lastFrame != frameCounter || get(it->second.element) == nullptr) {
                 removeElement(it->second.element);
                 dragAccum.erase(it->first);
+                sliderAccum.erase(it->first);
                 caretPos.erase(it->first);
                 inputBuffers.erase(it->first);
                 it = imItems.erase(it);
@@ -903,11 +908,18 @@ public:
         return clickedElement == item;
     }
 
-    // Drag-anywhere-on-the-track slider. Returns true on any frame the value changed.
+    /*
+    Drag-anywhere-on-the-track slider. Returns true on any frame the value changed.
+
+    Hold shift while dragging to narrow the travel to style.fineDragScale; shift-pressing the track
+    also skips the jump-to-cursor, so a fine adjustment starts from the value that is already set.
+    Double click to type a number in instead — see numericField.
+    */
     bool sliderFloat(std::string_view label, float* value, float min, float max, const char* format = "%.3f") {
         if (value == nullptr) return false;
         std::string_view display = displayPart(label);
         uint64_t id = hashID(label, currentID());
+        if (editingItem(id)) return numericField(id, label, value, min, max);
 
         GUILayout* layout = getLayout(currentWindow());
         float width = (layout != nullptr && layout->nextItemWidth > 0.0f) ? layout->nextItemWidth : style.itemWidth;
@@ -923,12 +935,30 @@ public:
 
         bool changed = false;
         GUIRect* rect = get(track);
-        if (rect != nullptr && rect->held && max > min) {
-            float t = glm::clamp((InputManager::getCurrentState().mousePos.x - rect->left()) / std::max(rect->size.x, 1.0f), 0.0f, 1.0f);
-            float next = min + t * (max - min);
-            if (next != *value) {
-                *value = next;
-                changed = true;
+        if (rect != nullptr && max > min) {
+            const auto& in = InputManager::getCurrentState();
+            float span = std::max(rect->size.x, 1.0f);
+
+            // The press arms the drag, every frame after it moves the value by the cursor's travel.
+            // Relative rather than absolute so shift can change the gain mid-drag without the value
+            // jumping to wherever the cursor happens to be. Kept clamped, so overshooting an end
+            // costs no un-dragging on the way back — which is what the absolute mapping did too.
+            if (captured == track && capturedPrev != track) {
+                float t = glm::clamp((in.mousePos.x - rect->left()) / span, 0.0f, 1.0f);
+                sliderAccum[id] = fineModifierHeld() ? *value : min + t * (max - min);
+            }
+            if (rect->held) {
+                auto accum = sliderAccum.find(id);
+                // armed by the press above; only a drag inherited from a frame this slider sat out
+                // lands here, and it picks up from wherever the value already is
+                if (accum == sliderAccum.end()) accum = sliderAccum.emplace(id, *value).first;
+
+                float gain = fineModifierHeld() ? style.fineDragScale : 1.0f;
+                accum->second = glm::clamp(accum->second + (in.mouseDelta.x / span) * (max - min) * gain, min, max);
+                if (accum->second != *value) {
+                    *value = accum->second;
+                    changed = true;
+                }
             }
         }
         // Latched, not per-frame: isItemDeactivatedAfterEdit has to answer "did this drag change
@@ -958,6 +988,7 @@ public:
         // the caption is an item of its own and moved these; the queries have to answer about the
         // slider, not its label
         setLastItem(track, id);
+        if (doubleClickedElement == track) beginNumericEdit(id, track, *value);
         return changed;
     }
 
@@ -973,6 +1004,8 @@ public:
         } else {
             changed = false;
         }
+        // the typing field draws the characters being typed; a caption would sit on top of them
+        if (editingItem(id) || justCommitted(id)) return changed;
 
         char valueText[64];
         snprintf(valueText, sizeof(valueText), format, *value);
@@ -982,10 +1015,12 @@ public:
         return changed;
     }
 
+    // Shift narrows the travel to style.fineDragScale; double click to type a number in.
     bool dragFloat(std::string_view label, float* value, float speed = 1.0f, float min = 0.0f, float max = 0.0f,
                    const char* format = "%.3f") {
         if (value == nullptr) return false;
         uint64_t id = hashID(label, currentID());
+        if (editingItem(id)) return numericField(id, label, value, min, max);
 
         GUILayout* layout = getLayout(currentWindow());
         float width = (layout != nullptr && layout->nextItemWidth > 0.0f) ? layout->nextItemWidth : style.itemWidth;
@@ -1004,7 +1039,7 @@ public:
         if (rect != nullptr && rect->held) {
             float dx = InputManager::getCurrentState().mouseDelta.x;
             if (dx != 0.0f) {
-                *value += dx * speed;
+                *value += dx * speed * (fineModifierHeld() ? style.fineDragScale : 1.0f);
                 if (min < max) *value = glm::clamp(*value, min, max);
                 changed = true;
             }
@@ -1018,6 +1053,7 @@ public:
 
         labelAfter(label);
         setLastItem(item, id);
+        if (doubleClickedElement == item) beginNumericEdit(id, item, *value);
         return changed;
     }
 
@@ -1035,6 +1071,8 @@ public:
         if (min < max) next = glm::clamp(next, min, max);
         changed = changed && next != *value;
         if (changed) *value = next;
+        // while typing, the field owns the element's text — see sliderInt
+        if (editingItem(id) || justCommitted(id)) return changed;
 
         char valueText[64];
         snprintf(valueText, sizeof(valueText), format, *value);
@@ -1408,6 +1446,9 @@ public:
     wrong size. Consumed by the read, so it reports once.
     */
     bool isItemDeactivatedAfterEdit() {
+        // A typed value never went through a drag, but it is the same edge to the caller: the
+        // widget settled on a new value this frame. Frame-scoped, so it reports for this frame only.
+        if (lastItemID != 0 && justCommitted(lastItemID)) return true;
         if (lastItem == 0 || captured == lastItem || capturedPrev != lastItem) return false;
         auto it = imItems.find(lastItemID);
         if (it == imItems.end() || !it->second.editedWhileActive) return false;
@@ -1763,6 +1804,21 @@ public:
         // a click is a release back inside the rect the press started on
         clickedElement = (!down && prevDown && captured != 0 && captured == hit) ? captured : 0;
         if (!down) captured = 0;
+
+        // Second click on the same rect, close enough behind the first. The pair is cleared once it
+        // fires, so a third click starts counting again instead of reporting a second double click.
+        doubleClickedElement = 0;
+        if (clickedElement != 0) {
+            auto now = std::chrono::steady_clock::now();
+            if (clickedElement == lastClickElement &&
+                std::chrono::duration<float>(now - lastClickTime).count() < style.doubleClickTime) {
+                doubleClickedElement = clickedElement;
+                lastClickElement = 0;
+            } else {
+                lastClickElement = clickedElement;
+            }
+            lastClickTime = now;
+        }
 
         // Flat walk: reaches every depth, and a dead slot gets its flags cleared so a recycled
         // element can't inherit a stale hover.
@@ -2276,6 +2332,99 @@ private:
         return prev == previous.keyStates.end() || prev->second != GLFW_PRESS;
     }
 
+    // Fine-drag modifier: shift, held, scales a slider or drag's travel by style.fineDragScale.
+    static bool fineModifierHeld() {
+        const auto& keys = InputManager::getCurrentState().keyStates;
+        for (int key : {GLFW_KEY_LEFT_SHIFT, GLFW_KEY_RIGHT_SHIFT}) {
+            auto it = keys.find(key);
+            if (it != keys.end() && (it->second == GLFW_PRESS || it->second == GLFW_REPEAT)) return true;
+        }
+        return false;
+    }
+
+    bool editingItem(uint64_t id) const {
+        auto it = imItems.find(id);
+        return it != imItems.end() && it->second.editing;
+    }
+
+    // Whether this id's typed value landed this frame. Frame-scoped rather than a consumed flag, so
+    // a caller that never asks doesn't leave one set forever.
+    bool justCommitted(uint64_t id) const { return id != 0 && id == committedID && committedFrame == frameCounter; }
+
+    /*
+    Hands the item the caret and seeds the typing buffer from the live value.
+
+    The widget's display format is deliberately not reused: several are decorated ("min %.1f",
+    "%.2f /s") or empty (the int wrappers), and would seed text that does not read back as a number.
+    */
+    void beginNumericEdit(uint64_t id, uint32_t item, float value) {
+        std::string& buffer = inputBuffers[id];
+        buffer.assign(64, '\0');
+        snprintf(buffer.data(), buffer.size(), "%g", value);
+        caretPos[id] = strnlen(buffer.data(), buffer.size());
+
+        GUIItemSlot& slot = imItems[id];
+        slot.editing = true;
+        slot.editFresh = true;
+        // hitTest only moves the caret onto a TextBox, and the element was still a slider when the
+        // press landed — the type only changes next frame, so the focus has to be handed over here
+        keyboardFocus = item;
+        guiWantsKeyboard = true;
+    }
+
+    /*
+    A slider or drag double-clicked into typing mode: its own slot, drawn as a text field until the
+    value is committed with Enter or by clicking away. Escape leaves the bound value untouched.
+
+    Runs on the widget's id, so the field lands in the same layout slot, keeps the same label, and
+    inputTextImpl resolves it to the same element the slider was.
+    */
+    bool numericField(uint64_t id, std::string_view label, float* value, float min, float max) {
+        std::string& buffer = inputBuffers[id];
+        if (buffer.size() < 64) buffer.resize(64, '\0');
+
+        // The field has no selection, so the first character typed stands in for replacing the lot —
+        // a double click is usually the start of a fresh number. Backspace and the arrows edit it.
+        if (imItems[id].editFresh && !InputManager::getCurrentState().charQueue.empty()) {
+            buffer[0] = '\0';
+            caretPos[id] = 0;
+            imItems[id].editFresh = false;
+        }
+
+        inputTextImpl(label, {}, buffer.data(), buffer.size());
+        uint32_t item = itemOf(id);
+
+        bool cancelled = keyPressed(GLFW_KEY_ESCAPE);
+        // losing the caret means the user clicked something else, which commits like every other field
+        bool commit = keyPressed(GLFW_KEY_ENTER) || keyPressed(GLFW_KEY_KP_ENTER) || keyboardFocus != item;
+        if (!cancelled && !commit) return false;
+
+        imItems[id].editing = false;
+        // The field's run lives on the element; a slider paints its value into a child instead and
+        // never overwrites it, so what was typed would keep drawing under the fill from here on.
+        clearText(item);
+        // inputTextImpl latched this for every keystroke. The commit below is the edit edge callers
+        // are told about, so leaving it set would fire a second one on the next click of the slider.
+        imItems[id].editedWhileActive = false;
+        if (keyboardFocus == item) {
+            keyboardFocus = 0;
+            guiWantsKeyboard = false;
+        }
+        if (cancelled) return false;
+
+        // Accept only a parse that consumed something: an empty field, or a half-typed "-", leaves
+        // the value alone rather than snapping it to zero.
+        char* parseEnd = nullptr;
+        float parsed = strtof(buffer.data(), &parseEnd);
+        if (parseEnd == buffer.data()) return false;
+
+        // min < max is the drags' own "bounded" test; the sliders always pass a real range
+        *value = (min < max) ? glm::clamp(parsed, min, max) : parsed;
+        committedID = id;
+        committedFrame = frameCounter;
+        return true;
+    }
+
     bool inputTextImpl(std::string_view label, std::string_view hint, char* buffer, size_t bufferSize) {
         if (buffer == nullptr || bufferSize == 0) return false;
         uint64_t id = hashID(label, currentID());
@@ -2540,6 +2689,10 @@ private:
     uint32_t captured = 0;
     uint32_t clickedElement = 0;
     uint32_t hoveredElement = 0;
+    // second click on the same rect inside style.doubleClickTime, resolved by hitTest
+    uint32_t doubleClickedElement = 0;
+    uint32_t lastClickElement = 0;
+    std::chrono::steady_clock::time_point lastClickTime{};
     // rect the caret is in; survives across frames until another press moves it
     uint32_t keyboardFocus = 0;
 
@@ -2570,6 +2723,8 @@ private:
     // dragInt's float accumulator: rounding the delta every frame instead would quantise any
     // speed below one pixel-per-frame straight to zero
     std::unordered_map<uint64_t, float> dragAccum;
+    // sliderFloat's unclamped-at-the-ends drag value, armed by the press and moved by cursor travel
+    std::unordered_map<uint64_t, float> sliderAccum;
     // caret offset per text field, in characters
     std::unordered_map<uint64_t, size_t> caretPos;
     // inputFloat's text buffer: the field edits characters, the caller holds a float
@@ -2585,6 +2740,10 @@ private:
     // the widget most recently called, which every isItemXxx query refers to
     uint32_t lastItem = 0;
     uint64_t lastItemID = 0;
+    // id whose typed value landed, and the frame it landed on. One slot: only the item holding the
+    // caret can commit, and there is only ever one of those.
+    uint64_t committedID = 0;
+    uint64_t committedFrame = 0;
     // press owner as of last frame, so activation/deactivation edges are visible
     uint32_t capturedPrev = 0;
     // press *edge* this frame — what closes a popup clicked away from
