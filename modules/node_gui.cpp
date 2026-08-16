@@ -25,12 +25,23 @@ void showNodeInfo(GUI& gui, Node& node, Scene& scene, BindlessSystem& bindless, 
         showNodeMaterialDialog(gui, node, scene);
     }
 
-    if(gui.button("Make 100!")) {
-        for(int i = 0; i < 10; i ++) {
-            for(int j = 0; j < 10; j++) {
-                scene.sceneGraph.duplicateNode(node, glm::vec3(i * 0.5f, 0.0f, j * 0.5f));
-            }
+    if (gui.button("Duplicate")) {
+        // Step the copy clear along X by the mesh's own width, so a big model doesn't land inside
+        // itself. Nodes with no geometry (lights, emitters) fall back to a fixed nudge.
+        float step = 0.5f;
+        if (node.meshIndex < scene.assetManager.meshes.size()) {
+            const Mesh& mesh = scene.assetManager.meshes[node.meshIndex];
+            step = (mesh.boundingBoxMax.x - mesh.boundingBoxMin.x) * node.relativeScale.x;
         }
+        if (step < 1e-3f) step = 0.5f;
+
+        uint32_t copyIndex = scene.sceneGraph.duplicateNode(node, node.relativePosition + glm::vec3(step, 0.0f, 0.0f));
+        // Selecting the copy makes a second click step clear of the first rather than stacking
+        // another copy on the same spot.
+        scene.sceneGraph.deSelectNode();
+        scene.sceneGraph.selectNode(copyIndex);
+        gui.endWindow();
+        return; // node reference and selection both just changed
     }
 
     showNodeLightInfo(gui, node, scene, bindless, buffers.lightBufferIndex);

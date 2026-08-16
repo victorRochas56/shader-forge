@@ -96,6 +96,14 @@ uint32_t SceneGraph::duplicateNode(const Node& src, glm::vec3 relativePosition) 
     uint32_t newIndex = addNode(copy);
     Node& newNode = nodes[newIndex];
 
+    // addNode wires the transform and the model-matrix slot but never touches the draw list —
+    // geometry only reaches it through addMeshToShader. Copying meshIndex/materialIndex is not
+    // enough: the render entry is keyed by node index, so the copy needs its own.
+    if (newNode.meshIndex < scene->assetManager.meshes.size() && newNode.materialIndex != 0xFFFFFFFF) {
+        const Material& material = scene->getMaterials()[newNode.materialIndex];
+        scene->addMeshToShader(newIndex, material.shaderSource, material);
+    }
+
     if (srcLight != MAX_LIGHTS) {
         Light light = scene->getLights().at(srcLight);
         NodeOps::assignLight(newNode, light, *scene, *bindless, buffers->lightBufferIndex);
