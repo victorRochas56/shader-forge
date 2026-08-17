@@ -836,9 +836,14 @@ template <typename PerMeshFn, typename PerInstanceFn>
 void Renderer::buildGeometryDrawCommands(const std::array<Plane, 6>& frustumPlanes, bool doCulling, PerMeshFn&& perMeshFn, PerInstanceFn&& perInstanceFn,
                                          const std::function<bool(const Node&)>& nodeFilter) {
     if (scene.renderListDirty) {
-        std::sort(scene.renderEntries.begin(), scene.renderEntries.end(), [](const Scene::RenderEntry& a, const Scene::RenderEntry& b) {
-            return std::tie(a.shaderPipelineIndex,a.meshIndex) < std::tie(b.shaderPipelineIndex, b.meshIndex);
-        });
+        // The LOD override joins the sort key so that nodes forcing the same level on a mesh stay
+        // adjacent and batch into one draw. Without it an overriding node landing mid-run would
+        // split the mesh's group in two every time it appeared.
+        auto sortKey = [&](const Scene::RenderEntry& e) {
+            return std::make_tuple(e.shaderPipelineIndex, e.meshIndex, scene.sceneGraph.getNode(e.nodeIndex).lodOverride);
+        };
+        std::sort(scene.renderEntries.begin(), scene.renderEntries.end(),
+                  [&](const Scene::RenderEntry& a, const Scene::RenderEntry& b) { return sortKey(a) < sortKey(b); });
         scene.renderListDirty = false;
     }
 
@@ -850,6 +855,7 @@ void Renderer::buildGeometryDrawCommands(const std::array<Plane, 6>& frustumPlan
 
     uint32_t groupPipelineIdx = UINT32_MAX;
     uint32_t groupMeshIdx     = UINT32_MAX;
+    uint32_t groupLodOverride = Node::LOD_AUTO;
     Mesh*           groupMesh          = nullptr;
     Node*           groupFirstNode     = nullptr;
     const Material* groupFirstMaterial = nullptr;
@@ -872,8 +878,16 @@ void Renderer::buildGeometryDrawCommands(const std::array<Plane, 6>& frustumPlan
             groupBBoxes.clear();
             return;
         }
-        uint32_t lod = selectLOD(*groupMesh, pixelsPerUnit2 * groupMaxAreaScale2);
-        groupMesh->currentLOD = lod;
+        uint32_t lod;
+        if (groupLodOverride == Node::LOD_AUTO) {
+            lod = selectLOD(*groupMesh, pixelsPerUnit2 * groupMaxAreaScale2);
+            groupMesh->currentLOD = lod;
+        } else {
+            // LOD chains vary in length per mesh; an override past the end clamps to the coarsest
+            // one this mesh actually has rather than indexing off the end of the range table.
+            uint32_t maxLod = groupMesh->LODs.empty() ? 0u : static_cast<uint32_t>(groupMesh->LODs.size()) - 1;
+            lod = std::min(groupLodOverride, maxLod);
+        }
         static const glm::vec4 lodColors[4] = {{0, 1, 0, 1}, {1, 1, 0, 1}, {1, 0.5f, 0, 1}, {1, 0, 0, 1}}; // green -> red
         for (const auto& [bbMin, bbMax] : groupBBoxes)
             Gizmos::drawBox(bbMin, bbMax, lodColors[std::min<uint32_t>(lod, 3)]);
@@ -923,8 +937,10 @@ void Renderer::buildGeometryDrawCommands(const std::array<Plane, 6>& frustumPlan
             }
         }
 
-        // Group boundary: flush the previous group, then open a new one.
-        if (entry.meshIndex != groupMeshIdx || entry.shaderPipelineIndex != groupPipelineIdx) {
+        // Group boundary: flush the previous group, then open a new one. A differing LOD override
+        // breaks the batch too — one indirect command carries a single index range.
+        if (entry.meshIndex != groupMeshIdx || entry.shaderPipelineIndex != groupPipelineIdx ||
+            node.lodOverride != groupLodOverride) {
             flushGroup();
 
             if (entry.shaderPipelineIndex != groupPipelineIdx) {
@@ -934,6 +950,7 @@ void Renderer::buildGeometryDrawCommands(const std::array<Plane, 6>& frustumPlan
                                                   0});
             }
             groupMeshIdx       = entry.meshIndex;
+            groupLodOverride   = node.lodOverride;
             groupMesh          = &mesh;
             groupFirstNode     = &node;
             groupFirstMaterial = &material;

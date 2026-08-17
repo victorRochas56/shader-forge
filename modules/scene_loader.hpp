@@ -1,6 +1,8 @@
 #pragma once
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -44,6 +46,10 @@ class SceneLoader {
         }
         writeMaterials(scene);
 
+        // Meshes go before the nodes: it is node parsing that builds the meshes, so their cached
+        // LOD chains have to already be in hand by the time it runs.
+        writeMeshes(scene.assetManager);
+
         // then write all nodes
         child = rootNode.firstChild;
         while (child != 0) {
@@ -74,6 +80,7 @@ class SceneLoader {
 
         // Maps to track loaded resources
         std::unordered_map<uint32_t, uint32_t> materialIDToIndex; // materialID -> material index in scene
+        meshLODCache.clear();
 
         std::string line;
         while (std::getline(ifs, line)) {
@@ -81,6 +88,8 @@ class SceneLoader {
 
             if (line == "Materials {") {
                 parseMaterialsSection(ifs, scene, materialIDToIndex);
+            } else if (line == "Mesh {") {
+                parseMeshSection(ifs);
             } else if (line == "Node {") {
                 parseNode(ifs, scene, bindless, buffers, lightBufferIndex, SceneGraph::ROOT_INDEX, materialIDToIndex);
             }
@@ -94,6 +103,59 @@ class SceneLoader {
   private:
     std::fstream ofs;
     std::unordered_set<uint32_t> savedMaterialIDs;
+    // Saved LOD chains for the scene being loaded, keyed the same way loadSceneMesh keys a mesh.
+    std::map<std::string, PrecomputedLODs> meshLODCache;
+
+    // One key for both sides. The scale goes through std::to_string on each so the Node section's
+    // MeshScale and the Mesh section's Source field — both written from the same importScale with
+    // stream defaults — normalise to the same text.
+    static std::string meshLODKey(const std::string& path, uint32_t entry, float scale) {
+        return path + "#" + std::to_string(entry) + "@" + std::to_string(scale);
+    }
+
+    // LODIndices runs to one value per LOD corner — hundreds of thousands on a dense mesh — so it
+    // is walked in place rather than through split(), which would allocate a string apiece.
+    static void parseUintList(const std::string& value, std::vector<uint32_t>& out) {
+        const char* p = value.c_str();
+        while (*p != '\0') {
+            char* end = nullptr;
+            unsigned long parsed = std::strtoul(p, &end, 10);
+            if (end == p) break; // no digits left
+            out.push_back(static_cast<uint32_t>(parsed));
+            p = end;
+            while (*p == ';' || *p == ' ' || *p == ',') p++;
+        }
+    }
+
+    // Mesh sections exist purely to carry the precomputed LOD chain; the geometry itself is still
+    // rebuilt from the source file. Anything that fails to describe a usable chain is dropped here
+    // rather than stored, so loadSceneMesh simply falls back to simplifying.
+    void parseMeshSection(std::ifstream& ifs) {
+        std::string line, key, value, cacheKey;
+        PrecomputedLODs lods;
+
+        while (std::getline(ifs, line)) {
+            trim(line);
+            if (line == "}") break;
+            if (!parseKeyValue(line, key, value)) continue;
+
+            if (key == "Source") {
+                auto parts = split(value, ';');
+                if (parts.size() >= 3)
+                    cacheKey = meshLODKey(parts[0], std::stoul(parts[1]), std::stof(parts[2]));
+            } else if (key == "vertexCount") {
+                lods.vertexCount = static_cast<uint32_t>(std::stoul(value));
+            } else if (key == "LODs") {
+                parseUintList(value, lods.levelIndexCounts);
+            } else if (key == "LODIndices") {
+                parseUintList(value, lods.indices);
+            }
+        }
+
+        // A single level is just LOD0 — nothing was simplified, so there is nothing to reuse.
+        if (!cacheKey.empty() && lods.levelIndexCounts.size() > 1 && lods.vertexCount > 0)
+            meshLODCache[cacheKey] = std::move(lods);
+    }
 
     // Cheap pre-parse of the scene file that only looks for texture paths, so the KTX encoder can
     // work through the whole set at once before any of it is needed.
@@ -163,7 +225,8 @@ class SceneLoader {
                             const RenderBuffers& buffers,
                             uint32_t modelMatrixBufferIndex,
                             uint32_t lightBufferIndex) {
-        // meshes and textures remain loaded in memory for reuse (TODO check on load for unused?)
+        // Textures remain loaded for reuse; the Free Unused window reclaims whatever the next scene
+        // does not reference. Meshes do not — they go with the node graph below.
         std::cout << "Clearing scene..." << std::endl;
 
         auto& nodes = scene.sceneGraph.getNodes();
@@ -196,6 +259,10 @@ class SceneLoader {
         scene.clearVolumes();
         scene.clearEmitters(bindless, buffers);
         scene.sceneGraph.reset();
+        // After the graph reset nothing holds a mesh, so they all go. Deliberately not kept for
+        // reuse: a surviving mesh table means every reload leaves behind the previous scene's
+        // geometry, and the LOD chains in the scene file make the rebuild cheap anyway.
+        scene.assetManager.releaseAllMeshes();
         std::cout << "Scene cleared successfully!" << std::endl;
     }
 
@@ -521,7 +588,11 @@ class SceneLoader {
                 uint32_t meshIdx;
                 if (meshEntry >= 0) {
                     // Fast path: rebuild this exact mesh from its source entry, no instance detection.
-                    meshIdx = scene.assetManager.loadSceneMesh(meshPath, static_cast<uint32_t>(meshEntry), meshName, meshScale);
+                    // A saved LOD chain skips the simplifier; loadSceneMesh re-derives it if the
+                    // entry no longer matches what was serialised.
+                    auto cached = meshLODCache.find(meshLODKey(meshPath, static_cast<uint32_t>(meshEntry), meshScale));
+                    meshIdx = scene.assetManager.loadSceneMesh(meshPath, static_cast<uint32_t>(meshEntry), meshName, meshScale,
+                                                               cached != meshLODCache.end() ? &cached->second : nullptr);
                 } else {
                     // Legacy scene without entry indices — fall back to the full detection-based load.
                     auto loadResult = scene.assetManager.loadMeshFromFile(meshPath, meshScale);
@@ -822,5 +893,36 @@ class SceneLoader {
         }
 
         ofs << indent << "}" << std::endl;
+    }
+
+    void writeMeshes(AssetManager& assets) {
+
+        for(Mesh& mesh : assets.meshes) {
+            if (mesh.freed) continue; // slot released, its geometry is already gone
+            ofs << "Mesh {" << std::endl;
+            ofs << "  Source : " << mesh.sourceFile << ";" << mesh.sourceEntryIndex << ";" << mesh.importScale << std::endl;
+            ofs << "  vertexCount : " << mesh.vertexCount << std::endl;
+            ofs << "  indexCount : " << mesh.indexCount << std::endl;
+            ofs << "  Center : " << mesh.center.x << ";" << mesh.center.y << ";" << mesh.center.z << std::endl;
+            ofs << "  BBOX : " << mesh.boundingBoxMin.x << ";" << mesh.boundingBoxMin.y << ";" << mesh.boundingBoxMin.z << ";" << mesh.boundingBoxMax.x << ";" << mesh.boundingBoxMax.y << ";" << mesh.boundingBoxMax.z << std::endl;
+            ofs << "  minRadius : " << mesh.minRadius << std::endl;
+            ofs << "  maxRadius : " << mesh.maxRadius << std::endl;
+            ofs << "  surfaceArea : " << mesh.surfaceArea << std::endl;
+            ofs << "  LODs : ";
+            for(uint32_t lod : mesh.LODs) {
+                ofs << lod << ";";
+            }
+            ofs << std::endl;
+            // The counts above are only the level lengths — they can't spare a reload the
+            // simplification pass on their own. This is the simplifier's actual output: the LOD1..N
+            // corners, which all index this mesh's own vertex buffer, so the levels cost nothing
+            // beyond these uint32s. cpuIndices holds LOD0 first, then the levels back to back.
+            if (!mesh.LODs.empty() && mesh.cpuIndices.size() > mesh.LODs[0]) {
+                ofs << "  LODIndices : ";
+                for (size_t i = mesh.LODs[0]; i < mesh.cpuIndices.size(); i++) ofs << mesh.cpuIndices[i] << ";";
+                ofs << std::endl;
+            }
+            ofs << "}" << std::endl;
+        }
     }
 };

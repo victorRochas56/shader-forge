@@ -1043,7 +1043,8 @@ struct Mesh {
     std::vector<uint32_t> LODs;
     // LOD0 surface area in model space; drives screen-space triangle-size LOD selection
     float surfaceArea = 0.0f;
-    // LOD picked by the last buildGeometryDrawCommands pass (debug: bbox tint, wireframe)
+    // LOD the screen-size heuristic last picked for this mesh. Groups drawing a forced LOD
+    // (Node::lodOverride) deliberately leave it alone, so it stays readable as "what auto wants".
     uint32_t currentLOD = 0;
     uint32_t lodIndexCount(uint32_t lod) const { return LODs.empty() ? indexCount : LODs[lod]; }
     // start of a LOD's range, in indices, relative to indexOffset

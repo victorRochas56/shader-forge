@@ -98,6 +98,12 @@ class Node { // need to be able to hide nodes from tree for internal logic
     glm::mat4 localTransform; // relative to parent
 
     uint32_t meshIndex = MAX_MESHES;
+    // Pins this node's draw to one LOD instead of the screen-size heuristic. Nodes sharing a mesh
+    // batch into a single indirect draw, which carries one index range and so one LOD — a node
+    // that overrides splits off into its own batch (nodes picking the same level still share one).
+    // Set scene.renderListDirty when this changes so the render list re-sorts around the new key.
+    static constexpr uint32_t LOD_AUTO = 0xFFFFFFFF;
+    uint32_t lodOverride = LOD_AUTO;
     uint32_t materialIndex = 0xFFFFFFFF;
     uint32_t lightIndex = MAX_LIGHTS;
     // Volumes are streamed and keyed by node index (like billboards), so there is no per-node

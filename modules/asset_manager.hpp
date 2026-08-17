@@ -14,6 +14,15 @@
 #include "resources.hpp"
 #include "descriptor_sets.hpp"
 
+// A LOD chain lifted out of a scene file so loading can skip simplification, which is by far the
+// most expensive part of building a mesh. Only indices are needed: generateLODs emits corners that
+// index the entry's original vertex buffer, so the coarser levels add no vertices of their own.
+struct PrecomputedLODs {
+    std::vector<uint32_t> levelIndexCounts; // [LOD0.length, LOD1.length, ...], mirrors Mesh::LODs
+    std::vector<uint32_t> indices;          // LOD1..N corners, concatenated in level order
+    uint32_t vertexCount = 0;               // entry's vertex count when saved; guards a changed source
+};
+
 struct MeshLoadResult {
     std::vector<uint32_t> meshIndices;
     // instance transforms
@@ -360,8 +369,9 @@ class AssetManager {
     // Fast scene-load path: build a single mesh from a specific source-file entry
     // Meshes are deduped by (file, entry) so the instances and mirror groups that shared one mesh on import share one again here.
     uint32_t loadSceneMesh(const std::string& filePath, uint32_t entryIndex, const std::string& meshName,
-                           float importScale = 1.0f) {
-        // Persists across scene clears so reloads reuse meshes; scale keyed since it bakes geometry.
+                           float importScale = 1.0f, const PrecomputedLODs* cachedLODs = nullptr) {
+        // Dedupes within one load — a scene's nodes routinely share a mesh — and is dropped with the
+        // meshes on the next scene clear. Scale is in the key since it bakes into the geometry.
         std::string key = filePath + "#" + std::to_string(entryIndex) + "@" + std::to_string(importScale);
         if (auto it = sceneMeshCache.find(key); it != sceneMeshCache.end()) {
             return it->second;
@@ -415,16 +425,63 @@ class AssetManager {
 
         std::string name = meshName.empty() ? meshData.entries[entryIndex].shapeName : meshName;
         std::vector<uint32_t> LODs;
-        generateLODs(vertices, indices, LODs);
+        bool reusedLODs = applyPrecomputedLODs(cachedLODs, vertices.size(), indices, LODs);
+        if (!reusedLODs) generateLODs(vertices, indices, LODs);
+        // Says which of the two happened, and why: a scene carrying a chain that still gets
+        // regenerated means the source file no longer matches what was serialised.
+        std::cout << "  " << name << ": LODs " << (reusedLODs ? "reused from scene" :
+                     (cachedLODs != nullptr ? "REGENERATED (cached chain rejected, source changed?)" : "generated"))
+                  << " (" << LODs.size() << " levels)" << std::endl;
         uint32_t meshIdx = createMesh(vertices, indices, LODs, bbMin, bbMax, center, inscribedRadius,
                                       circumscribedRadius, name, filePath, importScale, entryIndex);
         sceneMeshCache[key] = meshIdx;
         return meshIdx;
     }
 
-    // Drop the heavy parsed-file cache after load; sceneMeshCache is kept so reloads reuse meshes.
+    // Drop the heavy parsed-file cache after load. sceneMeshCache is per-load and goes with the
+    // meshes in releaseAllMeshes, so it is not touched here.
     void clearSceneMeshLoadCache() {
         rawMeshDataCache.clear();
+    }
+
+    // Releases every mesh and the per-load lookup that pointed at them. Called when the scene graph
+    // is torn down: once the nodes are gone nothing can reference a mesh, and letting them sit would
+    // pile up an orphan set on every reload. The next load rebuilds what it needs — cheaply, since
+    // scene files carry the LOD chains that made rebuilding expensive in the first place.
+    void releaseAllMeshes() {
+        if (meshes.empty()) return;
+        // The buffer allocations being released may still be in an in-flight frame's draw, and the
+        // load that follows immediately hands the same offsets to new geometry. Nothing else on
+        // this path idles the device, so it has to happen here.
+        if (resourceCtx != nullptr) resourceCtx->device.getDevice().waitIdle();
+
+        for (uint32_t i = 0; i < meshes.size(); i++) freeMesh(i);
+        // freeMesh purges these entry by entry; clearing outright saves the repeated scans and
+        // leaves nothing behind if a mesh was already freed before this ran.
+        sceneMeshCache.clear();
+        mirrorVariants.clear();
+        loadedMeshes.clear();
+    }
+
+    // Splices a saved LOD chain onto LOD0's indices in place of running the simplifier. Returns
+    // false if the chain doesn't describe this exact geometry, in which case the caller must
+    // regenerate: a source file edited since the scene was saved would otherwise hand the GPU
+    // indices pointing past the vertex buffer, which draws garbage or faults outright.
+    static bool applyPrecomputedLODs(const PrecomputedLODs* cached, size_t vertexCount,
+                                     std::vector<uint32_t>& indices, std::vector<uint32_t>& LODs) {
+        if (cached == nullptr || cached->levelIndexCounts.size() < 2) return false;
+        if (cached->vertexCount != vertexCount) return false;
+        if (cached->levelIndexCounts[0] != indices.size()) return false;
+
+        size_t expected = 0;
+        for (size_t i = 1; i < cached->levelIndexCounts.size(); i++) expected += cached->levelIndexCounts[i];
+        if (expected != cached->indices.size()) return false;
+        for (uint32_t index : cached->indices)
+            if (index >= vertexCount) return false;
+
+        LODs = cached->levelIndexCounts;
+        indices.insert(indices.end(), cached->indices.begin(), cached->indices.end());
+        return true;
     }
 
     // colorSpace only matters the first time a source image is seen, when it drives the KTX encode.

@@ -67,9 +67,32 @@ void showNodeMeshInfo(GUI& gui, Node& node, Scene& scene) {
 
     if (!state.changingMesh) {
         if (node.meshIndex < scene.assetManager.meshes.size()) {
-            if (gui.button(scene.assetManager.meshes[node.meshIndex].sourceFile.c_str())) {
+            const Mesh& mesh = scene.assetManager.meshes[node.meshIndex];
+            if (gui.button(mesh.sourceFile.c_str())) {
                 state.changingMesh = true;
                 state.textBuffer[0] = '\0';
+            }
+
+            // LOD override. Auto reports what the screen-size heuristic currently wants, so the
+            // preview doubles as a readout of what this mesh is drawing at.
+            std::string preview = node.lodOverride == Node::LOD_AUTO
+                                ? "Auto (LOD " + std::to_string(mesh.currentLOD) + ")"
+                                : "LOD " + std::to_string(std::min<uint32_t>(node.lodOverride, static_cast<uint32_t>(mesh.LODs.size()) - 1));
+            gui.setNextItemWidth(160);
+            if (gui.beginCombo("LOD", preview)) {
+                // Re-sorting the render list is what keeps nodes on the same level batched together.
+                if (gui.comboItem("Auto", node.lodOverride == Node::LOD_AUTO)) {
+                    node.lodOverride = Node::LOD_AUTO;
+                    scene.renderListDirty = true;
+                }
+                for (uint32_t i = 0; i < mesh.LODs.size(); i++) {
+                    std::string label = "LOD " + std::to_string(i) + "  (" + std::to_string(mesh.LODs[i] / 3) + " tris)";
+                    if (gui.comboItem(label, node.lodOverride == i)) {
+                        node.lodOverride = i;
+                        scene.renderListDirty = true;
+                    }
+                }
+                gui.endCombo();
             }
         } else {
             if (gui.button("Add Mesh")) {
@@ -168,9 +191,11 @@ void showNodeMeshInfo(GUI& gui, Node& node, Scene& scene) {
 
     if(node.showWireframe) {
         Mesh& mesh = scene.assetManager.meshes[node.meshIndex];
-        // wireframe of the LOD the renderer last drew
-        uint32_t first = mesh.lodIndexStart(mesh.currentLOD);
-        uint32_t last  = first + mesh.lodIndexCount(mesh.currentLOD);
+        // wireframe of the LOD this node actually draws: its override, else what auto last picked
+        uint32_t maxLod = mesh.LODs.empty() ? 0u : static_cast<uint32_t>(mesh.LODs.size()) - 1;
+        uint32_t lod = node.lodOverride == Node::LOD_AUTO ? mesh.currentLOD : std::min(node.lodOverride, maxLod);
+        uint32_t first = mesh.lodIndexStart(lod);
+        uint32_t last  = first + mesh.lodIndexCount(lod);
         for(uint32_t i = first; i < last; i+=3) {
             auto& t = node.worldTransform;
             Gizmos::drawLine({t*glm::vec4(mesh.cpuPositions[mesh.cpuIndices[i]],1.0f),t*glm::vec4(mesh.cpuPositions[mesh.cpuIndices[i+1]],1.0f), {2.0,2.0,0.0,1.0}});
