@@ -28,6 +28,9 @@ void MaterialEditorState::loadFromMaterial(int index, Material& mat, Scene& scen
     flipNormal = (mat.flags & MaterialFlags::FLIP_NORMAL) != 0;
     alphaClip = mat.alphaClip;
     alphaCutoff = mat.alphaCutoff;
+    triplanar = (mat.flags & MaterialFlags::TRIPLANAR) != 0;
+    triplanarScale = mat.triplanarScale;
+    triplanarBlend = mat.triplanarBlend;
 
     std::string cubemapPath = scene.assetManager.getCubemapPathFromIndex(mat.environmentMapIndex);
     for (int i = 0; i < 6; i++) envMapPaths[i][0] = '\0';

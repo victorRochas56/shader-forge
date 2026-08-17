@@ -24,7 +24,8 @@ enum MaterialFlags : uint32_t
     HAS_ROUGHNESS = 1 << 2,
     HAS_METALLIC =  1 << 3,
     HAS_NORMAL =    1 << 4,
-    ALPHA_CLIP =    1 << 5
+    ALPHA_CLIP =    1 << 5,
+    TRIPLANAR =     1 << 6
 };
 
 /*
@@ -807,7 +808,9 @@ struct LitInstanceData {
     float    metallic;
     float    roughness;
     float    alphaCutoff;
-    uint32_t packedColor; // material base colour, RGBA8 linear (reuses what was padding)
+    uint32_t packedColor;    // material base colour, RGBA8 linear (reuses what was padding)
+    float    triplanarScale; // texture tiles per world unit, TRIPLANAR materials only
+    float    triplanarBlend; // axis crossfade width in (0,1]; ~0 snaps to the dominant axis
 };
 
 // Material base colour into LitInstanceData.packedColor. Linear, no sRGB encode — the shader
@@ -960,6 +963,8 @@ struct Material {
     std::string name; // Material name from .mtl file or assigned name
     Shader shaderSource;
     MaterialFlags flags;
+    float triplanarScale = 1.0f;
+    float triplanarBlend = 0.1f;
     // 2st bit : hasAlbedo
     // 3nd bit : hasRoughness
     // 4rd bit : hasMetallic

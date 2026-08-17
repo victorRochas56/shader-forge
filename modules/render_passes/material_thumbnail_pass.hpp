@@ -153,7 +153,9 @@ public:
                          .metallic = m.metallic,
                          .roughness = m.roughness,
                          .alphaCutoff = m.alphaCutoff,
-                         .packedColor = packColorRGBA8(m.color) };
+                         .packedColor = packColorRGBA8(m.color),
+                         .triplanarScale = m.triplanarScale,
+                         .triplanarBlend = m.triplanarBlend };
         }
         uint32_t frameInstBase = frame * MAX_MATS;
         bindless.descriptorSet->writeFixedBuffer<LitInstanceData>(instanceBufferIndex, insts.data(), count, frameInstBase, frame);

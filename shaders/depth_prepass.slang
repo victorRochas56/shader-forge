@@ -5,6 +5,10 @@ struct VertOutput {
     float4 currentClip : CURRENT_CLIP;
     float4 prevClip    : PREV_CLIP;
     float2 texCoord    : TEXCOORD0;
+    // Only the alpha clip reads these, and only for TRIPLANAR materials — but the clip has to
+    // match the lit pass exactly, and triplanar clips against a world projection, not the UVs.
+    float3 worldPos    : WORLD_POS;
+    float3 normal      : NORMAL;
     nointerpolation uint instanceID : INSTANCE_ID;
 }
 
@@ -24,6 +28,8 @@ VertOutput vertMain(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID
     out.currentClip = out.position;
     out.prevClip    = mul(pc.litPassData.prevViewProjection, worldPos);
     out.texCoord    = vert.texCoord;
+    out.worldPos    = worldPos.xyz;
+    out.normal      = mul((float3x3)modelMatrix, vert.normal);
     out.instanceID  = absInstance;
     return out;
 }
@@ -42,8 +48,16 @@ FragmentOutput fragMain(VertOutput input)
     if (inst.materialFlags & (1u << 5)) {
         // Same base-colour alpha the lit pass applies — clipping differently here punches holes in
         // the depth buffer that the lit pass then fills.
-        float alpha = textures[inst.albedoTextureIndex].Sample(samplers[pc.litPassData.samplerIndex], input.texCoord).a
-                    * unpackColorRGBA8(inst.packedColor).a;
+        SamplerState smp = samplers[pc.litPassData.samplerIndex];
+        float alpha;
+        if (inst.materialFlags & (1u << 6)) { // TRIPLANAR
+            TriplanarBasis tb = buildTriplanarBasis(input.worldPos, normalize(input.normal),
+                                                    inst.triplanarScale, inst.triplanarBlend);
+            alpha = sampleTriplanar(textures[inst.albedoTextureIndex], smp, tb).a;
+        } else {
+            alpha = textures[inst.albedoTextureIndex].Sample(smp, input.texCoord).a;
+        }
+        alpha *= unpackColorRGBA8(inst.packedColor).a;
         if (alpha < inst.alphaCutoff)
             discard;
     }

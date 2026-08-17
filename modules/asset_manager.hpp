@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <string>
 #include <vector>
 #include <map>
@@ -218,6 +219,7 @@ class AssetManager {
 
             uint32_t existingInstance = false;
             for (uint32_t m = 0; m < meshes.size(); m++) {
+                if (meshes[m].freed) continue; // a released slot has no geometry left to instance
                 if ((std::abs(inscribedRadius - meshes[m].minRadius) < 0.0001f && std::abs(circumscribedRadius - meshes[m].maxRadius) < 0.001f) &&
                     (std::abs(glm::distance(bbMax, bbMin) - glm::distance(meshes[m].boundingBoxMax, meshes[m].boundingBoxMin)) < 0.001f)) {
                     existingInstance = m;
@@ -441,6 +443,16 @@ class AssetManager {
         return allocIndex;
     }
 
+    // Same load + dedupe path, but tags the slot engine-owned so the unused-resource sweep skips
+    // it. Use it for anything the engine references directly rather than through the scene —
+    // editor icons, engine billboards — since a reference walk has no way to see those.
+    uint32_t loadInternalTexture(std::string filePath, vk::Format format = vk::Format::eR8G8B8A8Srgb,
+                                 textureconv::ColorSpace colorSpace = textureconv::ColorSpace::Auto) {
+        uint32_t index = loadTextureFromFile(filePath, format, colorSpace);
+        descriptorSet->setTextureInternal(index);
+        return index;
+    }
+
     uint32_t loadCubemapFromFile(std::string posX, std::string posY, std::string posZ, std::string negX, std::string negY, std::string negZ) {
         std::string cubemapKey = posX + "|" + negX + "|" + posY + "|" + negY + "|" + posZ + "|" + negZ;
 
@@ -478,6 +490,56 @@ class AssetManager {
     }
 
     std::vector<Mesh>& getMeshes() { return meshes; }
+
+    // Releases a mesh's GPU allocations plus its CPU-side raycast copy and marks the slot freed.
+    // Only call it for a mesh nothing references — every consumer skips meshes with `freed` set,
+    // but none of them re-check that a slot is still live.
+    void freeMesh(uint32_t meshIndex) {
+        if (meshIndex >= meshes.size()) return;
+        Mesh& mesh = meshes[meshIndex];
+        if (mesh.freed) return;
+
+        descriptorSet->freeVariableBuffer(vertexBufferIndex, mesh.vertexAllocationOffset);
+        descriptorSet->freeVariableBuffer(indexBufferIndex, mesh.indexAllocationOffset);
+        descriptorSet->freeVariableBuffer(positionBufferIndex, mesh.positionAllocationOffset);
+        if (mesh.thumbnailTextureIndex != 0xFFFFFFFF) {
+            descriptorSet->freeTexture(mesh.thumbnailTextureIndex);
+            mesh.thumbnailTextureIndex = 0xFFFFFFFF;
+        }
+        // The raycast/wireframe copies outweigh everything else the Mesh holds on the CPU. Swap
+        // rather than clear() so the capacity actually goes back.
+        std::vector<glm::vec3>().swap(mesh.cpuPositions);
+        std::vector<glm::vec3>().swap(mesh.cpuNormals);
+        std::vector<uint32_t>().swap(mesh.cpuIndices);
+        mesh.freed = true;
+        mesh.refCount = 0;
+        freeMeshes.push(meshIndex);
+
+        // Purge every cache that could hand this index back. Missing one turns a later import or
+        // scene load into a silent reference to a dead mesh.
+        for (auto it = sceneMeshCache.begin(); it != sceneMeshCache.end();)
+            it = (it->second == meshIndex) ? sceneMeshCache.erase(it) : std::next(it);
+        for (auto it = mirrorVariants.begin(); it != mirrorVariants.end();)
+            it = (it->first == meshIndex || it->second == meshIndex) ? mirrorVariants.erase(it) : std::next(it);
+        // A MeshLoadResult is all-or-nothing: one dead entry invalidates the whole file's result,
+        // so drop it and let a re-import rebuild the meshes it still needs.
+        for (auto it = loadedMeshes.begin(); it != loadedMeshes.end();) {
+            const auto& indices = it->second.meshIndices;
+            bool references = std::find(indices.begin(), indices.end(), meshIndex) != indices.end();
+            it = references ? loadedMeshes.erase(it) : std::next(it);
+        }
+    }
+
+    // Releases a file-loaded texture slot and forgets its cache entry, so a later load of the same
+    // path re-uploads it instead of handing back a recycled slot.
+    void freeTexture(uint32_t textureIndex) {
+        if (textureIndex == 0xFFFFFFFF) return;
+        for (auto it = loadedTextures.begin(); it != loadedTextures.end();)
+            it = (it->second == textureIndex) ? loadedTextures.erase(it) : std::next(it);
+        for (auto it = loadedCubemaps.begin(); it != loadedCubemaps.end();)
+            it = (it->second == textureIndex) ? loadedCubemaps.erase(it) : std::next(it);
+        descriptorSet->freeTexture(textureIndex);
+    }
 
   private:
     std::map<std::string, MeshData> rawMeshDataCache;  // transient parsed source files, freed after load

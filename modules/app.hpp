@@ -62,7 +62,7 @@ class App {
         scene.getMaterials()[scene.getFallBackMaterial()].environmentMapIndex = cubeMapIndex;
         scene.setSkyBox(cubeMapIndex);
         // node icon, probably needs a better place to be
-        renderer.buffers.nodeTextureIndex = scene.assetManager.loadTextureFromFile("textures/node.png");
+        renderer.buffers.nodeTextureIndex = scene.assetManager.loadInternalTexture("textures/node.png");
 
         printf("SIZE OF NODE : %zu",sizeof(Node));
 

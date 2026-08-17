@@ -1052,7 +1052,9 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
                                         .metallic              = material.metallic,
                                         .roughness             = material.roughness,
                                         .alphaCutoff           = material.alphaCutoff,
-                                        .packedColor           = packColorRGBA8(material.color)});});
+                                        .packedColor           = packColorRGBA8(material.color),
+                                        .triplanarScale        = material.triplanarScale,
+                                        .triplanarBlend        = material.triplanarBlend});});
 
     // Backfill firstInstance into each LitMeshDrawData so shaders can compute the absolute instance
     // index as mesh.firstInstance + SV_InstanceID (independent of how Slang maps SV_InstanceID).

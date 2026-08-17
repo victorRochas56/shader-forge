@@ -23,6 +23,9 @@ struct MaterialEditorState {
     bool flipNormal = false;
     bool alphaClip = false;
     float alphaCutoff = 0.5f;
+    bool triplanar = false;
+    float triplanarScale = 1.0f;
+    float triplanarBlend = 0.1f;
     char envMapPaths[6][256] = {"", "", "", "", "", ""}; // posX, posY, posZ, negX, negY, negZ
 
     void resetToDefaults() {
@@ -39,6 +42,9 @@ struct MaterialEditorState {
         flipNormal = false;
         alphaClip = false;
         alphaCutoff = 0.5f;
+        triplanar = false;
+        triplanarScale = 1.0f;
+        triplanarBlend = 0.1f;
         for (int i = 0; i < 6; i++) envMapPaths[i][0] = '\0';
     }
 

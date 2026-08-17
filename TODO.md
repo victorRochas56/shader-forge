@@ -1,5 +1,8 @@
 IDEAS:
 
+- proper freeing of resources,
+also ability to save whole nodes (+ children, material, emitter etc) as a "prefab" that can be dragged and dropped into the scene.
+
 - have resource loading on a seperate thread, 
 allocate a tmp / stand-in resource handle that
 gets swapped out with the real thing when it's loaded.

@@ -31,6 +31,7 @@ FragmentOutput litFragImpl<let GI_MODE : int, let DEBUG_CASCADES : bool>(VertexO
     bool hasMetallic  = (flags & (1u << 3)) != 0;
     bool hasNormal    = (flags & (1u << 4)) != 0;
     bool alphaClip    = (flags & (1u << 5)) != 0;
+    bool triplanar    = (flags & (1u << 6)) != 0;
 
     SamplerState smp = samplers[UF.indicesA.x];
 
@@ -47,13 +48,42 @@ FragmentOutput litFragImpl<let GI_MODE : int, let DEBUG_CASCADES : bool>(VertexO
         giTaps = sampleAmbientCubeTaps(faceIndices, UF.indicesB.y, UF.voxelViewProjection, input.worldPos, input.normal);
     }
 
-    // All four material fetches issued back-to-back with no control flow between them, so their
-    // latencies overlap instead of serializing. Absent maps point at 1x1 defaults (renderer side),
-    // making every index safe to sample.
-    float4 albedo    = textures[input.texIndices.x].Sample(smp, uv);
-    float4 roughTex  = textures[input.texIndices.y].Sample(smp, uv);
-    float4 metalTex  = textures[input.texIndices.z].Sample(smp, uv);
-    float3 normalTex = textures[input.texIndices.w].Sample(smp, uv).rgb;
+    float3 N_world = normalize(input.normal);
+
+    // Absent maps point at 1x1 defaults (renderer side), making every index safe to sample.
+    // Triplanar needs three fetches per map plus its own tangent frames, so it gets a separate
+    // path rather than paying for the projections everywhere. The branch is instance-uniform —
+    // flags come from per-draw material data — so no wave actually diverges on it.
+    float4 albedo;
+    float4 roughTex;
+    float4 metalTex;
+    float3 N;
+    if (triplanar) {
+        TriplanarBasis tb = buildTriplanarBasis(input.worldPos, N_world, input.matParams.w, asfloat(input.matInfo.w));
+        albedo   = sampleTriplanar(textures[input.texIndices.x], smp, tb);
+        roughTex = sampleTriplanar(textures[input.texIndices.y], smp, tb);
+        metalTex = sampleTriplanar(textures[input.texIndices.z], smp, tb);
+        N = hasNormal ? triplanarNormal(textures[input.texIndices.w], smp, tb, N_world) : N_world;
+    } else {
+        // All four fetches issued back-to-back with no control flow between them, so their
+        // latencies overlap instead of serializing.
+        albedo             = textures[input.texIndices.x].Sample(smp, uv);
+        roughTex           = textures[input.texIndices.y].Sample(smp, uv);
+        metalTex           = textures[input.texIndices.z].Sample(smp, uv);
+        float3 normalTex   = textures[input.texIndices.w].Sample(smp, uv).rgb;
+
+        if (hasNormal) {
+            float3 normalMap = normalTex * 2.0 - 1.0;
+            normalMap.y *= -1.0;
+            normalMap = normalize(normalMap);
+            float3 T = normalize(input.tangent);
+            T = normalize(T - dot(T, N_world) * N_world);
+            float3 B = normalize(cross(N_world, T));
+            N = normalize(mul(normalMap, float3x3(T, B, N_world)));
+        } else {
+            N = N_world;
+        }
+    }
 
     // Base colour factor. Tints the albedo map, and is the whole colour when there is no map —
     // absent albedo resolves to the 1x1 white default, so the multiply is the only thing there.
@@ -65,20 +95,6 @@ FragmentOutput litFragImpl<let GI_MODE : int, let DEBUG_CASCADES : bool>(VertexO
 
     float roughness = hasRoughness ? roughTex.r : input.matParams.y;
     float metallic  = hasMetallic  ? metalTex.r : input.matParams.x;
-
-    float3 N_world = normalize(input.normal);
-    float3 N;
-    if (hasNormal) {
-        float3 normalMap = normalTex * 2.0 - 1.0;
-        normalMap.y *= -1.0;
-        normalMap = normalize(normalMap);
-        float3 T = normalize(input.tangent);
-        T = normalize(T - dot(T, N_world) * N_world);
-        float3 B = normalize(cross(N_world, T));
-        N = normalize(mul(normalMap, float3x3(T, B, N_world)));
-    } else {
-        N = N_world;
-    }
 
     float3 cameraPos = UF.cameraPosExtent.xyz;
     float3 cameraForward = UF.cameraForwardGI.xyz;

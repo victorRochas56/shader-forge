@@ -100,7 +100,7 @@ static const float CONE_TAN = 0.577; // tan(30°) half-angle
 // 2^8 and any coverage at all reads as solid, so a cone crossing an atrium is killed by the arcades
 // sitting at the edge of its footprint. This is the leak/darkness trade knob: 1 disables the
 // correction (raw compositing, thin ceilings leak sky), higher occludes harder in open space.
-static const float CONE_DENSITY_MAX = 4.0;
+static const float CONE_DENSITY_MAX = 8.0;
 
 // Cap on the cone's footprint, as a mip level. This is what makes occlusion selective on an
 // isotropic chain: an occluder only reads as opaque while the footprint is comparable to its own

@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstdio>
 #include <unordered_map>
+#include <unordered_set>
 
 void traverseNodeTree(GUI& gui, Node& node, uint32_t level, uint32_t selectedNode, SceneGraph& sceneGraph) {
     std::string displayText = "";
@@ -171,6 +172,13 @@ void showMaterialEditor(GUI& gui, MaterialEditorState& state, Scene& scene, Bind
     if (state.alphaClip) {
         gui.sliderFloat("Alpha Cutoff", &state.alphaCutoff, 0.0f, 1.0f);
     }
+    gui.checkbox("Triplanar", &state.triplanar);
+    if (state.triplanar) {
+        // Scale is tiles per world unit; blend is the crossfade width between the projection
+        // axes — low keeps the seams crisp, high smears them together.
+        gui.sliderFloat("Triplanar Scale", &state.triplanarScale, 0.01f, 10.0f);
+        gui.sliderFloat("Triplanar Blend", &state.triplanarBlend, 0.01f, 1.0f);
+    }
 
     gui.separator();
     gui.textf("Environment Map (6 faces)");
@@ -236,10 +244,13 @@ void showMaterialEditor(GUI& gui, MaterialEditorState& state, Scene& scene, Bind
         }
         if(state.flipNormal) matFlags |= MaterialFlags::FLIP_NORMAL;
         if(state.alphaClip) matFlags |= MaterialFlags::ALPHA_CLIP;
+        if(state.triplanar) matFlags |= MaterialFlags::TRIPLANAR;
 
         mat.flags = static_cast<MaterialFlags>(matFlags);
         mat.alphaClip = state.alphaClip;
         mat.alphaCutoff = state.alphaCutoff;
+        mat.triplanarScale = state.triplanarScale;
+        mat.triplanarBlend = state.triplanarBlend;
 
         // environment map
         bool hasEnvMap = false;
@@ -505,35 +516,190 @@ void showToggles(GUI& gui, RenderFeatures& f){
     gui.endWindow();
 }
 
-void showScenesMenu(GUI& gui, Scene& scene, BindlessSystem& bindless, RenderBuffers& buffers,SceneLoader& sceneLoader){
-    // Offset is signed screen px from the anchored corner, so a Right anchor insets with -x.
-    if(!gui.beginWindow("Scene Manager", nullptr, glm::vec2(510, 90), glm::vec2(0, 0),
-                        GUIAnchor::Top | GUIAnchor::Right, GUIWindowFixed | GUIWindowNoSavedSettings)) return;
-    static char saveName[128] = "scene";
-    gui.setNextItemWidth(150.0f);
-    gui.inputTextWithHint("##saveName", "scene name", saveName, sizeof(saveName));
-    gui.sameLine();
-    if(gui.button("Save Scene") && saveName[0] != '\0'){
-        std::string path(saveName);
-        if(std::filesystem::path(path).extension() != ".scn") path += ".scn";
-        sceneLoader.saveScene(path, scene);
+// ---- unused-resource reclaim ----
+
+// Defined below with the skybox picker; a cubemap's AssetManager key is a '|'-joined face list,
+// which is not worth showing in a list.
+static std::string skyboxLabelFromKey(const std::string& key);
+static std::string formatBytes(vk::DeviceSize bytes);
+static float mipChainFactor(uint32_t mipLevels);
+
+struct UnusedEntry {
+    uint32_t index = 0;
+    std::string label;
+    vk::DeviceSize bytes = 0;
+    bool selected = true;
+};
+
+struct UnusedScan {
+    std::vector<UnusedEntry> meshes;
+    std::vector<UnusedEntry> textures;
+    bool empty() const { return meshes.empty() && textures.empty(); }
+};
+
+// Everything AssetManager still holds that nothing in the scene points at. Clearing or reloading a
+// scene deliberately leaves meshes and textures resident for reuse, so they accumulate until
+// something releases them.
+//
+// Texture candidates come only from AssetManager's file caches: render targets, the shadow atlas
+// and the 1x1 material defaults are allocated straight into the bindless set and never land there,
+// so they can't be offered up by mistake.
+static UnusedScan scanUnusedResources(Scene& scene, BindlessSystem& bindless) {
+    UnusedScan scan;
+    AssetManager& assetManager = scene.assetManager;
+
+    std::unordered_set<uint32_t> usedMeshes;
+    auto& nodes = scene.sceneGraph.getNodes();
+    for (uint32_t i = 1; i <= scene.sceneGraph.getLastNode(); i++) {
+        if (scene.sceneGraph.isNodeValid(i)) usedMeshes.insert(nodes[i].getMeshIndex());
     }
+    // Render entries cache the mesh index they were registered with, so one can outlive the node
+    // reference it came from. Anything the draw loop still walks counts as used.
+    for (const Scene::RenderEntry& entry : scene.renderEntries) usedMeshes.insert(entry.meshIndex);
+    for (uint32_t m = 0; m < assetManager.meshes.size(); m++) {
+        const Mesh& mesh = assetManager.meshes[m];
+        if (mesh.freed || usedMeshes.contains(m)) continue;
+        vk::DeviceSize bytes = (vk::DeviceSize)mesh.vertexCount * mesh.vertexStride
+                             + (vk::DeviceSize)mesh.indexCount * sizeof(uint32_t)
+                             + (vk::DeviceSize)mesh.positionCount * sizeof(glm::vec3);
+        scan.meshes.push_back({m, mesh.name.empty() ? "mesh " + std::to_string(m) : mesh.name, bytes, true});
+    }
+
+    // A material keeps its textures live whether or not a node uses it — it is still assignable
+    // from the material editor. Dropping an unwanted material first is what makes its maps unused.
+    std::unordered_set<uint32_t> usedTextures;
+    for (const Material& mat : scene.getMaterials()) {
+        usedTextures.insert({mat.albedoTextureIndex, mat.metallicTextureIndex, mat.roughnessTextureIndex,
+                             mat.normalTextureIndex, mat.environmentMapIndex, mat.thumbnailTextureIndex});
+    }
+    usedTextures.insert(scene.getSkyBox());
+    // Billboards and particle emitters hold texture indices of their own, outside the material table.
+    for (const auto& [nodeIndex, billboard] : scene.getBillboards()) usedTextures.insert(billboard.textureIndex);
+    for (const auto& [nodeIndex, emitter] : scene.getEmitters()) usedTextures.insert(emitter.textureIndex);
+
+    const std::vector<TextureResource>& texResources = bindless.descriptorSet->getTextureResources();
+    auto addTexture = [&](const std::string& label, uint32_t index, uint32_t faces) {
+        if (usedTextures.contains(index) || index >= texResources.size() || texResources[index].isEmpty()) return;
+        if (texResources[index].internal) return; // engine-owned, no scene reference to find
+        const TextureResource& tex = texResources[index];
+        vk::DeviceSize baseSize = (vk::DeviceSize)tex.width * tex.height * 4 * faces;
+        scan.textures.push_back({index, label, (vk::DeviceSize)((double)baseSize * mipChainFactor(tex.mipLevels)), true});
+    };
+    for (const auto& [path, index] : assetManager.loadedTextures) addTexture(path, index, 1);
+    for (const auto& [key, index] : assetManager.loadedCubemaps) addTexture(skyboxLabelFromKey(key), index, 6);
+
+    return scan;
+}
+
+// The listed set is a snapshot, so every entry is re-checked against a fresh scan before it is
+// released — the scene can change while the window sits open.
+static void freeSelectedResources(Scene& scene, BindlessSystem& bindless, const UnusedScan& selection) {
+    UnusedScan current = scanUnusedResources(scene, bindless);
+    auto listed = [](const std::vector<UnusedEntry>& list, uint32_t index) {
+        return std::any_of(list.begin(), list.end(), [&](const UnusedEntry& e) { return e.index == index; });
+    };
+    for (const UnusedEntry& e : selection.meshes)
+        if (e.selected && listed(current.meshes, e.index)) scene.assetManager.freeMesh(e.index);
+    for (const UnusedEntry& e : selection.textures)
+        if (e.selected && listed(current.textures, e.index)) scene.assetManager.freeTexture(e.index);
+}
+
+static void showFreeUnusedWindow(GUI& gui, Scene& scene, BindlessSystem& bindless, bool& open) {
+    // The list is held stable while the window is open so ticking boxes can't be undone by a
+    // rescan under the cursor; it refreshes when the window is (re)opened, and on demand.
+    static UnusedScan scan;
+    static bool wasOpen = false;
+    bool rescan = open && !wasOpen;
+    wasOpen = open;
+
+    if (!gui.beginWindow("Free Unused", &open, glm::vec2(460, 430), glm::vec2(-520, 110),
+                         GUIAnchor::Top | GUIAnchor::Right)) return;
+    if (rescan) scan = scanUnusedResources(scene, bindless);
+
+    auto setAll = [&](bool selected) {
+        for (UnusedEntry& e : scan.meshes) e.selected = selected;
+        for (UnusedEntry& e : scan.textures) e.selected = selected;
+    };
+    if (gui.button("Select All")) setAll(true);
     gui.sameLine();
-    if(gui.button("Load Scene")){
-        std::string path = openFileDialog("Scene Files\0*.scn\0All Files\0*.*\0");
-        if(!path.empty()){
-            sceneLoader.loadScene(path, scene, bindless, buffers,
-                                   buffers.modelMatrixBufferIndex,
-                                   buffers.lightBufferIndex);
+    if (gui.button("Select None")) setAll(false);
+    gui.sameLine();
+    if (gui.button("Rescan")) scan = scanUnusedResources(scene, bindless);
+    gui.separator();
+
+    auto listGroup = [&](const char* name, const char* id, std::vector<UnusedEntry>& entries) {
+        if (entries.empty()) return;
+        vk::DeviceSize groupBytes = 0;
+        for (const UnusedEntry& e : entries) groupBytes += e.bytes;
+        std::string header = std::string(name) + " (" + std::to_string(entries.size()) + ", " +
+                             formatBytes(groupBytes) + ")##" + id;
+        if (!gui.collapsingHeader(header, true)) return;
+        gui.pushID(id);
+        for (UnusedEntry& e : entries) {
+            gui.pushID(static_cast<int>(e.index));
+            gui.checkbox(e.label + "  (" + formatBytes(e.bytes) + ")", &e.selected);
+            gui.popID();
         }
+        gui.popID();
+    };
+
+    if (scan.empty()) {
+        gui.textf("Nothing unused - every mesh and texture is still referenced.");
+    } else {
+        listGroup("Meshes", "unusedMeshes", scan.meshes);
+        listGroup("Textures", "unusedTextures", scan.textures);
     }
-    gui.sameLine();
-    if(gui.button("Clear Scene")){
-        sceneLoader.clearScene(scene, bindless, buffers,
-                                buffers.modelMatrixBufferIndex,
-                                buffers.lightBufferIndex);
+
+    vk::DeviceSize selectedBytes = 0;
+    uint32_t selectedCount = 0;
+    for (const UnusedEntry& e : scan.meshes)   if (e.selected) { selectedBytes += e.bytes; selectedCount++; }
+    for (const UnusedEntry& e : scan.textures) if (e.selected) { selectedBytes += e.bytes; selectedCount++; }
+
+    gui.separator();
+    gui.textf("%u selected | ~%s", selectedCount, formatBytes(selectedBytes).c_str());
+    if (selectedCount > 0 && gui.button("Free Selected")) {
+        freeSelectedResources(scene, bindless, scan);
+        scan = scanUnusedResources(scene, bindless);
     }
     gui.endWindow();
+}
+
+void showScenesMenu(GUI& gui, Scene& scene, BindlessSystem& bindless, RenderBuffers& buffers,SceneLoader& sceneLoader){
+    static bool showFreeUnused = false;
+    // Offset is signed screen px from the anchored corner, so a Right anchor insets with -x.
+    if(gui.beginWindow("Scene Manager", nullptr, glm::vec2(510, 116), glm::vec2(0, 0),
+                        GUIAnchor::Top | GUIAnchor::Right, GUIWindowFixed | GUIWindowNoSavedSettings)) {
+        static char saveName[128] = "scene";
+        gui.setNextItemWidth(150.0f);
+        gui.inputTextWithHint("##saveName", "scene name", saveName, sizeof(saveName));
+        gui.sameLine();
+        if(gui.button("Save Scene") && saveName[0] != '\0'){
+            std::string path(saveName);
+            if(std::filesystem::path(path).extension() != ".scn") path += ".scn";
+            sceneLoader.saveScene(path, scene);
+        }
+        gui.sameLine();
+        if(gui.button("Load Scene")){
+            std::string path = openFileDialog("Scene Files\0*.scn\0All Files\0*.*\0");
+            if(!path.empty()){
+                sceneLoader.loadScene(path, scene, bindless, buffers,
+                                       buffers.modelMatrixBufferIndex,
+                                       buffers.lightBufferIndex);
+            }
+        }
+        gui.sameLine();
+        if(gui.button("Clear Scene")){
+            sceneLoader.clearScene(scene, bindless, buffers,
+                                    buffers.modelMatrixBufferIndex,
+                                    buffers.lightBufferIndex);
+        }
+        if(gui.button("Free Unused")) showFreeUnused = true;
+        gui.endWindow();
+    }
+    // Drawn outside the Scene Manager's scope on purpose: it is its own top-level window, and
+    // collapsing the manager must not take it down with it. Called unconditionally so it still
+    // sees the frame it gets closed on — that edge is what arms the next open's rescan.
+    showFreeUnusedWindow(gui, scene, bindless, showFreeUnused);
 }
 
 // ---- skybox picker ----
@@ -822,7 +988,10 @@ void showMeshList(GUI& gui, Scene& scene, BindlessSystem& bindless, uint32_t whi
             if (mesh.freed) continue;
 
             // Use the rendered thumbnail once available, otherwise the white texture as a placeholder.
-            uint32_t texIndex = (mesh.thumbnailTextureIndex != 0xFFFFFFFF) ? mesh.thumbnailTextureIndex : whiteTextureIndex;
+            // A thumbnail slot that is gone (freed, or not rendered yet) falls back the same way
+            // rather than dropping the button — the row would otherwise be a label with nothing to drag.
+            uint32_t texIndex = mesh.thumbnailTextureIndex;
+            if (texIndex >= textures.size() || textures[texIndex].isEmpty()) texIndex = whiteTextureIndex;
             if (texIndex < textures.size() && !textures[texIndex].isEmpty()) {
                 gui.imageButton(mesh.name, texIndex, glm::vec2(64.0f, 64.0f));
                 // On press: spawn a node with this mesh and start tracking it. The press-capture

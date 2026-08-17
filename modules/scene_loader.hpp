@@ -269,6 +269,10 @@ class SceneLoader {
                 material.alphaClip = (std::stoi(value) != 0);
             } else if (key == "AlphaCutoff") {
                 material.alphaCutoff = std::stof(value);
+            } else if (key == "TriplanarScale") {
+                material.triplanarScale = std::stof(value);
+            } else if (key == "TriplanarBlend") {
+                material.triplanarBlend = std::stof(value);
             } else if (key == "AlbedoTexture") {
                 albedoPath = value;
             } else if (key == "MetallicTexture") {
@@ -690,6 +694,8 @@ class SceneLoader {
             ofs << "    Roughness : " << mat.roughness << std::endl;
             ofs << "    AlphaClip : " << (mat.alphaClip ? 1 : 0) << std::endl;
             ofs << "    AlphaCutoff : " << mat.alphaCutoff << std::endl;
+            ofs << "    TriplanarScale : " << mat.triplanarScale << std::endl;
+            ofs << "    TriplanarBlend : " << mat.triplanarBlend << std::endl;
 
             // Save texture paths
             std::string albedoPath = scene.assetManager.getTexturePathFromIndex(mat.albedoTextureIndex);

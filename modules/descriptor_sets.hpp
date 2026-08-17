@@ -47,6 +47,11 @@ struct TextureResource {
     // eDepthReadOnlyOptimal so drivers can keep Z-compression instead of decompressing on the
     // transition out of attachment layout. Stored so updateTexture can't silently reset it.
     vk::ImageLayout descriptorLayout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    // Engine-owned: loaded from disk like any asset, but referenced only by engine code (editor
+    // icons, engine billboards), so nothing in the scene ever points at it. Tools that decide a
+    // texture is unused by walking scene references must skip these — see AssetManager::
+    // loadInternalTexture. Cleared on reset so a recycled slot doesn't inherit the tag.
+    bool internal = false;
     void reset() {
         imageView.reset();
         image.reset();
@@ -56,6 +61,7 @@ struct TextureResource {
         width = 0;
         height = 0;
         mipLevels = 1;
+        internal = false;
     }
     bool isEmpty() const { return !imageView.has_value(); }
 };
@@ -405,6 +411,14 @@ class DescriptorSet {
     }
 
     uint32_t getTextureMipLevels(uint32_t index) const { return textureResources[index].mipLevels; }
+
+    // See TextureResource::internal.
+    void setTextureInternal(uint32_t index, bool internal = true) {
+        if (index < textureResources.size()) textureResources[index].internal = internal;
+    }
+    bool isTextureInternal(uint32_t index) const {
+        return index < textureResources.size() && textureResources[index].internal;
+    }
 
     // Registers an existing image view as a compute-writable storage image, returns its binding index.
     // The view/image lifetime is owned elsewhere (e.g. a texture slot) — this only writes the descriptor.

@@ -11,7 +11,9 @@ struct LitInstanceData {
     float metallic;
     float roughness;
     float alphaCutoff;
-    uint packedColor; // material base colour, RGBA8 linear (was padding)
+    uint packedColor;     // material base colour, RGBA8 linear (was padding)
+    float triplanarScale; // texture tiles per world unit, TRIPLANAR materials only
+    float triplanarBlend; // axis crossfade width in (0,1]; ~0 snaps to the dominant axis
 };
 
 // Unpacks LitInstanceData.packedColor. Mirrors packColorRGBA8() in structs.hpp; linear, not sRGB,
@@ -180,8 +182,11 @@ struct VertexOutput
     // that per-fragment instance -> texture-index -> descriptor -> sample chain was the lit
     // pass's dominant stall. Attribute reads don't hit the memory scoreboard.
     nointerpolation uint4  texIndices : TEX_INDICES; // albedo, roughness, metallic, normal
-    nointerpolation uint3  matInfo    : MAT_INFO;    // x environmentMapIndex, y materialFlags, z packed base colour
-    nointerpolation float3 matParams  : MAT_PARAMS;  // x metallic, y roughness, z alphaCutoff
+    // The triplanar params ride in the spare .w of these two: both already cost a full vec4
+    // location each, so an extra field would have been a location for two floats. matInfo.w is
+    // the blend's bit pattern, not a number — read it back with asfloat().
+    nointerpolation uint4  matInfo    : MAT_INFO;    // x environmentMapIndex, y materialFlags, z packed base colour, w asuint(triplanarBlend)
+    nointerpolation float4 matParams  : MAT_PARAMS;  // x metallic, y roughness, z alphaCutoff, w triplanarScale
 };
 
 // Shared descriptor bindings
@@ -484,6 +489,73 @@ float3 getPosFromMM(int index){
     return float3(mat[0].w, mat[1].w, mat[2].w);
 }
 
+// --- Triplanar mapping (MaterialFlags::TRIPLANAR) --------------------------------------------
+// Materials flagged TRIPLANAR ignore the mesh UVs entirely: world position is projected onto the
+// three axis planes and the results blended by the geometric normal. Costs 3x the fetches per
+// map, so callers keep it behind a branch.
+struct TriplanarBasis {
+    float3 weights;  // per-plane blend weights, sum to 1
+    float2 uvX;      // YZ plane, used where the normal points along X
+    float2 uvY;      // XZ plane
+    float2 uvZ;      // XY plane
+    float3 axisSign; // ±1 per axis; mirrors the projections so back faces don't read reversed
+};
+
+// scale is tiles per world unit. blend is the crossfade width in (0,1]: near 0 snaps to the
+// dominant axis (crisp seams, no stretching), 1 is a plain linear |N| blend (soft, smeary).
+TriplanarBasis buildTriplanarBasis(float3 worldPos, float3 N, float scale, float blend)
+{
+    TriplanarBasis tb;
+    float3 p = worldPos * scale;
+
+    // Rescale so the dominant axis is exactly 1 before the power. Without it a sharp blend
+    // underflows all three weights to zero and the normalize below produces NaNs.
+    float3 an = abs(N);
+    an /= max(max(an.x, an.y), max(an.z, 1e-5));
+    float3 w = pow(an, clamp(1.0 / max(blend, 1e-3), 1.0, 128.0));
+    tb.weights = w / max(w.x + w.y + w.z, 1e-5);
+
+    tb.axisSign = float3(N.x < 0.0 ? -1.0 : 1.0, N.y < 0.0 ? -1.0 : 1.0, N.z < 0.0 ? -1.0 : 1.0);
+    tb.uvX = float2(p.z *  tb.axisSign.x, p.y);
+    tb.uvY = float2(p.x *  tb.axisSign.y, p.z);
+    tb.uvZ = float2(p.x * -tb.axisSign.z, p.y);
+    return tb;
+}
+
+float4 sampleTriplanar(Texture2D tex, SamplerState smp, TriplanarBasis tb)
+{
+    return tex.Sample(smp, tb.uvX) * tb.weights.x
+         + tex.Sample(smp, tb.uvY) * tb.weights.y
+         + tex.Sample(smp, tb.uvZ) * tb.weights.z;
+}
+
+// Whiteout blend. The mesh tangents are UV-derived and meaningless once the UVs are gone, so each
+// projection axis supplies its own tangent frame; the three tangent-space normals are folded onto
+// the geometric normal and summed in world space. Returns a normalized world-space normal.
+float3 triplanarNormal(Texture2D tex, SamplerState smp, TriplanarBasis tb, float3 N)
+{
+    float3 tX = tex.Sample(smp, tb.uvX).rgb * 2.0 - 1.0;
+    float3 tY = tex.Sample(smp, tb.uvY).rgb * 2.0 - 1.0;
+    float3 tZ = tex.Sample(smp, tb.uvZ).rgb * 2.0 - 1.0;
+
+    // Same green-channel flip the UV path applies.
+    tX.y = -tX.y;
+    tY.y = -tY.y;
+    tZ.y = -tZ.y;
+
+    // Undo the UV mirroring from buildTriplanarBasis, else the detail flips on back faces.
+    tX.x *=  tb.axisSign.x;
+    tY.x *=  tb.axisSign.y;
+    tZ.x *= -tb.axisSign.z;
+
+    // Fold in the geometric normal, then swizzle each plane's frame back to world axes.
+    float3 wX = float3(abs(tX.z) * N.x, tX.y + N.y, tX.x + N.z);
+    float3 wY = float3(tY.x + N.x, abs(tY.z) * N.y, tY.y + N.z);
+    float3 wZ = float3(tZ.x + N.x, tZ.y + N.y, abs(tZ.z) * N.z);
+
+    return normalize(wX * tb.weights.x + wY * tb.weights.y + wZ * tb.weights.z);
+}
+
 VertexOutput litVertMain(uint vertexID, uint instanceID, uint drawID)
 {
     LitMeshDrawData mesh = pc.litMeshDrawData[drawID + pc.drawIDOffset];
@@ -504,8 +576,8 @@ VertexOutput litVertMain(uint vertexID, uint instanceID, uint drawID)
     output.drawID = drawID;
     output.instanceID = absInstance;
     output.texIndices = uint4(draw.albedoTextureIndex, draw.roughnessTextureIndex, draw.metallicTextureIndex, draw.normalTextureIndex);
-    output.matInfo = uint3(draw.environmentMapIndex, draw.materialFlags, draw.packedColor);
-    output.matParams = float3(draw.metallic, draw.roughness, draw.alphaCutoff);
+    output.matInfo = uint4(draw.environmentMapIndex, draw.materialFlags, draw.packedColor, asuint(draw.triplanarBlend));
+    output.matParams = float4(draw.metallic, draw.roughness, draw.alphaCutoff, draw.triplanarScale);
     return output;
 }
 

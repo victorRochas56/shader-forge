@@ -193,6 +193,13 @@ One immediate-mode widget's persistent state: which retained element stands in f
 struct GUIItemSlot {
     uint32_t element = 0;
     uint64_t lastFrame = 0;
+    // Elements for the 2nd..nth call that landed on this id in one frame. A list keyed on data —
+    // a mesh name, a texture path — repeats a label as soon as two assets share a name, and without
+    // one rect each the later call would take over the earlier one's and leave a hole in the list.
+    // Only the elements fork; the per-id state below stays shared.
+    std::vector<uint32_t> duplicates;
+    // occurrences claimed so far this frame, i.e. the highest index into `duplicates` in use
+    uint32_t uses = 0;
     // set while a drag changes the value, read and cleared by isItemDeactivatedAfterEdit
     bool editedWhileActive = false;
     // collapsing header / tree node. The caller keeps no bool of its own
@@ -558,16 +565,22 @@ public:
         pendingTooltip.clear();
 
         for (auto it = imItems.begin(); it != imItems.end();) {
+            GUIItemSlot& slot = it->second;
             // Either untouched this frame, or already dead because an ancestor was retired first
             // and took the subtree with it.
-            if (it->second.lastFrame != frameCounter || get(it->second.element) == nullptr) {
-                removeElement(it->second.element);
+            if (slot.lastFrame != frameCounter || get(slot.element) == nullptr) {
+                removeElement(slot.element);
+                for (uint32_t duplicate : slot.duplicates) removeElement(duplicate);
                 dragAccum.erase(it->first);
                 sliderAccum.erase(it->first);
                 caretPos.erase(it->first);
                 inputBuffers.erase(it->first);
                 it = imItems.erase(it);
             } else {
+                // the label repeated fewer times than last frame — the occurrences nobody claimed
+                // retire on their own, the same rule as an item that stopped being drawn
+                for (size_t i = slot.uses; i < slot.duplicates.size(); i++) removeElement(slot.duplicates[i]);
+                slot.duplicates.resize(slot.uses);
                 ++it;
             }
         }
@@ -1002,10 +1015,14 @@ public:
                              .hitTestable = false,
                              .anchor = GUIAnchor::Top | GUIAnchor::Left});
 
-        // after the fill, so the value reads on top of it rather than under it
-        char valueText[64];
-        snprintf(valueText, sizeof(valueText), format, *value);
-        captionChild(hashID("##value", id), track, glm::vec2(width, height), valueText, style.text);
+        // after the fill, so the value reads on top of it rather than under it. An empty format is
+        // sliderInt passing through: it writes the caption itself, on the same id, and two claims on
+        // one id in a frame now mean two elements rather than one.
+        if (format != nullptr && format[0] != '\0') {
+            char valueText[64];
+            snprintf(valueText, sizeof(valueText), format, *value);
+            captionChild(hashID("##value", id), track, glm::vec2(width, height), valueText, style.text);
+        }
         
         if(samelineLabel)
             labelAfter(label);
@@ -2185,6 +2202,23 @@ private:
         dst.clipMax = clipMax;
     }
 
+    /*
+    The element this id's next call of the frame gets, and the claim on it.
+
+    First use in a frame is the slot's own element. A second means the caller wrote the same label
+    twice — routine in a list keyed on data, where two assets can share a name — and each repeat
+    gets an element of its own rather than stealing the first one's, which would leave every
+    occurrence but the last unplaced. Per-id state (open, editing, the caret) stays shared: the
+    elements fork, the widget's identity does not.
+    */
+    uint32_t& elementForThisUse(GUIItemSlot& slot) {
+        uint32_t use = slot.lastFrame == frameCounter ? slot.uses + 1 : 0;
+        slot.uses = use;
+        slot.lastFrame = frameCounter;
+        if (use == 0) return slot.element;        if (slot.duplicates.size() < use) slot.duplicates.resize(use, 0);
+        return slot.duplicates[use - 1];
+    }
+
     // Find-or-create the element behind one widget call, placed at the current window's cursor.
     uint32_t acquireItem(uint64_t id, const GUIRect& prototype) {
         uint32_t container = currentWindow();
@@ -2203,18 +2237,17 @@ private:
         placed.anchor = GUIAnchor::Top | GUIAnchor::Left;
         placed.offset = advanceCursor(*layout, placed.size);
 
-        GUIItemSlot& slot = imItems[id];
-        slot.lastFrame = frameCounter;
-        if (get(slot.element) == nullptr) {
-            slot.element = addElement(placed, root);
+        uint32_t& element = elementForThisUse(imItems[id]);
+        if (get(element) == nullptr) {
+            element = addElement(placed, root);
         } else {
-            if (elements[slot.element].parent != root) setParent(slot.element, root);
-            applyPrototype(elements[slot.element], placed);
+            if (elements[element].parent != root) setParent(element, root);
+            applyPrototype(elements[element], placed);
         }
 
-        lastItem = slot.element;
+        lastItem = element;
         lastItemID = id;
-        return slot.element;
+        return element;
     }
 
     // Same, for a widget's internal parts (a slider's fill bar). Anchored inside its parent rather
@@ -2222,15 +2255,15 @@ private:
     uint32_t acquireChild(uint64_t id, uint32_t parent, const GUIRect& prototype) {
         if (get(parent) == nullptr) return 0;
 
-        GUIItemSlot& slot = imItems[id];
-        slot.lastFrame = frameCounter;
-        if (get(slot.element) == nullptr) {
-            slot.element = addElement(prototype, parent);
+        // forks with its owner: a duplicate-labelled widget's parts are one call per occurrence too
+        uint32_t& element = elementForThisUse(imItems[id]);
+        if (get(element) == nullptr) {
+            element = addElement(prototype, parent);
         } else {
-            if (elements[slot.element].parent != parent) setParent(slot.element, parent);
-            applyPrototype(elements[slot.element], prototype);
+            if (elements[element].parent != parent) setParent(element, parent);
+            applyPrototype(elements[element], prototype);
         }
-        return slot.element;
+        return element;
     }
 
     // Scope shared by windows and popups: ids nest, and unlabelled items count from zero inside
@@ -2253,15 +2286,14 @@ private:
 
     // Find-or-create an element hanging directly off the screen rect, re-appended every frame.
     uint32_t acquireOverlay(uint64_t id, const GUIRect& prototype) {
-        GUIItemSlot& slot = imItems[id];
-        slot.lastFrame = frameCounter;
-        if (get(slot.element) == nullptr) {
-            slot.element = addElement(prototype, 0);
+        uint32_t& element = elementForThisUse(imItems[id]);
+        if (get(element) == nullptr) {
+            element = addElement(prototype, 0);
         } else {
-            applyPrototype(elements[slot.element], prototype);
-            setParent(slot.element, 0);
+            applyPrototype(elements[element], prototype);
+            setParent(element, 0);
         }
-        return slot.element;
+        return element;
     }
 
     // Title bar, collapse toggle and close button. Returns whether the window is collapsed.
