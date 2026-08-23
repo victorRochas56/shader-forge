@@ -31,4 +31,5 @@ void showNodeLightInfo(GUI& gui, Node& node, Scene& scene, BindlessSystem& bindl
 void showNodeVolumeInfo(GUI& gui, Node& node, Scene& scene);
 void showNodeEmitterInfo(GUI& gui, Node& node, Scene& scene, BindlessSystem& bindless, const RenderBuffers& buffers);
 void showNodeTransformInfo(GUI& gui, Node& node, Scene& scene);
+void showTemplateInfo(GUI& gui, Node& node, Scene& scene);
 

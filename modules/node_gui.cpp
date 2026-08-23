@@ -35,7 +35,7 @@ void showNodeInfo(GUI& gui, Node& node, Scene& scene, BindlessSystem& bindless, 
         }
         if (step < 1e-3f) step = 0.5f;
 
-        uint32_t copyIndex = scene.sceneGraph.duplicateNode(node, node.relativePosition + glm::vec3(step, 0.0f, 0.0f));
+        uint32_t copyIndex = scene.sceneGraph.duplicateNodeToScene(node, node.relativePosition + glm::vec3(step, 0.0f, 0.0f));
         // Selecting the copy makes a second click step clear of the first rather than stacking
         // another copy on the same spot.
         scene.sceneGraph.deSelectNode();
@@ -48,6 +48,7 @@ void showNodeInfo(GUI& gui, Node& node, Scene& scene, BindlessSystem& bindless, 
     showNodeVolumeInfo(gui, node, scene);
     showNodeEmitterInfo(gui, node, scene, bindless, buffers);
     showNodeTransformInfo(gui, node, scene);
+    showTemplateInfo(gui,node,scene);
     node.transformDirty = true;
 
     gui.separator();
@@ -555,5 +556,14 @@ void showTransformModifiers(GUI& gui) {
             gui.sliderFloat("Degrees", &Manip::snapAngleIncrement, 0.0f, 90.0f, "%.1f", false);
         }
         gui.endWindow();
+    }
+}
+
+char templateName[256];
+void showTemplateInfo(GUI& gui, Node& node, Scene& scene) {
+    gui.inputText("Template Name",templateName,sizeof(templateName));
+    if(gui.button("Make Template") && templateName[0] != '\0')
+    {
+        scene.addTemplate(node.getIndex(),templateName);
     }
 }

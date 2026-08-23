@@ -80,13 +80,15 @@ uint32_t SceneGraph::addNode(Node node) {
     return newIndex;
 }
 
-uint32_t SceneGraph::duplicateNode(const Node& src, glm::vec3 relativePosition) {
+uint32_t SceneGraph::duplicateNodeToScene(const Node& src, glm::vec3 relativePosition) {
     // Snapshot attachment handles before adding the copy: addNode re-creates the light/emitter,
     // and we must read them off the source, not the fresh copy (whose handles we clear).
     uint32_t srcLight = src.lightIndex;
     uint32_t srcEmitter = src.particleIndex;
+    uint32_t meshIndex = src.meshIndex;
 
     Node copy(src);
+    copy.meshIndex = MAX_MESHES;
     copy.lightIndex = MAX_LIGHTS;          // don't alias the source's GPU light...
     copy.particleIndex = 0xFFFFFFFF;       // ...or its emitter pool
     copy.relativePosition = relativePosition;
@@ -96,23 +98,60 @@ uint32_t SceneGraph::duplicateNode(const Node& src, glm::vec3 relativePosition) 
     uint32_t newIndex = addNode(copy);
     Node& newNode = nodes[newIndex];
 
-    // addNode wires the transform and the model-matrix slot but never touches the draw list —
-    // geometry only reaches it through addMeshToShader. Copying meshIndex/materialIndex is not
-    // enough: the render entry is keyed by node index, so the copy needs its own.
-    if (newNode.meshIndex < scene->assetManager.meshes.size() && newNode.materialIndex != 0xFFFFFFFF) {
+    // need to do this for proper ref counting of mesh
+    if (meshIndex < scene->assetManager.meshes.size()) {
+        NodeOps::assignMesh(newNode,meshIndex,*scene); // properly increases ref count
+    }
+    if(newNode.materialIndex != 0xFFFFFFFF) {
         const Material& material = scene->getMaterials()[newNode.materialIndex];
         scene->addMeshToShader(newIndex, material.shaderSource, material);
     }
-
-    if (srcLight != MAX_LIGHTS) {
+    // Handles can name a dead slot when src is a template node whose source was deleted, so
+    // look up rather than .at() — a missing payload means the copy simply spawns without it.
+    if (srcLight != MAX_LIGHTS && scene->getLights().contains(srcLight)) {
         Light light = scene->getLights().at(srcLight);
         NodeOps::assignLight(newNode, light, *scene, *bindless, buffers->lightBufferIndex);
     }
-    if (srcEmitter != 0xFFFFFFFF) {
+    if (srcEmitter != 0xFFFFFFFF && scene->getEmitters().contains(srcEmitter)) {
         ParticleEmitter emitter = scene->getEmitters().at(srcEmitter);
         NodeOps::assignEmitter(newNode, emitter, *scene, *bindless, *buffers);
     }
     return newIndex;
+}
+
+// Flatten a subtree into a standalone template array. Nodes are appended depth-first, so a node
+// always precedes its descendants, and parentIndex/firstChild/nextSibling are remapped to dst-local
+// indices — dst[0] is the subtree root, which keeps 0 readable as "no node" like in the graph.
+// Nothing is spawned into the scene: attachment handles keep pointing at the source's light/emitter
+// so placement can re-create them from the live payload, and the mesh takes a reference so it
+// stays resident once the source node is gone. Returns the dst index of the copied subtree root.
+uint32_t SceneGraph::duplicateNode(const Node& src, std::vector<Node>& dst) {
+    uint32_t dstIndex = static_cast<uint32_t>(dst.size());
+
+    Node copy(src);
+    copy.nodeIndex = dstIndex;
+    copy.parentIndex = 0; // patched below for children; the subtree root stays parentless
+    copy.firstChild = 0;
+    copy.nextSibling = 0;
+    copy.isSelected = false;
+    dst.push_back(copy);
+
+    if (src.meshIndex < scene->assetManager.meshes.size()) {
+        scene->assetManager.meshes[src.meshIndex].refCount++;
+    }
+
+    // Walk the source's children — the copy's links were just cleared.
+    uint32_t prevChild = 0;
+    uint32_t child = src.firstChild;
+    while (child != 0) {
+        uint32_t childDst = duplicateNode(nodes[child], dst);
+        dst[childDst].parentIndex = dstIndex;
+        if (prevChild == 0) dst[dstIndex].firstChild = childDst;
+        else                dst[prevChild].nextSibling = childDst;
+        prevChild = childDst;
+        child = nodes[child].nextSibling;
+    }
+    return dstIndex;
 }
 
 void SceneGraph::killNode(uint32_t idx) {
@@ -124,6 +163,10 @@ void SceneGraph::killNode(uint32_t idx) {
     node.alive = false;
     unlinkChild(idx);
     deallocateNodeGPU(node);
+
+    if(node.meshIndex < scene->assetManager.meshes.size()) {
+        scene->assetManager.meshes[node.meshIndex].refCount--;
+    }
 
     if(node.lightIndex != MAX_LIGHTS) {
         scene->removeLight(*bindless, buffers->lightBufferIndex, node.lightIndex);

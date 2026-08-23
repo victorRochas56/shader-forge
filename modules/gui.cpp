@@ -548,17 +548,9 @@ static UnusedScan scanUnusedResources(Scene& scene, BindlessSystem& bindless) {
     UnusedScan scan;
     AssetManager& assetManager = scene.assetManager;
 
-    std::unordered_set<uint32_t> usedMeshes;
-    auto& nodes = scene.sceneGraph.getNodes();
-    for (uint32_t i = 1; i <= scene.sceneGraph.getLastNode(); i++) {
-        if (scene.sceneGraph.isNodeValid(i)) usedMeshes.insert(nodes[i].getMeshIndex());
-    }
-    // Render entries cache the mesh index they were registered with, so one can outlive the node
-    // reference it came from. Anything the draw loop still walks counts as used.
-    for (const Scene::RenderEntry& entry : scene.renderEntries) usedMeshes.insert(entry.meshIndex);
     for (uint32_t m = 0; m < assetManager.meshes.size(); m++) {
         const Mesh& mesh = assetManager.meshes[m];
-        if (mesh.freed || usedMeshes.contains(m)) continue;
+        if (mesh.freed || mesh.refCount > 0) continue;
         vk::DeviceSize bytes = (vk::DeviceSize)mesh.vertexCount * mesh.vertexStride
                              + (vk::DeviceSize)mesh.indexCount * sizeof(uint32_t)
                              + (vk::DeviceSize)mesh.positionCount * sizeof(glm::vec3);
@@ -1070,4 +1062,16 @@ void showTraces(GUI& gui) {
         gui.textColored(indent + name + " : " + std::to_string(trace.averageDuration.count() * 1000.0) + " ms", glm::vec4(rgb, 1.0f));
     }
     gui.endWindow();
-};
+}
+
+void showTemplates(GUI& gui, Scene& scene, AssetManager& assetManager) {
+    if(!gui.beginWindow("Templates", nullptr, glm::vec2(200,200), glm::vec2(500,500))) return;
+    for(const auto& tmp : scene.templates) 
+    {
+        if(gui.button(tmp.first)) 
+        {
+            scene.placeTemplate(tmp.first,scene.activeCamera.position);
+        }
+    }
+    gui.endWindow();
+}

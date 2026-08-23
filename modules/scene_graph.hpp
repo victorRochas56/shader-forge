@@ -60,7 +60,11 @@ class SceneGraph {
     // Deep-copy an existing node (mesh, material, light, emitter) into a fresh node at the given
     // relative position. Attachments are re-created bound to the new node so they track its
     // transform instead of aliasing the source's GPU resources.
-    uint32_t duplicateNode(const Node& src, glm::vec3 relativePosition = glm::vec3(0.0f));
+    uint32_t duplicateNodeToScene(const Node& src, glm::vec3 relativePosition = glm::vec3(0.0f));
+    // Flatten a subtree into dst as a scene-independent template (dst[0] = subtree root, links
+    // remapped to dst-local indices). Returns the dst index of the copied root.
+    uint32_t duplicateNode(const Node& src, std::vector<Node>& dst);
+
     void removeNode(uint32_t index);
     void syncDirtyNodes();
     // Fans out model-matrix writes across frames-in-flight; call post-fence inside the frame loop.

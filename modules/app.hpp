@@ -250,6 +250,8 @@ class App {
         guiMark("skyboxMenu");
         showMeshList(gui, scene, bindless, renderer.defaultAlbedoIndex);
         guiMark("meshList");
+        showTemplates(gui, scene, scene.assetManager);
+        guiMark("templates");
         // after every widget call: retires anything this frame stopped drawing
         gui.endFrame();
         guiMark("render");

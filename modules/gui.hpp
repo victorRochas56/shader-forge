@@ -72,4 +72,5 @@ void showScenesMenu(GUI& gui, Scene& scene, BindlessSystem& bindless, RenderBuff
 void showSkyboxMenu(GUI& gui, Scene& scene);
 void showBufferAllocs(GUI& gui, DescriptorSet& descriptorSet, AssetManager& assetManager, const std::vector<DrawIndexedIndirectCommand>& indirectDraws);
 void showMeshList(GUI& gui, Scene& scene, BindlessSystem& bindless, uint32_t whiteTextureIndex);
+void showTemplates(GUI& gui, Scene& scene, AssetManager& assetManager);
 void showTraces(GUI& gui);
