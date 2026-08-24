@@ -61,6 +61,12 @@ class SceneGraph {
     // relative position. Attachments are re-created bound to the new node so they track its
     // transform instead of aliasing the source's GPU resources.
     uint32_t duplicateNodeToScene(const Node& src, glm::vec3 relativePosition = glm::vec3(0.0f));
+    // Spawn a copy of src under parentIndex with the given attachment payloads bound to the new
+    // node. Taking the payloads as arguments (instead of resolving src's handles against the scene)
+    // is what lets a template — whose payloads live in the template, not the scene — be placed.
+    uint32_t spawnNode(const Node& src, uint32_t parentIndex, glm::vec3 relativePosition,
+                       const Light* light = nullptr, const ParticleEmitter* emitter = nullptr,
+                       const Volume* volume = nullptr);
     // Flatten a subtree into dst as a scene-independent template (dst[0] = subtree root, links
     // remapped to dst-local indices). Returns the dst index of the copied root.
     uint32_t duplicateNode(const Node& src, std::vector<Node>& dst);

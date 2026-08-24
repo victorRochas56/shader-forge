@@ -36,7 +36,18 @@ class Scene {
     std::unordered_map<uint32_t, Volume>            volumes;
     std::unordered_map<uint32_t, Billboard>         billboards;
     std::vector<Material>                           materials;
-    std::unordered_map<std::string, std::vector<Node>> templates;
+
+    // A template is a subtree snapshot kept outside the graph: nodes flattened depth-first (index 0
+    // is the root) with parent/child/sibling links remapped to template-local indices, plus its own
+    // copies of the attachment payloads keyed by that same local index. Nothing in here indexes live
+    // scene state, so a template outlives its source node and serialises on its own.
+    struct NodeTemplate {
+        std::vector<Node>                             nodes;
+        std::unordered_map<uint32_t, Light>           lights;
+        std::unordered_map<uint32_t, ParticleEmitter> emitters;
+        std::unordered_map<uint32_t, Volume>          volumes;
+    };
+    std::unordered_map<std::string, NodeTemplate>   templates;
     
     Shader                                          fallbackLitShader;
     uint32_t                                        fallbackDefaultMaterialIndex = 0;
@@ -355,18 +366,29 @@ class Scene {
     }
 
     // --- templates -----------------------------------------------------
-    // A template is a flattened snapshot of a subtree (index 0 = root) held outside the graph.
-    // It is self-contained apart from its attachment handles, which still name the source node's
-    // light/emitter — placement reads those live payloads to re-create them, so a template outlives
-    // its source only for mesh/material/transform data.
     void addTemplate(uint32_t nodeIndex, const std::string& templateName) {
         if (!sceneGraph.isNodeValid(nodeIndex) || templateName.empty()) return;
 
-        std::vector<Node> nodes;
-        sceneGraph.duplicateNode(sceneGraph.getNode(nodeIndex), nodes);
+        NodeTemplate snapshot;
+        sceneGraph.duplicateNode(sceneGraph.getNode(nodeIndex), snapshot.nodes);
+
+        // Lift each attachment's payload into the template and drop the handle it came from. A
+        // stored handle would dangle as soon as the source node is deleted, and worse, its slot can
+        // later be handed to an unrelated light — which would make the template clone that one.
+        // duplicateNode leaves nodeIndex as the source's scene index for exactly this pass, since
+        // volumes are keyed by node; it is renumbered to the template-local index on the way out.
+        for (uint32_t i = 0; i < snapshot.nodes.size(); i++) {
+            Node& node = snapshot.nodes[i];
+            if (auto it = lights.find(node.lightIndex); it != lights.end()) snapshot.lights[i] = it->second;
+            if (auto it = particleEmitters.find(node.particleIndex); it != particleEmitters.end()) snapshot.emitters[i] = it->second;
+            if (auto it = volumes.find(node.nodeIndex); it != volumes.end()) snapshot.volumes[i] = it->second;
+            node.lightIndex = MAX_LIGHTS;
+            node.particleIndex = 0xFFFFFFFF;
+            node.nodeIndex = i;
+        }
 
         removeTemplate(templateName); // release the mesh refs of the template being replaced
-        templates[templateName] = std::move(nodes);
+        templates[templateName] = std::move(snapshot);
     }
 
     // Drops a template along with the mesh references its nodes held, so the meshes become
@@ -374,42 +396,59 @@ class Scene {
     void removeTemplate(const std::string& templateName) {
         auto it = templates.find(templateName);
         if (it == templates.end()) return;
-        for (const Node& node : it->second) {
-            if (node.meshIndex < assetManager.meshes.size()) assetManager.meshes[node.meshIndex].refCount--;
-        }
+        releaseTemplateMeshes(it->second.nodes);
         templates.erase(it);
     }
 
-    // Spawns one template node under parentIndex. duplicateNodeToScene re-binds mesh/material/light/
-    // emitter to the new node instead of aliasing the source's GPU resources.
-    uint32_t placeTemplateNode(const Node& templateNode, uint32_t parentIndex, glm::vec3 relativePosition) {
-        Node node(templateNode);
-        node.parentIndex = parentIndex; // template-local links mean nothing to the graph
-        node.firstChild = 0;
-        node.nextSibling = 0;
-        return sceneGraph.duplicateNodeToScene(node, relativePosition);
+    // Templates can't outlive the mesh table they index into, so a scene clear drops them all —
+    // same reasoning as releaseAllMeshes: after the graph is torn down the indices mean nothing.
+    void clearTemplates() {
+        for (auto& [name, tmpl] : templates) releaseTemplateMeshes(tmpl.nodes);
+        templates.clear();
+    }
+
+    // Spawns one template node under parentIndex, handing the graph the template's own payloads
+    // rather than letting it resolve handles against the scene.
+    uint32_t placeTemplateNode(const NodeTemplate& tmpl, uint32_t localIndex, uint32_t parentIndex, glm::vec3 relativePosition) {
+        auto light   = tmpl.lights.find(localIndex);
+        auto emitter = tmpl.emitters.find(localIndex);
+        auto volume  = tmpl.volumes.find(localIndex);
+        return sceneGraph.spawnNode(tmpl.nodes[localIndex], parentIndex, relativePosition,
+                                    light   != tmpl.lights.end()   ? &light->second   : nullptr,
+                                    emitter != tmpl.emitters.end() ? &emitter->second : nullptr,
+                                    volume  != tmpl.volumes.end()  ? &volume->second  : nullptr);
     }
 
     // Instantiates a template with its root at `position` (relative to parentIndex). Returns the
     // spawned root's node index, or 0 if the template is unknown or empty.
     uint32_t placeTemplate(const std::string& templateToPlace, glm::vec3 position, uint32_t parentIndex = SceneGraph::ROOT_INDEX) {
         auto it = templates.find(templateToPlace);
-        if (it == templates.end() || it->second.empty()) return 0;
-        const std::vector<Node>& srcNodes = it->second;
+        if (it == templates.end() || it->second.nodes.empty()) return 0;
+        const NodeTemplate& tmpl = it->second;
 
         // template-local index -> spawned node index. duplicateNode appends depth-first, so every
         // node precedes its children and instances[i] is always filled before its children read it.
-        std::vector<uint32_t> instances(srcNodes.size(), 0);
-        instances[0] = placeTemplateNode(srcNodes[0], parentIndex, position);
+        std::vector<uint32_t> instances(tmpl.nodes.size(), 0);
+        instances[0] = placeTemplateNode(tmpl, 0, parentIndex, position);
 
-        for (uint32_t i = 0; i < srcNodes.size(); i++) {
-            uint32_t child = srcNodes[i].firstChild;
+        for (uint32_t i = 0; i < tmpl.nodes.size(); i++) {
+            uint32_t child = tmpl.nodes[i].firstChild;
             while (child != 0) {
-                instances[child] = placeTemplateNode(srcNodes[child], instances[i], srcNodes[child].relativePosition);
-                child = srcNodes[child].nextSibling;
+                instances[child] = placeTemplateNode(tmpl, child, instances[i], tmpl.nodes[child].relativePosition);
+                child = tmpl.nodes[child].nextSibling;
             }
         }
         return instances[0];
+    }
+
+    // Gives back the reference each snapshotted node took on its mesh. Guarded because freeMesh
+    // zeroes refCount outright — an unsigned wrap here would pin the mesh as un-freeable forever.
+    void releaseTemplateMeshes(const std::vector<Node>& nodes) {
+        for (const Node& node : nodes) {
+            if (node.meshIndex >= assetManager.meshes.size()) continue;
+            Mesh& mesh = assetManager.meshes[node.meshIndex];
+            if (mesh.refCount > 0) mesh.refCount--;
+        }
     }
 
     // --- lit / lit-derived shaders (selectable per material) -----------

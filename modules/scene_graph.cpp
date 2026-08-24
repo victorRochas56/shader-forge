@@ -81,13 +81,29 @@ uint32_t SceneGraph::addNode(Node node) {
 }
 
 uint32_t SceneGraph::duplicateNodeToScene(const Node& src, glm::vec3 relativePosition) {
-    // Snapshot attachment handles before adding the copy: addNode re-creates the light/emitter,
-    // and we must read them off the source, not the fresh copy (whose handles we clear).
-    uint32_t srcLight = src.lightIndex;
-    uint32_t srcEmitter = src.particleIndex;
+    // Resolve the source's handles to payloads up front. A handle can name a dead slot, so look up
+    // rather than .at() — a missing payload just means the copy spawns without that attachment.
+    const Light* light = nullptr;
+    const ParticleEmitter* emitter = nullptr;
+    auto lightIt = scene->getLights().find(src.lightIndex);
+    if (lightIt != scene->getLights().end()) light = &lightIt->second;
+    auto emitterIt = scene->getEmitters().find(src.particleIndex);
+    if (emitterIt != scene->getEmitters().end()) emitter = &emitterIt->second;
+
+    // Volumes are deliberately left out: duplicating a volume node has never carried one over.
+    return spawnNode(src, src.parentIndex, relativePosition, light, emitter, nullptr);
+}
+
+uint32_t SceneGraph::spawnNode(const Node& src, uint32_t parentIndex, glm::vec3 relativePosition,
+                               const Light* light, const ParticleEmitter* emitter, const Volume* volume) {
+    // Snapshot the mesh before adding the copy: the fresh node starts with its handles cleared so
+    // it can't alias the source's GPU resources, and assignMesh re-takes the reference below.
     uint32_t meshIndex = src.meshIndex;
 
     Node copy(src);
+    copy.parentIndex = parentIndex;
+    copy.firstChild = 0;                   // src may carry template-local links, which mean
+    copy.nextSibling = 0;                  // nothing to the graph — addNode relinks it anyway
     copy.meshIndex = MAX_MESHES;
     copy.lightIndex = MAX_LIGHTS;          // don't alias the source's GPU light...
     copy.particleIndex = 0xFFFFFFFF;       // ...or its emitter pool
@@ -106,30 +122,23 @@ uint32_t SceneGraph::duplicateNodeToScene(const Node& src, glm::vec3 relativePos
         const Material& material = scene->getMaterials()[newNode.materialIndex];
         scene->addMeshToShader(newIndex, material.shaderSource, material);
     }
-    // Handles can name a dead slot when src is a template node whose source was deleted, so
-    // look up rather than .at() — a missing payload means the copy simply spawns without it.
-    if (srcLight != MAX_LIGHTS && scene->getLights().contains(srcLight)) {
-        Light light = scene->getLights().at(srcLight);
-        NodeOps::assignLight(newNode, light, *scene, *bindless, buffers->lightBufferIndex);
-    }
-    if (srcEmitter != 0xFFFFFFFF && scene->getEmitters().contains(srcEmitter)) {
-        ParticleEmitter emitter = scene->getEmitters().at(srcEmitter);
-        NodeOps::assignEmitter(newNode, emitter, *scene, *bindless, *buffers);
-    }
+    if (light)   NodeOps::assignLight(newNode, *light, *scene, *bindless, buffers->lightBufferIndex);
+    if (emitter) NodeOps::assignEmitter(newNode, *emitter, *scene, *bindless, *buffers);
+    if (volume)  NodeOps::assignVolume(newNode, *volume, *scene);
     return newIndex;
 }
 
 // Flatten a subtree into a standalone template array. Nodes are appended depth-first, so a node
 // always precedes its descendants, and parentIndex/firstChild/nextSibling are remapped to dst-local
 // indices — dst[0] is the subtree root, which keeps 0 readable as "no node" like in the graph.
-// Nothing is spawned into the scene: attachment handles keep pointing at the source's light/emitter
-// so placement can re-create them from the live payload, and the mesh takes a reference so it
-// stays resident once the source node is gone. Returns the dst index of the copied subtree root.
+// Nothing is spawned into the scene, and the mesh takes a reference so it stays resident once the
+// source node is gone. Attachment handles are left as the source's for Scene::addTemplate to
+// resolve into payloads — including nodeIndex, which volumes are keyed by. Returns the dst index
+// of the copied subtree root.
 uint32_t SceneGraph::duplicateNode(const Node& src, std::vector<Node>& dst) {
     uint32_t dstIndex = static_cast<uint32_t>(dst.size());
 
     Node copy(src);
-    copy.nodeIndex = dstIndex;
     copy.parentIndex = 0; // patched below for children; the subtree root stays parentless
     copy.firstChild = 0;
     copy.nextSibling = 0;

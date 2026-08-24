@@ -44,12 +44,21 @@ class SceneLoader {
             collectMaterials(nodes[child], scene);
             child = nodes[child].nextSibling;
         }
+        // Templates carry their own material references — a template whose material no longer
+        // appears anywhere in the graph still has to find it again on load.
+        for (const auto& [name, tmpl] : scene.templates) {
+            for (const Node& node : tmpl.nodes) {
+                if (node.meshIndex == MAX_MESHES || node.materialIndex == 0xFFFFFFFF) continue;
+                savedMaterialIDs.insert(scene.getMaterials()[node.materialIndex].materialID);
+            }
+        }
         writeMaterials(scene);
 
         // Meshes go before the nodes: it is node parsing that builds the meshes, so their cached
         // LOD chains have to already be in hand by the time it runs.
         writeMeshes(scene.assetManager);
 
+        writeTemplates(scene);
         // then write all nodes
         child = rootNode.firstChild;
         while (child != 0) {
@@ -90,6 +99,10 @@ class SceneLoader {
                 parseMaterialsSection(ifs, scene, materialIDToIndex);
             } else if (line == "Mesh {") {
                 parseMeshSection(ifs);
+            } else if (line == "Template {") {
+                // Has to consume its own Node blocks — left to the branch below they would load as
+                // real scene nodes, duplicating whatever the template was made from.
+                parseTemplateSection(ifs, scene, bindless, buffers, lightBufferIndex, materialIDToIndex);
             } else if (line == "Node {") {
                 parseNode(ifs, scene, bindless, buffers, lightBufferIndex, SceneGraph::ROOT_INDEX, materialIDToIndex);
             }
@@ -259,6 +272,9 @@ class SceneLoader {
         scene.clearVolumes();
         scene.clearEmitters(bindless, buffers);
         scene.sceneGraph.reset();
+        // Templates hold mesh references and index the mesh/material tables, so they go before the
+        // release below — nothing survives a reload to point at the old indices.
+        scene.clearTemplates();
         // After the graph reset nothing holds a mesh, so they all go. Deliberately not kept for
         // reuse: a surviving mesh table means every reload leaves behind the previous scene's
         // geometry, and the LOD chains in the scene file make the rebuild cheap anyway.
@@ -441,7 +457,9 @@ class SceneLoader {
         std::cout << "Loaded material ID: " << materialID << " -> index: " << materialIndex << std::endl;
     }
 
-    void parseNode(std::ifstream& ifs, Scene& scene, BindlessSystem& bindless,
+    // Returns the index of the node it created, so a caller that owns the block (the template
+    // parser) can act on the finished subtree.
+    uint32_t parseNode(std::ifstream& ifs, Scene& scene, BindlessSystem& bindless,
                    const RenderBuffers& buffers,
                    uint32_t lightBufferIndex,
                    uint32_t parentIndex, std::unordered_map<uint32_t, uint32_t>& materialIDToIndex) {
@@ -648,6 +666,39 @@ class SceneLoader {
             ifs.seekg(pos);
             parseNode(ifs, scene, bindless, buffers, lightBufferIndex, nodeIndex, materialIDToIndex);
         }
+        return nodeIndex;
+    }
+
+    // A Template block is loaded by materialising its nodes in the scene, snapshotting them into a
+    // template, then deleting them again. That reuses parseNode's mesh/material/light/emitter
+    // handling instead of duplicating it, and addTemplate lifts the attachment payloads out of the
+    // scene before the temporaries go away, so nothing is left dangling.
+    void parseTemplateSection(std::ifstream& ifs, Scene& scene, BindlessSystem& bindless,
+                              const RenderBuffers& buffers, uint32_t lightBufferIndex,
+                              std::unordered_map<uint32_t, uint32_t>& materialIDToIndex) {
+        std::string name;
+        uint32_t rootIndex = 0;
+
+        std::string line, key, value;
+        while (std::getline(ifs, line)) {
+            trim(line);
+            if (line == "}") break; // end of Template
+
+            if (line == "Node {") {
+                // A template has exactly one root; anything further is malformed, so drop it
+                // rather than leave stray nodes in the scene.
+                uint32_t idx = parseNode(ifs, scene, bindless, buffers, lightBufferIndex, SceneGraph::ROOT_INDEX, materialIDToIndex);
+                if (rootIndex == 0) rootIndex = idx;
+                else scene.sceneGraph.removeNode(idx);
+                continue;
+            }
+            if (parseKeyValue(line, key, value) && key == "Name") name = value;
+        }
+
+        if (rootIndex == 0) return;
+        if (!name.empty()) scene.addTemplate(rootIndex, name);
+        else std::cerr << "Template block has no Name, dropping it" << std::endl;
+        scene.sceneGraph.removeNode(rootIndex);
     }
 
     ParticleEmitter parseEmitter(std::ifstream& ifs, Scene& scene) {
@@ -788,19 +839,42 @@ class SceneLoader {
         ofs << "}" << std::endl << std::endl;
     }
 
-    void writeNodes(Node& node, Scene& scene, int depth) {
+    // Serialises one node and its subtree. `tmpl` switches both the child walk and the attachment
+    // lookups over to a template's own arrays: a template node's links and payload keys are local
+    // to that template and mean something else entirely in the scene graph.
+    void writeNodes(const Node& node, Scene& scene, int depth,
+                    const Scene::NodeTemplate* tmpl = nullptr, uint32_t localIndex = 0) {
+        const Light* lightPtr = nullptr;
+        const Volume* volumePtr = nullptr;
+        const ParticleEmitter* emitterPtr = nullptr;
+        if (tmpl) {
+            auto l = tmpl->lights.find(localIndex);
+            if (l != tmpl->lights.end()) lightPtr = &l->second;
+            auto v = tmpl->volumes.find(localIndex);
+            if (v != tmpl->volumes.end()) volumePtr = &v->second;
+            auto e = tmpl->emitters.find(localIndex);
+            if (e != tmpl->emitters.end()) emitterPtr = &e->second;
+        } else {
+            auto l = scene.lights.find(node.lightIndex);
+            if (l != scene.lights.end()) lightPtr = &l->second;
+            auto v = scene.volumes.find(node.nodeIndex);
+            if (v != scene.volumes.end()) volumePtr = &v->second;
+            auto e = scene.particleEmitters.find(node.particleIndex);
+            if (e != scene.particleEmitters.end()) emitterPtr = &e->second;
+        }
+
         std::string indent(depth * 2, ' ');
         ofs << indent << "Node {" << std::endl;
         ofs << indent << "  Name : " << node.name << std::endl;
-        glm::vec3 pos = node.getRelativePosition();
-        glm::quat rot = node.getRelativeRotation();
-        glm::vec3 scale = node.getRelativeScale();
+        glm::vec3 pos = node.relativePosition;
+        glm::quat rot = node.relativeRotation;
+        glm::vec3 scale = node.relativeScale;
         ofs << indent << "  Position : " << pos.x << "," << pos.y << "," << pos.z << std::endl;
         ofs << indent << "  Rotation : " << rot.w << "," << rot.x << "," << rot.y << "," << rot.z << std::endl;
         ofs << indent << "  Scale : " << scale.x << "," << scale.y << "," << scale.z << std::endl;
 
-        if (node.getLightIndex() != MAX_LIGHTS) {
-            Light light = scene.getLight(node.getLightIndex());
+        if (lightPtr) {
+            const Light& light = *lightPtr;
             std::string type;
             std::string cascades = "";
             switch (light.type) {
@@ -828,8 +902,8 @@ class SceneLoader {
                 << light.castsShadows << ";" << light.shadowResolution << cascades << std::endl;
         }
 
-        if (node.getMeshIndex() != MAX_MESHES) {
-            Mesh& mesh = scene.assetManager.meshes[node.getMeshIndex()];
+        if (node.meshIndex != MAX_MESHES && node.meshIndex < scene.assetManager.meshes.size()) {
+            Mesh& mesh = scene.assetManager.meshes[node.meshIndex];
             ofs << indent << "  Mesh : " << mesh.sourceFile << std::endl;
             if (!mesh.name.empty()) {
                 ofs << indent << "  MeshName : " << mesh.name << std::endl;
@@ -840,21 +914,21 @@ class SceneLoader {
                 ofs << indent << "  MeshScale : " << mesh.importScale << std::endl;
             }
 
-            if (node.getMaterialIndex() != 0xFFFFFFFF) {
-                Material& mat = scene.getMaterials()[node.getMaterialIndex()];
+            if (node.materialIndex != 0xFFFFFFFF) {
+                Material& mat = scene.getMaterials()[node.materialIndex];
                 ofs << indent << "  MaterialID : " << mat.materialID << std::endl;
             }
         }
 
-        if (scene.volumes.contains(node.nodeIndex)) {
-            Volume& vol = scene.volumes[node.nodeIndex];
+        if (volumePtr) {
+            const Volume& vol = *volumePtr;
             // Center is derived from the node at stream time; write a 0,0,0 placeholder to keep the
             // legacy token slot in the format (it is discarded on load).
             ofs << indent << " Volume : " << vol.density << ";" << vol.phase << ";" << static_cast<uint32_t>(vol.shape) << ";" << "0,0,0" << ";" << vol.radius << ";" << vol.dimensions.x << "," << vol.dimensions.y << "," << vol.dimensions.z << std::endl;
         }
 
-        if (node.particleIndex != 0xFFFFFFFF && scene.particleEmitters.contains(node.particleIndex)) {
-            const ParticleEmitter& em = scene.particleEmitters.at(node.particleIndex);
+        if (emitterPtr) {
+            const ParticleEmitter& em = *emitterPtr;
             // Pool residency (particleOffset/particleCapacity) and nodeIndex are recomputed by
             // Scene::addEmitter on load, so only the authored fields are written here.
             ofs << indent << "  Emitter {" << std::endl;
@@ -884,12 +958,19 @@ class SceneLoader {
             ofs << indent << "  }" << std::endl;
         }
 
-        // Write children
-        auto& nodes = scene.sceneGraph.getNodes();
+        // Write children, following whichever pool this node's links belong to
         uint32_t child = node.firstChild;
-        while (child != 0) {
-            writeNodes(nodes[child], scene, depth + 1);
-            child = nodes[child].nextSibling;
+        if (tmpl) {
+            while (child != 0) {
+                writeNodes(tmpl->nodes[child], scene, depth + 1, tmpl, child);
+                child = tmpl->nodes[child].nextSibling;
+            }
+        } else {
+            auto& nodes = scene.sceneGraph.getNodes();
+            while (child != 0) {
+                writeNodes(nodes[child], scene, depth + 1);
+                child = nodes[child].nextSibling;
+            }
         }
 
         ofs << indent << "}" << std::endl;
@@ -922,6 +1003,18 @@ class SceneLoader {
                 for (size_t i = mesh.LODs[0]; i < mesh.cpuIndices.size(); i++) ofs << mesh.cpuIndices[i] << ";";
                 ofs << std::endl;
             }
+            ofs << "}" << std::endl;
+        }
+    }
+
+    // One block per template: its name, then its root node — writeNodes recurses through the
+    // template's own child links from there, so there is no sibling walk to do here.
+    void writeTemplates(Scene& scene) {
+        for (const auto& [name, tmpl] : scene.templates) {
+            if (tmpl.nodes.empty()) continue;
+            ofs << "Template {" << std::endl;
+            ofs << "  Name : " << name << std::endl;
+            writeNodes(tmpl.nodes[0], scene, 1, &tmpl, 0);
             ofs << "}" << std::endl;
         }
     }
