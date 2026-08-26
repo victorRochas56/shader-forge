@@ -9,6 +9,9 @@
 #include "scene.hpp"
 #include "raycast.hpp"
 #include "node_ops.hpp"
+
+#include "building_gen.hpp"
+
 #define GLFW_INCLUDE_NONE
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
@@ -493,6 +496,10 @@ void showToggles(GUI& gui, RenderFeatures& f){
     if(gui.button("Show BBOXes")){
         f.showBBoxes = !f.showBBoxes;
     }
+
+    gui.separatorText("Camera");
+    gui.inputFloat("Move Speed", &InputManager::getInstance().cameraMoveSpeed);
+    gui.setItemTooltip("WASD travel in units per second.");
 
     gui.separatorText("Sky");
     gui.sliderFloat("Skybox Intensity", &f.skyboxIntensity, 0.0f, 20.0f);
@@ -1073,5 +1080,110 @@ void showTemplates(GUI& gui, Scene& scene, AssetManager& assetManager) {
             scene.placeTemplate(tmp.first,scene.activeCamera.position);
         }
     }
+    gui.endWindow();
+}
+
+// Held as an int for gui.combo, which indexes BuildingPiece::typeNames directly — NONE is the
+// last entry, so the picker's own "<none>" row is what an unset choice previews as.
+int elementTypeChoice = BuildingPiece::NONE;
+bool elementResizeable = false;
+// Templates ticked for the next registration. They go in as one element, so placement can roll
+// any of them for a slot.
+std::unordered_set<std::string> pendingVariants;
+std::string registerStatus;
+float spanX = 0;
+float spanY = 0;
+int windowCount = 1;
+void showBuildingGen(GUI& gui, Scene& scene, BuildingGen& gen) {
+    if(!gui.beginWindow("Building Gen", nullptr, glm::vec2(500,500),glm::vec2(500,500))) return;
+
+    // Picked from the scene's templates rather than typed: registration measures each one, so a
+    // name that isn't a template could only ever be rejected.
+    gui.separatorText("Variants");
+    for(const auto& [name, tmpl] : scene.templates) {
+        bool checked = pendingVariants.contains(name);
+        if(gui.checkbox(name, &checked)) {
+            if(checked) pendingVariants.insert(name);
+            else        pendingVariants.erase(name);
+        }
+    }
+
+    gui.combo("Element Type", &elementTypeChoice, BuildingPiece::typeNames, BuildingPiece::typeCount);
+    // Padding piece — the walk stretches these to close a gap, so a set needs at least one.
+    gui.checkbox("Resizeable", &elementResizeable);
+
+    BuildingPiece::Type type = static_cast<BuildingPiece::Type>(elementTypeChoice);
+    if(gui.button("Register") && type != BuildingPiece::NONE && !pendingVariants.empty()) {
+        std::vector<std::string> keys(pendingVariants.begin(), pendingVariants.end());
+        if(gen.registerElement(keys, type, elementResizeable, scene)) {
+            registerStatus = "registered " + std::to_string(keys.size()) + " variant(s) as " + BuildingPiece::typeName(type);
+            pendingVariants.clear();
+        } else {
+            registerStatus = "registration failed — a template went missing";
+        }
+    }
+    if(!registerStatus.empty()) gui.text(registerStatus);
+
+    // What's registered, with the sizes taken off each template's bounds at registration time. A
+    // piece measures as its largest variant, so the numbers are the slot, not any one template.
+    gui.separatorText("Registered");
+    BuildingPiece::Type removeType = BuildingPiece::NONE;
+    uint32_t removeIndex = 0;
+    for(int t = 0; t < BuildingPiece::NONE; t++) {
+        auto* bucket = gen.elementsFor(static_cast<BuildingPiece::Type>(t));
+        for(uint32_t i = 0; i < bucket->size(); i++) {
+            const BuildingPiece::Element& element = (*bucket)[i];
+            std::string variants;
+            for(const std::string& key : element.templateKeys) {
+                if(!variants.empty()) variants += ", ";
+                variants += key;
+            }
+            // "##" keeps the button IDs apart without drawing the suffix.
+            if(gui.button("x##" + std::string(BuildingPiece::typeName(element.type)) + std::to_string(i))) {
+                removeType = element.type;
+                removeIndex = i;
+            }
+            gui.sameLine();
+            gui.textf("%s : %s  %.2f x %.2f%s", BuildingPiece::typeName(element.type), variants.c_str(),
+                      element.width, element.height, element.resizeable ? "  (resizeable)" : "");
+
+            // Pieces with a ground-floor type pick the element that stands in for them on the bottom
+            // row. Listed by first variant, which is the key the pairing is stored as.
+            BuildingPiece::Type groundType = BuildingPiece::groundFloorType(element.type);
+            const auto* groundBucket = groundType != BuildingPiece::NONE ? gen.elementsFor(groundType) : nullptr;
+            if(groundBucket != nullptr) {
+                std::string rowID = std::string(BuildingPiece::typeName(element.type)) + std::to_string(i);
+                if(gui.beginCombo("Ground##" + rowID, element.groundKey.empty() ? "<none>" : element.groundKey)) {
+                    if(gui.comboItem("<none>", element.groundKey.empty())) (*bucket)[i].groundKey.clear();
+                    for(const BuildingPiece::Element& pair : *groundBucket) {
+                        if(pair.templateKeys.empty()) continue;
+                        const std::string& key = pair.templateKeys[0];
+                        if(gui.comboItem(key, key == element.groundKey)) (*bucket)[i].groundKey = key;
+                    }
+                    gui.endCombo();
+                }
+            }
+        }
+    }
+    // Erased after the walk — pulling a row out mid-iteration would invalidate the loop's bucket.
+    if(removeType != BuildingPiece::NONE) {
+        auto* bucket = gen.elementsFor(removeType);
+        bucket->erase(bucket->begin() + removeIndex);
+    }
+
+    gui.separator();
+    gui.inputFloat("Wall Width",&spanX);
+    gui.sameLine();
+    gui.inputFloat("Wall Height",&spanY);
+    // Distinct window pieces the row may draw from. Capped at what's registered, since the pick is
+    // without replacement and there is nothing past that to take.
+    int registeredWindows = static_cast<int>(gen.elementsFor(BuildingPiece::WINDOW)->size());
+    gui.sliderInt("Window Variety", &windowCount, 1, std::max(registeredWindows, 1));
+    if(gui.button("Generate Wall")) {
+        gen.makeWall(glm::vec3(0,0,0), glm::vec2(spanX,spanY), static_cast<uint32_t>(windowCount), 2.0, 3.0, scene);
+    }
+
+    Gizmos::drawBox(glm::vec3(0.5, 0, 0),glm::vec3(-0.5, spanY, spanX),glm::vec4(1,1,0,1));
+
     gui.endWindow();
 }

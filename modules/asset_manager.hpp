@@ -31,6 +31,11 @@ struct MeshLoadResult {
     std::vector<uint32_t> materialIds;
     // source material ID -> material name from the file
     std::map<int, std::string> materialNames;
+    // Which object each mesh came out of before the split by material (see MeshEntry::sourceObject),
+    // parallel to meshIndices and consecutive per object, plus that object's name. Import parents
+    // the pieces of one object under one node instead of laying them out as siblings.
+    std::vector<uint32_t> objectIds;
+    std::map<uint32_t, std::string> objectNames;
 };
 
 class AssetManager {
@@ -118,9 +123,9 @@ class AssetManager {
         return static_cast<uint32_t>(meshes.size() - 1);
     }
 
-    // Loads an OBJ and returns mesh indices plus material grouping info.
+    // Loads a mesh file (OBJ or glTF) and returns mesh indices plus material grouping info.
     // Each mesh is a single draw unit with its own vertex/index data.
-    // importScale is baked into the geometry 
+    // importScale is baked into the geometry
     MeshLoadResult loadMeshFromFile(std::string filePath, float importScale = 1.0f) {
         if (auto it = loadedMeshes.find(filePath); it != loadedMeshes.end()) {
             return it->second;
@@ -128,6 +133,12 @@ class AssetManager {
         MeshLoadResult result;
         std::cout << "Loading mesh from " << filePath << " (import scale " << importScale << ")" << std::endl;
         MeshData meshData = resource::loadMeshFromFile(filePath);
+        if (meshData.entries.empty()) {
+            // The loaders report why on the way out. Returning empty rather than caching it leaves
+            // a fixed file loadable without restarting.
+            std::cerr << "no geometry loaded from " << filePath << std::endl;
+            return result;
+        }
 
         // Bake the file's unit scale into vertex positions. Uniform scaling leaves normal
         // directions unchanged, so normals need no renormalization.
@@ -147,6 +158,9 @@ class AssetManager {
         std::vector<glm::vec3> bbCenters(entryCount);
 
         auto processEntry = [&](size_t idx) {
+            // An entry the file already declared an instance carries no geometry — nothing to
+            // measure, and its placement comes off the entry it copies.
+            if (meshData.entries[idx].instanceOf >= 0) return;
             std::cout << "processing entry!" << std::endl;
             auto& vertices = meshData.entries[idx].vertices;
 
@@ -161,7 +175,10 @@ class AssetManager {
             }
             glm::vec3 averagePoint = glm::vec3(averagePointAccum / static_cast<double>(vertices.size()));
 
-            glm::vec3 center = (bbMax + bbMin) * 0.5f;
+            // The loader picked the pivot; scaling is uniform about the file origin so it carries
+            // straight through. loadSceneMesh reads the same field, which is what keeps a reloaded
+            // scene's geometry identical to what the import produced.
+            glm::vec3 center = meshData.entries[idx].origin * importScale;
             bbCenters[idx] = center;
             averagePoint -= center;
             // Center the vertices at origin
@@ -212,6 +229,7 @@ class AssetManager {
             uint32_t refMeshIdx = 0;  // for instances: the matched reference mesh
             bool runIcp = false;      // instance that needs an ICP fit in phase B
             RigidFit fit{};           // filled by phase B
+            int statedInstanceOf = -1; // entry the file named as this one's source; resolved last
         };
         std::vector<EntryResolution> resolutions(entryCount);
 
@@ -220,6 +238,14 @@ class AssetManager {
         // Mirror meshes are created later
         for (size_t idx = 0; idx < entryCount; ++idx) {
             auto& entry = meshData.entries[idx];
+            // Instancing the source file stated outright (glTF nodes sharing a mesh). The relative
+            // transform is exact, so this entry needs no radius search, no ICP fit and no
+            // simplification — only the placement, which waits until its source has settled on a
+            // mesh below. Copies the file didn't declare still go through detection as before.
+            if (entry.instanceOf >= 0) {
+                resolutions[idx].statedInstanceOf = entry.instanceOf;
+                continue;
+            }
             float inscribedRadius = inscribedRadii[idx];
             float circumscribedRadius = circumscribedRadii[idx];
             const glm::vec3& bbMin = bbMins[idx];
@@ -351,11 +377,30 @@ class AssetManager {
             }
         }
 
+        // (serial): place the instances the file declared. This runs last because their source
+        // entry has to have settled first — it may itself have been detected as an instance of an
+        // older mesh, or have become a mirror variant, and either changes what these hang off.
+        // Entries are in file order and a source always precedes the copies pointing at it.
+        for (size_t idx = 0; idx < entryCount; ++idx) {
+            EntryResolution& r = resolutions[idx];
+            if (r.statedInstanceOf < 0) continue;
+            const EntryResolution& source = resolutions[r.statedInstanceOf];
+            // The offset between two copies scales with the geometry; the rotation doesn't.
+            glm::mat4 relative = meshData.entries[idx].instanceTransform;
+            relative[3] = glm::vec4(glm::vec3(relative[3]) * importScale, 1.0f);
+            r.meshIdx = source.meshIdx;
+            r.transform = relative * source.transform;
+        }
+
         // Final assembly
         for (size_t idx = 0; idx < entryCount; ++idx) {
             auto& entry = meshData.entries[idx];
             result.meshIndices.push_back(resolutions[idx].meshIdx);
             result.transforms.push_back(resolutions[idx].transform);
+            result.objectIds.push_back(entry.sourceObject);
+            if (result.objectNames.find(entry.sourceObject) == result.objectNames.end()) {
+                result.objectNames[entry.sourceObject] = entry.objectName;
+            }
             result.materialIds.push_back(entry.materialId);
             if (result.materialNames.find(entry.materialId) == result.materialNames.end()) {
                 result.materialNames[entry.materialId] = entry.materialName;
@@ -370,14 +415,9 @@ class AssetManager {
     // Meshes are deduped by (file, entry) so the instances and mirror groups that shared one mesh on import share one again here.
     uint32_t loadSceneMesh(const std::string& filePath, uint32_t entryIndex, const std::string& meshName,
                            float importScale = 1.0f, const PrecomputedLODs* cachedLODs = nullptr) {
-        // Dedupes within one load — a scene's nodes routinely share a mesh — and is dropped with the
-        // meshes on the next scene clear. Scale is in the key since it bakes into the geometry.
-        std::string key = filePath + "#" + std::to_string(entryIndex) + "@" + std::to_string(importScale);
-        if (auto it = sceneMeshCache.find(key); it != sceneMeshCache.end()) {
-            return it->second;
-        }
-
-        // Parse the source file once and keep it around for the rest of this scene load.
+        // Parse the source file once and keep it around for the rest of this scene load. This comes
+        // before the cache lookup because an entry can redirect, and the key has to name the entry
+        // the geometry actually comes from.
         auto rawIt = rawMeshDataCache.find(filePath);
         if (rawIt == rawMeshDataCache.end()) {
             rawIt = rawMeshDataCache.emplace(filePath, resource::loadMeshFromFile(filePath)).first;
@@ -386,6 +426,19 @@ class AssetManager {
         if (entryIndex >= meshData.entries.size()) {
             throw std::runtime_error("scene references mesh entry " + std::to_string(entryIndex) +
                                      " out of range in " + filePath);
+        }
+        // An entry the file declared an instance holds no geometry; the copy's placement is in the
+        // node transform the scene saved, so rebuild from the entry that defines the geometry.
+        // Import never writes one of these into a scene, but a hand-edited MeshEntry could.
+        if (meshData.entries[entryIndex].instanceOf >= 0) {
+            entryIndex = static_cast<uint32_t>(meshData.entries[entryIndex].instanceOf);
+        }
+
+        // Dedupes within one load — a scene's nodes routinely share a mesh — and is dropped with the
+        // meshes on the next scene clear. Scale is in the key since it bakes into the geometry.
+        std::string key = filePath + "#" + std::to_string(entryIndex) + "@" + std::to_string(importScale);
+        if (auto it = sceneMeshCache.find(key); it != sceneMeshCache.end()) {
+            return it->second;
         }
 
         // Work on copies so the cached raw data stays pristine for sibling entries.
@@ -406,7 +459,9 @@ class AssetManager {
             bbMax = glm::max(bbMax, v.position);
             averageAccum += glm::dvec3(v.position);
         }
-        glm::vec3 center = (bbMax + bbMin) * 0.5f;
+        // Same pivot the import path used — it comes off the entry rather than being re-derived
+        // here, so the two can't drift apart and leave a reloaded scene offset from what was saved.
+        glm::vec3 center = meshData.entries[entryIndex].origin * importScale;
         glm::vec3 averagePoint = vertices.empty() ? glm::vec3(0.0f)
                                : glm::vec3(averageAccum / static_cast<double>(vertices.size())) - center;
 

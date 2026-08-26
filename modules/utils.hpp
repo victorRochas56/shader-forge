@@ -155,6 +155,11 @@ static vk::Format findDepthFormat(Device& device) {
                                 vk::FormatFeatureFlagBits::eDepthStencilAttachment, device);
 }
 
+static int randRange(int min, int max) {
+    if(max <= min) return 0;
+    return rand()%(max-min + 1) + min;
+}
+
 static vk::SampleCountFlagBits getMaxUsableSampleCount(Device& device) {
     vk::PhysicalDeviceProperties physicalDeviceProperties = device.getPhysicalDevice().getProperties();
 

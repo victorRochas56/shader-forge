@@ -150,25 +150,57 @@ void showNodeMeshInfo(GUI& gui, Node& node, Scene& scene) {
                 }
                 NodeOps::assignMaterial(n, matIdx, scene);
             } else if (meshIndices.size() > 1) {
-                for (size_t i = 0; i < meshIndices.size(); i++) {
+                // The loaders split an object into one mesh per material; those pieces were one
+                // thing in the file, so they go under one node rather than becoming siblings. An
+                // object's entries are consecutive, so a single walk covers them.
+                auto setLocalTransform = [](Node& target, const glm::mat4& transform) {
                     glm::vec3 pos;
                     glm::quat rot;
                     glm::vec3 scale;
-                    uint32_t childIdx = scene.sceneGraph.addNode(false, thisNodeIndex);
-                    // re-fetch after addNode since nodes vector may have reallocated
-                    Node& childNode = scene.sceneGraph.getNodes()[childIdx];
-                    childNode.name = scene.sceneGraph.makeUniqueNodeName(scene.assetManager.getMeshes()[meshIndices[i]].name);
-                    decomposeTransform(loadResult.transforms[i], pos, rot, scale);
-                    childNode.relativePosition = pos;
-                    childNode.relativeRotation = rot;
-                    childNode.transformDirty = true;
-                    NodeOps::assignMesh(childNode, meshIndices[i], scene);
+                    decomposeTransform(transform, pos, rot, scale);
+                    target.relativePosition = pos;
+                    target.relativeRotation = rot;
+                    target.transformDirty = true;
+                };
 
-                    uint32_t matIdx = scene.getFallBackMaterial();
-                    if (state.keepMaterialAssignments) {
-                        matIdx = matIdToRendererIdx[loadResult.materialIds[i]];
+                for (size_t i = 0; i < meshIndices.size();) {
+                    size_t end = i;
+                    while (end < meshIndices.size() && loadResult.objectIds[end] == loadResult.objectIds[i]) end++;
+
+                    // A split object gets a node of its own carrying the placement, with the pieces
+                    // hanging off it; one that wasn't split just becomes that node itself.
+                    uint32_t parentIdx = thisNodeIndex;
+                    glm::mat4 parentTransform(1.0f);
+                    if (end - i > 1) {
+                        auto nameIt = loadResult.objectNames.find(loadResult.objectIds[i]);
+                        std::string objectName = (nameIt != loadResult.objectNames.end() && !nameIt->second.empty())
+                                               ? nameIt->second
+                                               : scene.assetManager.getMeshes()[meshIndices[i]].name;
+                        parentIdx = scene.sceneGraph.addNode(false, thisNodeIndex);
+                        // re-fetch after addNode since nodes vector may have reallocated
+                        Node& groupNode = scene.sceneGraph.getNodes()[parentIdx];
+                        groupNode.name = scene.sceneGraph.makeUniqueNodeName(objectName);
+                        parentTransform = loadResult.transforms[i];
+                        setLocalTransform(groupNode, parentTransform);
                     }
-                    NodeOps::assignMaterial(childNode, matIdx, scene);
+
+                    for (; i < end; i++) {
+                        uint32_t childIdx = scene.sceneGraph.addNode(false, parentIdx);
+                        Node& childNode = scene.sceneGraph.getNodes()[childIdx];
+                        childNode.name = scene.sceneGraph.makeUniqueNodeName(scene.assetManager.getMeshes()[meshIndices[i]].name);
+                        // Pieces are placed relative to the object node, so moving the object moves
+                        // all of them and the geometry still lands where the file put it.
+                        setLocalTransform(childNode, parentIdx == thisNodeIndex
+                                                         ? loadResult.transforms[i]
+                                                         : glm::inverse(parentTransform) * loadResult.transforms[i]);
+                        NodeOps::assignMesh(childNode, meshIndices[i], scene);
+
+                        uint32_t matIdx = scene.getFallBackMaterial();
+                        if (state.keepMaterialAssignments) {
+                            matIdx = matIdToRendererIdx[loadResult.materialIds[i]];
+                        }
+                        NodeOps::assignMaterial(childNode, matIdx, scene);
+                    }
                 }
             }
 #if DEBUG == 1

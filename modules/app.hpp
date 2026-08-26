@@ -26,6 +26,7 @@
 #include "events.hpp"
 #include "material_editor_state.hpp"
 #include "manipulators.hpp"
+#include "building_gen.hpp"
 #include "GUI.h"
 
 #define GLM_FORCE_RADIANS
@@ -84,6 +85,8 @@ class App {
 
     double              lastFrameMs = 0.0;
     double              lastGuiMs = 0.0;
+
+    BuildingGen         buildingGen;
 
     void initWindow() {
         glfwInit();
@@ -252,6 +255,8 @@ class App {
         guiMark("meshList");
         showTemplates(gui, scene, scene.assetManager);
         guiMark("templates");
+        showBuildingGen(gui, scene, buildingGen);
+        guiMark("building gen");
         // after every widget call: retires anything this frame stopped drawing
         gui.endFrame();
         guiMark("render");

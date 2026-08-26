@@ -149,6 +149,7 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/modules
     ${CMAKE_CURRENT_SOURCE_DIR}/modules/render_passes
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/generator
     ${VULKAN_INCLUDE_DIR}
 )
 
@@ -192,6 +193,7 @@ add_executable(shader-forge
     ${CMAKE_CURRENT_SOURCE_DIR}/modules/LOD.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/modules/texture_converter.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/modules/stb_implementations.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/modules/tinygltf_implementation.cpp
 )
 
 target_precompile_headers(shader-forge PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/modules/pch.hpp)

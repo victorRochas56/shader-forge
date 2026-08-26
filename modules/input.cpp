@@ -57,27 +57,44 @@ void InputManager::tickInputState() { //should be only called once in the main a
         // Check the state of movement keys
         if(inst.canMove){
             if (inst.current.keyStates[GLFW_KEY_W] == GLFW_PRESS || inst.current.keyStates[GLFW_KEY_W] == GLFW_REPEAT) {
-                moveVector.z += 0.05f;
+                moveVector.z += 1.0f;
             }
             if (inst.current.keyStates[GLFW_KEY_S] == GLFW_PRESS || inst.current.keyStates[GLFW_KEY_S] == GLFW_REPEAT) {
-                moveVector.z -= 0.05f;
+                moveVector.z -= 1.0f;
             }
             if (inst.current.keyStates[GLFW_KEY_A] == GLFW_PRESS || inst.current.keyStates[GLFW_KEY_A] == GLFW_REPEAT) {
-                moveVector.x -= 0.05f;
+                moveVector.x -= 1.0f;
             }
             if (inst.current.keyStates[GLFW_KEY_D] == GLFW_PRESS || inst.current.keyStates[GLFW_KEY_D] == GLFW_REPEAT) {
-                moveVector.x += 0.05f;
+                moveVector.x += 1.0f;
             }
         }
-    
-        // Apply the combined movement
-        if (glm::length(moveVector) > 0) {
-            inst.scene->activeCamera.moveCamera(moveVector);
-        }
 
+        // Apply the combined movement, as a direction travelling cameraMoveSpeed units per second.
+        // The step is capped at 100ms of travel: deltaTime carries the previous frame, and after a
+        // hitch (scene load, pipeline compile) an uncapped one flings the camera across the scene.
+        if (glm::length(moveVector) > 0) {
+            float step = inst.cameraMoveSpeed * std::min(inst.renderer->gpu.deltaTime, 0.1f);
+            inst.scene->activeCamera.moveCamera(glm::normalize(moveVector) * step);
+        }
         if (inst.current.keyStates[GLFW_KEY_V] == GLFW_PRESS && inst.previous.keyStates[GLFW_KEY_V] != GLFW_PRESS) {
             inst.renderer->toggleVsync();
-        }/*
+        }
+        if ((inst.current.keyStates[GLFW_KEY_X] == GLFW_PRESS && inst.previous.keyStates[GLFW_KEY_V] != GLFW_PRESS) ||
+            (inst.current.keyStates[GLFW_KEY_DELETE] == GLFW_PRESS && inst.previous.keyStates[GLFW_KEY_DELETE] != GLFW_PRESS)) 
+        {
+            uint32_t selectedNode = inst.renderer->scene.sceneGraph.selectedNode;
+            inst.renderer->scene.sceneGraph.deSelectNode();
+            inst.renderer->scene.sceneGraph.removeNode(selectedNode);
+        }
+        if (inst.current.keyStates[GLFW_KEY_N] == GLFW_PRESS && inst.previous.keyStates[GLFW_KEY_N] != GLFW_PRESS) { 
+            glm::vec3 origin, direction;
+            int w = 0, h = 0;
+            glfwGetWindowSize(inst.renderer->gpu.getWindow(), &w, &h);
+            inst.renderer->scene.activeCamera.rayFromScreenCoords(0.0, 0.0, origin, direction);
+            inst.renderer->scene.sceneGraph.addNode(false, SceneGraph::ROOT_INDEX, origin + direction);
+        }
+        /*
         if (inst.current.keyStates[GLFW_KEY_C] == GLFW_PRESS && inst.previous.keyStates[GLFW_KEY_C] != GLFW_PRESS) {
             inst.renderer->showShadowMap();
         }
@@ -86,9 +103,6 @@ void InputManager::tickInputState() { //should be only called once in the main a
         }
         if (current.keyStates[GLFW_KEY_M] == GLFW_PRESS && previous.keyStates[GLFW_KEY_M] != GLFW_PRESS) {
             renderer->showMap(SHOW_METALLIC);
-        }
-        if (current.keyStates[GLFW_KEY_N] == GLFW_PRESS && previous.keyStates[GLFW_KEY_N] != GLFW_PRESS) {
-            renderer->showMap(SHOW_NORMAL);
         }
         if (inst.current.keyStates[GLFW_KEY_F] == GLFW_PRESS && inst.previous.keyStates[GLFW_KEY_F] != GLFW_PRESS) {
             inst.renderer->toggleDepthView();

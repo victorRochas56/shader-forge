@@ -7,6 +7,12 @@
 #endif
 
 #include <tiny_obj_loader.h>
+// tiny_gltf is header-only and its one translation unit is modules/tinygltf_implementation.cpp,
+// which reaches the header through this file so the switches below apply there too. They have to
+// live here rather than in that .cpp: TINYGLTF_NO_STB_IMAGE_WRITE changes a default member
+// initialiser inside TinyGLTF itself, so a TU that disagrees is an ODR violation, not a link error.
+#define TINYGLTF_NO_STB_IMAGE_WRITE // nothing writes glTF, and stb_image_write has no TU here
+#include <tiny_gltf.h>
 #include <vulkan/vulkan.hpp>
 #include <ktx.h>
 
@@ -23,6 +29,10 @@
 #include "utils.hpp"
 
 struct MeshEntry {
+    // Pivot for this entry, in the source file's own space. The loader picks it, both load paths
+    // recentre the vertices on it, and the placement they hand back is built from it — so import
+    // and scene reload agree by construction instead of by two copies of the same arithmetic.
+    glm::vec3 origin{0.0f};
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
 
@@ -30,6 +40,21 @@ struct MeshEntry {
     int materialId = -1;
     std::string materialName = "default_material";
     std::string shapeName;
+
+    // The object this entry came out of, before the split by material. Entries sharing an id were
+    // one thing in the file — an OBJ shape, a glTF node placement — and import parents them under a
+    // node of `objectName` instead of scattering the pieces as siblings. Loaders emit an object's
+    // entries consecutively, which is what lets import walk them in one pass.
+    uint32_t sourceObject = 0;
+    std::string objectName;
+
+    // Instancing the file states outright: this entry is entries[instanceOf] placed again at
+    // `instanceTransform`, relative to where that entry sits. It carries no geometry of its own, so
+    // it costs no simplification and no ICP fit. -1 on anything the file didn't say is a copy —
+    // every OBJ entry, the first placement of a glTF primitive, and any copy whose transform a node
+    // can't express (a mirror or a resize), which is baked and left to instance detection instead.
+    int instanceOf = -1;
+    glm::mat4 instanceTransform{1.0f};
 };
 
 struct MeshData {
@@ -896,8 +921,83 @@ inline LoadedTexture loadCubeMapFromFile(const Context& ctx, const std::string& 
     return loaded;
 }
 
-// only handles obj for now (TODO expand this)
-inline MeshData loadMeshFromFile(const std::string& meshPath) {
+// Case-insensitive suffix test, so Model.GLTF and model.gltf reach the same parser.
+inline bool hasExtension(const std::string& path, const std::string& extension) {
+    if (path.size() < extension.size()) return false;
+    const size_t offset = path.size() - extension.size();
+    for (size_t i = 0; i < extension.size(); i++) {
+        char a = path[offset + i];
+        char b = extension[i];
+        if (a >= 'A' && a <= 'Z') a = static_cast<char>(a - 'A' + 'a');
+        if (b >= 'A' && b <= 'Z') b = static_cast<char>(b - 'A' + 'a');
+        if (a != b) return false;
+    }
+    return true;
+}
+
+// Midpoint of the vertex AABB — what both loaders use for MeshEntry::origin.
+inline glm::vec3 boundsCenter(const std::vector<Vertex>& vertices) {
+    if (vertices.empty()) return glm::vec3(0.0f);
+    glm::vec3 min(std::numeric_limits<float>::max());
+    glm::vec3 max(std::numeric_limits<float>::lowest());
+    for (const Vertex& vertex : vertices) {
+        min = glm::min(min, vertex.position);
+        max = glm::max(max, vertex.position);
+    }
+    return (min + max) * 0.5f;
+}
+
+// Per-vertex tangent from the UV gradient across each adjoining triangle, area-weighted by the
+// accumulation. Degenerate UVs contribute +X so nothing is left with a zero-length tangent.
+inline void generateTangents(std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices) {
+    for (auto& vertex : vertices) {
+        vertex.tangent = glm::vec3(0.0f);
+    }
+
+    for (size_t i = 0; i + 2 < indices.size(); i += 3) {
+        uint32_t idx0 = indices[i];
+        uint32_t idx1 = indices[i + 1];
+        uint32_t idx2 = indices[i + 2];
+        if (idx0 >= vertices.size() || idx1 >= vertices.size() || idx2 >= vertices.size()) continue;
+
+        Vertex& v0 = vertices[idx0];
+        Vertex& v1 = vertices[idx1];
+        Vertex& v2 = vertices[idx2];
+
+        glm::vec3 edge1 = v1.position - v0.position;
+        glm::vec3 edge2 = v2.position - v0.position;
+
+        glm::vec2 deltaUV1 = v1.texCoord - v0.texCoord;
+        glm::vec2 deltaUV2 = v2.texCoord - v0.texCoord;
+
+        float denominator = deltaUV1.x * deltaUV2.y - deltaUV2.x * deltaUV1.y;
+
+        glm::vec3 tangent;
+        if (abs(denominator) < 0.0001f) {
+            tangent = glm::vec3(1.0f, 0.0f, 0.0f);
+        } else {
+            float f = 1.0f / denominator;
+            tangent.x = f * (deltaUV2.y * edge1.x - deltaUV1.y * edge2.x);
+            tangent.y = f * (deltaUV2.y * edge1.y - deltaUV1.y * edge2.y);
+            tangent.z = f * (deltaUV2.y * edge1.z - deltaUV1.y * edge2.z);
+            tangent = normalize(tangent);
+        }
+
+        v0.tangent += tangent;
+        v1.tangent += tangent;
+        v2.tangent += tangent;
+    }
+
+    for (auto& vertex : vertices) {
+        if (glm::length(vertex.tangent) > 0.0001f) {
+            vertex.tangent = normalize(vertex.tangent);
+        } else {
+            vertex.tangent = glm::vec3(1.0f, 0.0f, 0.0f);
+        }
+    }
+}
+
+inline MeshData loadMeshFromFileOBJ(const std::string& meshPath) {
     tinyobj::attrib_t attrib;
     std::vector<tinyobj::shape_t> shapes;
     std::vector<tinyobj::material_t> materials;
@@ -907,12 +1007,15 @@ inline MeshData loadMeshFromFile(const std::string& meshPath) {
     std::string mtlBaseDir = meshPath.substr(0, meshPath.find_last_of("/\\") + 1);
 
     if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, meshPath.c_str(), mtlBaseDir.c_str())) {
-        throw std::runtime_error(warn + err);
+        std::cerr << "[obj] failed to load " << meshPath << ": " << warn << err << std::endl;
+        return {};
     }
+    if (!warn.empty()) std::cerr << "[obj] " << meshPath << ": " << warn << std::endl;
     MeshData meshData = {};
 
     // Process each shape and split by material
-    for (const auto& shape : shapes) {
+    for (size_t shapeIdx = 0; shapeIdx < shapes.size(); shapeIdx++) {
+        const auto& shape = shapes[shapeIdx];
 
         // Group faces by material ID
         std::map<int, std::vector<size_t>> facesPerMaterial;
@@ -927,6 +1030,9 @@ inline MeshData loadMeshFromFile(const std::string& meshPath) {
             MeshEntry entry;
             entry.materialId = matId;
             entry.shapeName = shape.name;
+            // The shape is the object; the split below is ours, not the file's.
+            entry.sourceObject = static_cast<uint32_t>(shapeIdx);
+            entry.objectName = shape.name;
             std::unordered_map<Vertex, uint32_t> uniqueVertices{};
 
             if (matId >= 0 && matId < static_cast<int>(materials.size())) {
@@ -969,56 +1075,432 @@ inline MeshData loadMeshFromFile(const std::string& meshPath) {
             }
 
             // Calculate tangents for this entry
-            for (auto& vertex : entry.vertices) {
-                vertex.tangent = glm::vec3(0.0f);
-            }
-
-            for (size_t i = 0; i < entry.indices.size(); i += 3) {
-                uint32_t idx0 = entry.indices[i];
-                uint32_t idx1 = entry.indices[i + 1];
-                uint32_t idx2 = entry.indices[i + 2];
-
-                Vertex& v0 = entry.vertices[idx0];
-                Vertex& v1 = entry.vertices[idx1];
-                Vertex& v2 = entry.vertices[idx2];
-
-                glm::vec3 edge1 = v1.position - v0.position;
-                glm::vec3 edge2 = v2.position - v0.position;
-
-                glm::vec2 deltaUV1 = v1.texCoord - v0.texCoord;
-                glm::vec2 deltaUV2 = v2.texCoord - v0.texCoord;
-
-                float denominator = deltaUV1.x * deltaUV2.y - deltaUV2.x * deltaUV1.y;
-
-                glm::vec3 tangent;
-                if (abs(denominator) < 0.0001f) {
-                    tangent = glm::vec3(1.0f, 0.0f, 0.0f);
-                } else {
-                    float f = 1.0f / denominator;
-                    tangent.x = f * (deltaUV2.y * edge1.x - deltaUV1.y * edge2.x);
-                    tangent.y = f * (deltaUV2.y * edge1.y - deltaUV1.y * edge2.y);
-                    tangent.z = f * (deltaUV2.y * edge1.z - deltaUV1.y * edge2.z);
-                    tangent = normalize(tangent);
-                }
-
-                v0.tangent += tangent;
-                v1.tangent += tangent;
-                v2.tangent += tangent;
-            }
-
-            for (auto& vertex : entry.vertices) {
-                if (glm::length(vertex.tangent) > 0.0001f) {
-                    vertex.tangent = normalize(vertex.tangent);
-                } else {
-                    vertex.tangent = glm::vec3(1.0f, 0.0f, 0.0f);
-                }
-            }
+            generateTangents(entry.vertices, entry.indices);
+            // OBJ has no pivots of its own, so the geometry's own centre is the best one available.
+            entry.origin = boundsCenter(entry.vertices);
 
             meshData.entries.push_back(std::move(entry));
         }
     }
 
     return meshData;
+}
+
+/*
+glTF reading. The entries this produces look exactly like OBJ entries — geometry already sitting
+where the file puts it, one entry per material group — so the importer's centring, LOD generation
+and instance detection all run unchanged. What glTF adds is that it *says* when two placements are
+the same geometry, and those entries come back marked (MeshEntry::instanceOf) with no vertices
+attached, so the importer can skip straight to the placement instead of rediscovering it.
+*/
+namespace gltf {
+
+// tiny_gltf refuses a file whose images it can't load, and its stock loader would decode every
+// texture in the model — all of which we throw away, since materials reach the engine as paths and
+// go through the KTX cache. Claiming success without touching the bytes skips both.
+inline bool skipImageLoad(tinygltf::Image*, const int, std::string*, std::string*, int, int, const unsigned char*, int, void*) { return true; }
+
+// glTF hands attributes over as strided, arbitrarily typed views into a buffer. This resolves one
+// to the bytes it addresses; `stride` is not the element size when a view interleaves attributes.
+struct AccessorView {
+    const unsigned char* data = nullptr;
+    size_t count = 0;
+    int stride = 0;
+    int components = 0;
+    int componentType = 0;
+    bool normalized = false;
+};
+
+inline bool resolveAccessor(const tinygltf::Model& model, int accessorIndex, AccessorView& out) {
+    if (accessorIndex < 0 || accessorIndex >= static_cast<int>(model.accessors.size())) return false;
+    const tinygltf::Accessor& accessor = model.accessors[accessorIndex];
+    if (accessor.bufferView < 0 || accessor.bufferView >= static_cast<int>(model.bufferViews.size())) return false;
+    const tinygltf::BufferView& view = model.bufferViews[accessor.bufferView];
+    if (view.buffer < 0 || view.buffer >= static_cast<int>(model.buffers.size())) return false;
+    const tinygltf::Buffer& buffer = model.buffers[view.buffer];
+
+    const int components = tinygltf::GetNumComponentsInType(static_cast<uint32_t>(accessor.type));
+    const int componentSize = tinygltf::GetComponentSizeInBytes(static_cast<uint32_t>(accessor.componentType));
+    const int stride = accessor.ByteStride(view);
+    if (components <= 0 || componentSize <= 0 || stride <= 0) return false;
+
+    // Everything past this point indexes raw bytes, so the whole span is bounds-checked once here.
+    const size_t start = view.byteOffset + accessor.byteOffset;
+    const size_t span = accessor.count == 0 ? 0
+                      : (accessor.count - 1) * static_cast<size_t>(stride) + static_cast<size_t>(componentSize) * components;
+    if (start > buffer.data.size() || span > buffer.data.size() - start) return false;
+
+    out = {buffer.data.data() + start, accessor.count, stride, components, accessor.componentType, accessor.normalized};
+    return true;
+}
+
+// Reads an accessor as `wantComponents` packed floats per element, zero-filling the components a
+// narrower accessor doesn't carry. Normalised integer types are the ones KHR_mesh_quantization
+// emits; without this they would arrive as raw counts.
+inline bool readAccessorFloats(const tinygltf::Model& model, int accessorIndex, int wantComponents, std::vector<float>& out) {
+    AccessorView view;
+    if (!resolveAccessor(model, accessorIndex, view)) return false;
+
+    out.assign(view.count * static_cast<size_t>(wantComponents), 0.0f);
+    const int copy = std::min(view.components, wantComponents);
+    const int componentSize = tinygltf::GetComponentSizeInBytes(static_cast<uint32_t>(view.componentType));
+    for (size_t i = 0; i < view.count; i++) {
+        const unsigned char* element = view.data + i * static_cast<size_t>(view.stride);
+        for (int c = 0; c < copy; c++) {
+            const unsigned char* raw = element + c * componentSize;
+            float value = 0.0f;
+            switch (view.componentType) {
+            case TINYGLTF_COMPONENT_TYPE_FLOAT: { float v; memcpy(&v, raw, 4); value = v; break; }
+            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE: { uint8_t v; memcpy(&v, raw, 1); value = view.normalized ? v / 255.0f : static_cast<float>(v); break; }
+            case TINYGLTF_COMPONENT_TYPE_BYTE: { int8_t v; memcpy(&v, raw, 1); value = view.normalized ? std::max(v / 127.0f, -1.0f) : static_cast<float>(v); break; }
+            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT: { uint16_t v; memcpy(&v, raw, 2); value = view.normalized ? v / 65535.0f : static_cast<float>(v); break; }
+            case TINYGLTF_COMPONENT_TYPE_SHORT: { int16_t v; memcpy(&v, raw, 2); value = view.normalized ? std::max(v / 32767.0f, -1.0f) : static_cast<float>(v); break; }
+            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT: { uint32_t v; memcpy(&v, raw, 4); value = static_cast<float>(v); break; }
+            default: return false;
+            }
+            out[i * wantComponents + c] = value;
+        }
+    }
+    return true;
+}
+
+inline bool readAccessorIndices(const tinygltf::Model& model, int accessorIndex, std::vector<uint32_t>& out) {
+    AccessorView view;
+    if (!resolveAccessor(model, accessorIndex, view) || view.components != 1) return false;
+
+    out.assign(view.count, 0u);
+    for (size_t i = 0; i < view.count; i++) {
+        const unsigned char* raw = view.data + i * static_cast<size_t>(view.stride);
+        switch (view.componentType) {
+        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE: { uint8_t v; memcpy(&v, raw, 1); out[i] = v; break; }
+        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT: { uint16_t v; memcpy(&v, raw, 2); out[i] = v; break; }
+        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT: { uint32_t v; memcpy(&v, raw, 4); out[i] = v; break; }
+        default: return false;
+        }
+    }
+    return true;
+}
+
+// A node gives either a full matrix or a TRS triple. Both are column-major the way glm is; only
+// the quaternion differs, glTF storing xyzw where glm's constructor takes w first.
+inline glm::mat4 nodeLocalTransform(const tinygltf::Node& node) {
+    if (node.matrix.size() == 16) {
+        glm::mat4 matrix(1.0f);
+        for (int column = 0; column < 4; column++) {
+            for (int row = 0; row < 4; row++) matrix[column][row] = static_cast<float>(node.matrix[column * 4 + row]);
+        }
+        return matrix;
+    }
+    glm::vec3 translation(0.0f);
+    glm::quat rotation(1.0f, 0.0f, 0.0f, 0.0f);
+    glm::vec3 scale(1.0f);
+    if (node.translation.size() == 3)
+        translation = {static_cast<float>(node.translation[0]), static_cast<float>(node.translation[1]), static_cast<float>(node.translation[2])};
+    if (node.rotation.size() == 4)
+        rotation = {static_cast<float>(node.rotation[3]), static_cast<float>(node.rotation[0]), static_cast<float>(node.rotation[1]), static_cast<float>(node.rotation[2])};
+    if (node.scale.size() == 3)
+        scale = {static_cast<float>(node.scale[0]), static_cast<float>(node.scale[1]), static_cast<float>(node.scale[2])};
+    return makeTransform(translation, rotation, scale);
+}
+
+// True when the linear part of `m` is a plain rotation — no scale, no shear, no reflection. Those
+// are the only copies a node can carry, since a node holds a position and a rotation and the
+// importer drops the rest. Anything else has to be baked into geometry.
+inline bool isRigidNoFlip(const glm::mat4& m, float epsilon = 1e-4f) {
+    const glm::mat3 linear(m);
+    if (glm::determinant(linear) <= 0.0f) return false;
+    const glm::mat3 orthogonality = glm::transpose(linear) * linear;
+    for (int column = 0; column < 3; column++) {
+        for (int row = 0; row < 3; row++) {
+            if (std::abs(orthogonality[column][row] - (column == row ? 1.0f : 0.0f)) > epsilon) return false;
+        }
+    }
+    return true;
+}
+
+// Strips alternate winding every other triangle; fans all share corner 0. Both are rare but legal,
+// and unrolling them here keeps everything downstream on plain triangle lists.
+inline std::vector<uint32_t> trianglesFromStrip(const std::vector<uint32_t>& strip) {
+    std::vector<uint32_t> triangles;
+    if (strip.size() < 3) return triangles;
+    triangles.reserve((strip.size() - 2) * 3);
+    for (size_t i = 0; i + 2 < strip.size(); i++) {
+        triangles.push_back(strip[i]);
+        triangles.push_back(strip[i + (i % 2 == 0 ? 1 : 2)]);
+        triangles.push_back(strip[i + (i % 2 == 0 ? 2 : 1)]);
+    }
+    return triangles;
+}
+
+inline std::vector<uint32_t> trianglesFromFan(const std::vector<uint32_t>& fan) {
+    std::vector<uint32_t> triangles;
+    if (fan.size() < 3) return triangles;
+    triangles.reserve((fan.size() - 2) * 3);
+    for (size_t i = 1; i + 1 < fan.size(); i++) {
+        triangles.push_back(fan[0]);
+        triangles.push_back(fan[i]);
+        triangles.push_back(fan[i + 1]);
+    }
+    return triangles;
+}
+
+// One placement of one glTF mesh: the world matrix the node graph resolved to, plus the name to
+// hang off the entries it produces.
+struct MeshPlacement {
+    int meshIndex = -1;
+    glm::mat4 world{1.0f};
+    std::string nodeName;
+};
+
+// EXT_mesh_gpu_instancing puts many copies of a node's mesh in TRANSLATION/ROTATION/SCALE
+// accessors. Without it a node is simply one copy at its own transform.
+inline std::vector<glm::mat4> instanceTransforms(const tinygltf::Model& model, const tinygltf::Node& node, const glm::mat4& world) {
+    auto extension = node.extensions.find("EXT_mesh_gpu_instancing");
+    if (extension == node.extensions.end() || !extension->second.Has("attributes")) return {world};
+    const tinygltf::Value& attributes = extension->second.Get("attributes");
+
+    std::vector<float> translations, rotations, scales;
+    size_t count = 0;
+    auto read = [&](const char* name, int components, std::vector<float>& values) {
+        if (!attributes.Has(name)) return;
+        if (!readAccessorFloats(model, attributes.Get(name).GetNumberAsInt(), components, values)) {
+            values.clear();
+            return;
+        }
+        count = std::max(count, values.size() / static_cast<size_t>(components));
+    };
+    read("TRANSLATION", 3, translations);
+    read("ROTATION", 4, rotations);
+    read("SCALE", 3, scales);
+    if (count == 0) return {world};
+
+    std::vector<glm::mat4> transforms;
+    transforms.reserve(count);
+    for (size_t i = 0; i < count; i++) {
+        glm::vec3 translation(0.0f);
+        glm::quat rotation(1.0f, 0.0f, 0.0f, 0.0f);
+        glm::vec3 scale(1.0f);
+        if (i * 3 + 2 < translations.size()) translation = {translations[i * 3], translations[i * 3 + 1], translations[i * 3 + 2]};
+        if (i * 4 + 3 < rotations.size()) rotation = {rotations[i * 4 + 3], rotations[i * 4], rotations[i * 4 + 1], rotations[i * 4 + 2]};
+        if (i * 3 + 2 < scales.size()) scale = {scales[i * 3], scales[i * 3 + 1], scales[i * 3 + 2]};
+        transforms.push_back(world * makeTransform(translation, rotation, scale));
+    }
+    return transforms;
+}
+
+// Walks the node graph accumulating transforms. `visited` guards against the cycles a malformed
+// file can contain — invalid glTF, but cheap to survive rather than recurse forever on.
+inline void collectPlacements(const tinygltf::Model& model, int nodeIndex, const glm::mat4& parent,
+                              std::vector<char>& visited, std::vector<MeshPlacement>& out) {
+    if (nodeIndex < 0 || nodeIndex >= static_cast<int>(model.nodes.size()) || visited[nodeIndex]) return;
+    visited[nodeIndex] = 1;
+
+    const tinygltf::Node& node = model.nodes[nodeIndex];
+    const glm::mat4 world = parent * nodeLocalTransform(node);
+    if (node.mesh >= 0 && node.mesh < static_cast<int>(model.meshes.size())) {
+        for (const glm::mat4& transform : instanceTransforms(model, node, world)) {
+            out.push_back({node.mesh, transform, node.name});
+        }
+    }
+    for (int child : node.children) collectPlacements(model, child, world, visited, out);
+}
+
+// Builds one entry from a primitive with `world` baked into the vertices, so it reaches the
+// importer looking like an OBJ shape. Normals go through the inverse transpose; a reflecting
+// `world` reverses the winding, which is what glTF asks for and what keeps culling right on
+// mirrored copies.
+inline bool buildPrimitiveEntry(const tinygltf::Model& model, const tinygltf::Primitive& primitive,
+                                const glm::mat4& world, MeshEntry& entry) {
+    if (primitive.mode != TINYGLTF_MODE_TRIANGLES && primitive.mode != TINYGLTF_MODE_TRIANGLE_STRIP &&
+        primitive.mode != TINYGLTF_MODE_TRIANGLE_FAN) {
+        return false; // points and lines have nothing to draw down this pipeline
+    }
+
+    auto attribute = [&](const char* name) {
+        auto it = primitive.attributes.find(name);
+        return it == primitive.attributes.end() ? -1 : it->second;
+    };
+
+    std::vector<float> positions;
+    if (!readAccessorFloats(model, attribute("POSITION"), 3, positions) || positions.size() < 3) return false;
+    const size_t vertexCount = positions.size() / 3;
+
+    std::vector<float> normals, texCoords, tangents;
+    const bool hasNormals = readAccessorFloats(model, attribute("NORMAL"), 3, normals) && normals.size() >= vertexCount * 3;
+    const bool hasTexCoords = readAccessorFloats(model, attribute("TEXCOORD_0"), 2, texCoords) && texCoords.size() >= vertexCount * 2;
+    // TANGENT is a vec4 whose w is the bitangent's handedness; the pipeline only carries xyz.
+    const bool hasTangents = readAccessorFloats(model, attribute("TANGENT"), 4, tangents) && tangents.size() >= vertexCount * 4;
+
+    std::vector<uint32_t> indices;
+    if (primitive.indices >= 0) {
+        if (!readAccessorIndices(model, primitive.indices, indices)) return false;
+    } else {
+        indices.resize(vertexCount);
+        for (size_t i = 0; i < vertexCount; i++) indices[i] = static_cast<uint32_t>(i);
+    }
+    if (primitive.mode == TINYGLTF_MODE_TRIANGLE_STRIP) indices = trianglesFromStrip(indices);
+    else if (primitive.mode == TINYGLTF_MODE_TRIANGLE_FAN) indices = trianglesFromFan(indices);
+    indices.resize(indices.size() - indices.size() % 3);
+    if (indices.empty()) return false;
+    for (uint32_t index : indices) {
+        if (index >= vertexCount) return false; // never hand the GPU a corner past the vertex buffer
+    }
+
+    const glm::mat3 linear(world);
+    const glm::mat3 normalMatrix = glm::transpose(glm::inverse(linear));
+
+    entry.vertices.assign(vertexCount, Vertex{});
+    for (size_t i = 0; i < vertexCount; i++) {
+        Vertex& vertex = entry.vertices[i];
+        vertex.position = glm::vec3(world * glm::vec4(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2], 1.0f));
+
+        vertex.normal = glm::vec3(0.0f, 1.0f, 0.0f);
+        if (hasNormals) {
+            glm::vec3 normal = normalMatrix * glm::vec3(normals[i * 3], normals[i * 3 + 1], normals[i * 3 + 2]);
+            if (glm::length(normal) > 0.0001f) vertex.normal = glm::normalize(normal);
+        }
+
+        // glTF texture coordinates already run top-left down, like Vulkan's — no flip here, unlike
+        // the OBJ path.
+        vertex.texCoord = hasTexCoords ? glm::vec2(texCoords[i * 2], texCoords[i * 2 + 1]) : glm::vec2(0.0f);
+
+        if (hasTangents) {
+            glm::vec3 tangent = linear * glm::vec3(tangents[i * 4], tangents[i * 4 + 1], tangents[i * 4 + 2]);
+            vertex.tangent = glm::length(tangent) > 0.0001f ? glm::normalize(tangent) : glm::vec3(1.0f, 0.0f, 0.0f);
+        }
+    }
+
+    entry.indices = std::move(indices);
+    if (glm::determinant(linear) < 0.0f) {
+        for (size_t i = 0; i + 2 < entry.indices.size(); i += 3) std::swap(entry.indices[i + 1], entry.indices[i + 2]);
+    }
+    if (!hasTangents) generateTangents(entry.vertices, entry.indices);
+
+    entry.materialId = primitive.material;
+    if (primitive.material >= 0 && primitive.material < static_cast<int>(model.materials.size()) &&
+        !model.materials[primitive.material].name.empty()) {
+        entry.materialName = model.materials[primitive.material].name;
+    }
+    // The node's own world position — the pivot whoever authored the file placed. Keeping it is
+    // the point of reading a format that has one: OBJ bakes its pivots into the coordinates and
+    // leaves the bbox centre as the only thing recoverable, and a door imported that way hinges
+    // about its middle. The cost is that a file parenting many primitives under one node gives
+    // them all the same pivot, which is off-centre bounds rather than wrong ones.
+    entry.origin = glm::vec3(world[3]);
+    return true;
+}
+
+} // namespace gltf
+
+inline MeshData loadMeshFromFileGLTF(const std::string& meshPath) {
+    tinygltf::TinyGLTF loader;
+    tinygltf::Model model;
+    std::string warn, err;
+
+    loader.SetImageLoader(gltf::skipImageLoad, nullptr);
+    const bool loaded = hasExtension(meshPath, ".glb") ? loader.LoadBinaryFromFile(&model, &err, &warn, meshPath)
+                                                       : loader.LoadASCIIFromFile(&model, &err, &warn, meshPath);
+    if (!warn.empty()) std::cerr << "[gltf] " << meshPath << ": " << warn << std::endl;
+    if (!loaded) {
+        std::cerr << "[gltf] failed to load " << meshPath << ": " << err << std::endl;
+        return {};
+    }
+
+    // The default scene is the authored one. A file with no scenes at all still has nodes, so fall
+    // back to every node nobody claims as a child — walking all of them would re-enter subtrees
+    // with the wrong parent transform.
+    std::vector<int> roots;
+    if (!model.scenes.empty()) {
+        const int sceneIndex = (model.defaultScene >= 0 && model.defaultScene < static_cast<int>(model.scenes.size())) ? model.defaultScene : 0;
+        roots = model.scenes[sceneIndex].nodes;
+    } else {
+        std::vector<char> isChild(model.nodes.size(), 0);
+        for (const tinygltf::Node& node : model.nodes) {
+            for (int child : node.children) {
+                if (child >= 0 && child < static_cast<int>(isChild.size())) isChild[child] = 1;
+            }
+        }
+        for (size_t i = 0; i < model.nodes.size(); i++) {
+            if (!isChild[i]) roots.push_back(static_cast<int>(i));
+        }
+    }
+
+    std::vector<gltf::MeshPlacement> placements;
+    std::vector<char> visited(model.nodes.size(), 0);
+    for (int root : roots) gltf::collectPlacements(model, root, glm::mat4(1.0f), visited, placements);
+
+    MeshData meshData;
+    // Entries that carry real geometry, per (mesh, primitive). A later placement of the same
+    // primitive attaches to the first of these it can reach by a rotation alone — more than one is
+    // possible because a mirrored copy gets baked and then serves as the anchor for its own copies.
+    std::map<std::pair<int, int>, std::vector<size_t>> placedEntries;
+    std::vector<glm::mat4> entryPlacement; // parallel to meshData.entries
+    size_t statedInstances = 0;
+
+    for (size_t placementIdx = 0; placementIdx < placements.size(); placementIdx++) {
+        const gltf::MeshPlacement& placement = placements[placementIdx];
+        const tinygltf::Mesh& mesh = model.meshes[placement.meshIndex];
+
+        // One placement is one object. Its primitives are separate entries only because glTF
+        // splits a mesh by material the same way the OBJ reader does, so they carry the placement's
+        // index as their shared object and import hangs them off one node.
+        const std::string objectName = !placement.nodeName.empty() ? placement.nodeName
+                                     : (!mesh.name.empty() ? mesh.name : "mesh_" + std::to_string(placement.meshIndex));
+
+        for (size_t p = 0; p < mesh.primitives.size(); p++) {
+            const tinygltf::Primitive& primitive = mesh.primitives[p];
+
+            std::string name = objectName;
+            if (mesh.primitives.size() > 1) name += "_" + std::to_string(p);
+
+            // Instancing the file states outright: reuse the entry that already holds this
+            // primitive's geometry and record only where this copy sits.
+            auto& candidates = placedEntries[{placement.meshIndex, static_cast<int>(p)}];
+            bool stated = false;
+            for (size_t candidate : candidates) {
+                const glm::mat4 relative = placement.world * glm::inverse(entryPlacement[candidate]);
+                if (!gltf::isRigidNoFlip(relative)) continue; // a mirror or a resize; bake it instead
+
+                MeshEntry entry;
+                entry.instanceOf = static_cast<int>(candidate);
+                entry.instanceTransform = relative;
+                // Carrying the source's pivot through `relative` lands on this node's own world
+                // position, which is the pivot the file gave this copy.
+                entry.origin = glm::vec3(relative * glm::vec4(meshData.entries[candidate].origin, 1.0f));
+                entry.materialId = meshData.entries[candidate].materialId;
+                entry.materialName = meshData.entries[candidate].materialName;
+                entry.shapeName = std::move(name);
+                entry.sourceObject = static_cast<uint32_t>(placementIdx);
+                entry.objectName = objectName;
+                meshData.entries.push_back(std::move(entry));
+                entryPlacement.push_back(placement.world);
+                statedInstances++;
+                stated = true;
+                break;
+            }
+            if (stated) continue;
+
+            MeshEntry entry;
+            if (!gltf::buildPrimitiveEntry(model, primitive, placement.world, entry)) continue;
+            entry.shapeName = std::move(name);
+            entry.sourceObject = static_cast<uint32_t>(placementIdx);
+            entry.objectName = objectName;
+            candidates.push_back(meshData.entries.size());
+            meshData.entries.push_back(std::move(entry));
+            entryPlacement.push_back(placement.world);
+        }
+    }
+
+    std::cout << "[gltf] " << meshPath << ": " << meshData.entries.size() << " entries ("
+              << statedInstances << " instanced by the file)" << std::endl;
+    return meshData;
+}
+
+// Picks the parser by extension. Anything unrecognised goes to the OBJ reader, which is what every
+// caller reached before glTF existed.
+inline MeshData loadMeshFromFile(const std::string& meshPath) {
+    if (hasExtension(meshPath, ".gltf") || hasExtension(meshPath, ".glb")) return loadMeshFromFileGLTF(meshPath);
+    return loadMeshFromFileOBJ(meshPath);
 }
 
 inline void freeMesh(Mesh& mesh) {

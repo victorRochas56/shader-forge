@@ -615,6 +615,9 @@ class SceneLoader {
                     // Legacy scene without entry indices — fall back to the full detection-based load.
                     auto loadResult = scene.assetManager.loadMeshFromFile(meshPath, meshScale);
                     auto& meshIndices = loadResult.meshIndices;
+                    if (meshIndices.empty()) {
+                        throw std::runtime_error("no geometry in " + meshPath);
+                    }
 
                     // Find the specific sub-mesh by name, or fall back to the first one
                     meshIdx = meshIndices[0];
@@ -843,7 +846,7 @@ class SceneLoader {
     // lookups over to a template's own arrays: a template node's links and payload keys are local
     // to that template and mean something else entirely in the scene graph.
     void writeNodes(const Node& node, Scene& scene, int depth,
-                    const Scene::NodeTemplate* tmpl = nullptr, uint32_t localIndex = 0) {
+                    const NodeTemplate* tmpl = nullptr, uint32_t localIndex = 0) {
         const Light* lightPtr = nullptr;
         const Volume* volumePtr = nullptr;
         const ParticleEmitter* emitterPtr = nullptr;

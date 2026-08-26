@@ -11,6 +11,7 @@
 #include "scene_elements.hpp"
 #include "scene_graph.hpp"
 #include "structs.hpp"
+#include "utils.hpp"
 
 /*
 Scene is the "what to draw" container: nodes, meshes, materials, lights,
@@ -19,6 +20,16 @@ Scene does NOT own or depend on rendering passes.
 It does need the BindlessSystem + the light buffer index at clearLights time so it can
 free the light slots it allocated.
 */
+
+struct NodeTemplate {
+    glm::vec3                                     bboxMin;
+    glm::vec3                                     bboxMax;
+    std::vector<Node>                             nodes;
+    std::unordered_map<uint32_t, Light>           lights;
+    std::unordered_map<uint32_t, ParticleEmitter> emitters;
+    std::unordered_map<uint32_t, Volume>          volumes;
+};
+
 class Scene {
   public:
     Scene() = default;
@@ -41,12 +52,6 @@ class Scene {
     // is the root) with parent/child/sibling links remapped to template-local indices, plus its own
     // copies of the attachment payloads keyed by that same local index. Nothing in here indexes live
     // scene state, so a template outlives its source node and serialises on its own.
-    struct NodeTemplate {
-        std::vector<Node>                             nodes;
-        std::unordered_map<uint32_t, Light>           lights;
-        std::unordered_map<uint32_t, ParticleEmitter> emitters;
-        std::unordered_map<uint32_t, Volume>          volumes;
-    };
     std::unordered_map<std::string, NodeTemplate>   templates;
     
     Shader                                          fallbackLitShader;
@@ -372,11 +377,16 @@ class Scene {
         NodeTemplate snapshot;
         sceneGraph.duplicateNode(sceneGraph.getNode(nodeIndex), snapshot.nodes);
 
+        glm::vec3 boundsMin(std::numeric_limits<float>::max());
+        glm::vec3 boundsMax(std::numeric_limits<float>::lowest());
+
         // Lift each attachment's payload into the template and drop the handle it came from. A
         // stored handle would dangle as soon as the source node is deleted, and worse, its slot can
         // later be handed to an unrelated light — which would make the template clone that one.
         // duplicateNode leaves nodeIndex as the source's scene index for exactly this pass, since
         // volumes are keyed by node; it is renumbered to the template-local index on the way out.
+        // The same pass unions the subtree's mesh AABBs, which the snapshot still carries the
+        // world transforms for.
         for (uint32_t i = 0; i < snapshot.nodes.size(); i++) {
             Node& node = snapshot.nodes[i];
             if (auto it = lights.find(node.lightIndex); it != lights.end()) snapshot.lights[i] = it->second;
@@ -385,7 +395,21 @@ class Scene {
             node.lightIndex = MAX_LIGHTS;
             node.particleIndex = 0xFFFFFFFF;
             node.nodeIndex = i;
+
+            if (node.meshIndex >= assetManager.meshes.size()) continue;
+            const Mesh& mesh = assetManager.meshes[node.meshIndex];
+            glm::vec3 worldMin, worldMax;
+            transformAABBToWorldSpace(mesh.boundingBoxMin, mesh.boundingBoxMax, node.worldTransform, worldMin, worldMax);
+            boundsMin = glm::min(boundsMin, worldMin);
+            boundsMax = glm::max(boundsMax, worldMax);
         }
+
+        // Rebased onto the root's pivot, so the bounds mean the same thing wherever the template is
+        // placed. A meshless subtree (a light or emitter rig) collapses to an empty box at the pivot.
+        glm::vec3 pivot = glm::vec3(snapshot.nodes[0].worldTransform[3]);
+        bool hasGeometry = boundsMin.x <= boundsMax.x;
+        snapshot.bboxMin = hasGeometry ? boundsMin - pivot : glm::vec3(0.0f);
+        snapshot.bboxMax = hasGeometry ? boundsMax - pivot : glm::vec3(0.0f);
 
         removeTemplate(templateName); // release the mesh refs of the template being replaced
         templates[templateName] = std::move(snapshot);

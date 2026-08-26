@@ -31,6 +31,7 @@ class GUI;
 struct MaterialEditorState;
 struct RenderFeatures;
 
+class BuildingGen;
 //helper functions for the GUI windows
 
 #ifdef _WIN32
@@ -74,3 +75,4 @@ void showBufferAllocs(GUI& gui, DescriptorSet& descriptorSet, AssetManager& asse
 void showMeshList(GUI& gui, Scene& scene, BindlessSystem& bindless, uint32_t whiteTextureIndex);
 void showTemplates(GUI& gui, Scene& scene, AssetManager& assetManager);
 void showTraces(GUI& gui);
+void showBuildingGen(GUI& gui, Scene& scene, BuildingGen& gen);
