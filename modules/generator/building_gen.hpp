@@ -30,6 +30,16 @@ namespace BuildingPiece {
     inline constexpr int typeCount = static_cast<int>(NONE) + 1;
     inline const char* typeName(Type type) { return typeNames[static_cast<int>(type)]; }
 
+    // Reverse of typeName, for reading a saved piece back. Names rather than the enum's values go
+    // in the file, so reordering the enum can't silently refile every piece in an old scene.
+    // Anything unrecognised reads as NONE, which has no bucket.
+    inline Type typeFromName(const std::string& name) {
+        for (int i = 0; i < typeCount; i++) {
+            if (name == typeNames[i]) return static_cast<Type>(i);
+        }
+        return NONE;
+    }
+
     struct Element {
         Type type;
         // true for elements that are used as padding, every building set should have at least one, used to fill gaps
@@ -56,7 +66,7 @@ namespace BuildingPiece {
 
 }
 
-class BuildingGen : ISerializable
+class BuildingGen : public ISerializable
 {
 
     std::vector<BuildingPiece::Element> walls;
@@ -70,6 +80,8 @@ class BuildingGen : ISerializable
     std::vector<uint32_t> spawnedNodes;
     
  public:
+    BuildingGen() : ISerializable("BuildingGen") {}
+
     // The bucket a type registers into; nullptr for NONE, so callers can treat "unset" as a miss
     // rather than having to test the enum themselves.
     std::vector<BuildingPiece::Element>* elementsFor(BuildingPiece::Type type)
@@ -199,7 +211,7 @@ class BuildingGen : ISerializable
         }
         mirror(halfSeq_floor);
         mirror(halfSeq);
-        //placeEntrance(entrance, wall);
+        placeEntrance(entrance, floorWall, halfSeq_floor, span);
 
         // Stack the row until the wall reaches span.y — the top row overshoots rather than leaving
         // the wall short. Row height is the tallest piece in it, so a mixed-height row still clears.
@@ -213,8 +225,69 @@ class BuildingGen : ISerializable
         }
     }
 
+    // Cuts the entrance into a finished row: every slot it covers is dropped, and the part-covered
+    // slots at either end of that run are closed with stretched padding, so the row still measures
+    // span.x and nothing past the opening shifts.
+    void placeEntrance(BuildingPiece::Element& entrance, BuildingPiece::Element& wall, std::vector<BuildingPiece::Element>& fullSeq, glm::vec2 span)
+    {
+        using namespace BuildingPiece;
+
+        if(entrance.width <= 0.0f || entrance.width > span.x) return; // nowhere to cut it in
+
+        glm::vec2 placeRange = glm::vec2(entrance.width * 0.5f, span.x - entrance.width * 0.5f);
+
+        // Centre of the opening, on a 0.1 grid. randRange gives 0 on an empty range, so an entrance
+        // as wide as the wall is centred rather than shoved to the left edge.
+        float entrancePlace = placeRange.y > placeRange.x
+            ? randRange(int(10.0f*placeRange.x), int(10.0f*placeRange.y)) * 0.1f
+            : placeRange.x;
+
+        const float entranceStart = entrancePlace - entrance.width * 0.5f;
+        const float entranceEnd   = entrancePlace + entrance.width * 0.5f;
+        const float eps = 0.001f;
+
+        std::vector<Element> sequence;
+        sequence.reserve(fullSeq.size() + 3);
+
+        float cursor = 0.0f;
+        bool placed = false;
+        for(const Element& element : fullSeq) {
+            const float slotStart = cursor;
+            const float slotEnd = cursor + element.width;
+            cursor = slotEnd;
+
+            // Clear of the opening on either side — the slot survives as it was.
+            if(slotEnd <= entranceStart + eps || slotStart >= entranceEnd - eps) {
+                sequence.push_back(element);
+                continue;
+            }
+
+            // Overlapping slots are ordered, so only the first can start before the opening and
+            // only the last can end after it: the pads land either side of the entrance.
+            if(slotStart < entranceStart - eps) {
+                Element pad = wall;
+                pad.width = entranceStart - slotStart;
+                sequence.push_back(pad);
+            }
+            if(!placed) {
+                sequence.push_back(entrance);
+                placed = true;
+            }
+            if(slotEnd > entranceEnd + eps) {
+                Element pad = wall;
+                pad.width = slotEnd - entranceEnd;
+                sequence.push_back(pad);
+            }
+        }
+        // A row that came up short of span.x can leave the opening past its end; it still belongs
+        // in the run.
+        if(!placed) sequence.push_back(entrance);
+
+        fullSeq = std::move(sequence);
+    }
+
     // returns the half width sequence of placed blocks
-    std::vector<BuildingPiece::Element> walkHalfWidth(std::vector<BuildingPiece::Element> elements, BuildingPiece::Element fill, glm::vec2 span) {
+    std::vector<BuildingPiece::Element> walkHalfWidth(std::vector<BuildingPiece::Element>& elements, BuildingPiece::Element& fill, glm::vec2 span) {
         using namespace BuildingPiece;
 
         float start = 0.0f;
@@ -331,13 +404,98 @@ class BuildingGen : ISerializable
     }
 
 /* ============= Serialization stuff ================== */
-    const std::string identifier = "BuildingGen";
 
+    // One Element block per registered piece, its bucket written as the type name. Sizes are
+    // written rather than re-measured on load: parsing sees the stream and nothing else, and a
+    // piece measures the same either way as long as its templates come back unchanged.
     bool serialize(std::ofstream& ofs) override {
+        using namespace BuildingPiece;
+
+        ofs << identifier << " {" << std::endl;
+        for (int t = 0; t < typeCount; t++) {
+            Type type = static_cast<Type>(t);
+            const std::vector<Element>* bucket = elementsFor(type);
+            if (!bucket) continue; // NONE has none
+
+            for (const Element& element : *bucket) {
+                ofs << "  Element {" << std::endl;
+                // The bucket says what this is, not element.type — they only disagree if a piece
+                // was filed wrong, and the bucket is what every lookup goes through.
+                ofs << "    Type : " << typeName(type) << std::endl;
+                ofs << "    Resizeable : " << (element.resizeable ? 1 : 0) << std::endl;
+                ofs << "    Width : " << element.width << std::endl;
+                ofs << "    Height : " << element.height << std::endl;
+                ofs << "    GroundKey : " << element.groundKey << std::endl;
+                ofs << "    Templates : ";
+                for (const std::string& templateKey : element.templateKeys) ofs << templateKey << ";";
+                ofs << std::endl;
+                ofs << "  }" << std::endl;
+            }
+        }
+        ofs << "}" << std::endl << std::endl;
         return true;
     }
 
     bool parse(std::ifstream& ifs) override {
+        using namespace BuildingPiece;
+
+        clear(); // a second block would otherwise register everything twice
+
+        std::string line, key, value;
+        while (std::getline(ifs, line)) {
+            SerialText::trim(line);
+            if (line == "}") break; // end of the BuildingGen block
+            if (line != "Element {") continue;
+
+            Element element{NONE, false, {}, 0.0f, 0.0f};
+            Type type = NONE;
+            while (std::getline(ifs, line)) {
+                SerialText::trim(line);
+                if (line == "}") break; // end of this Element
+
+                if (!SerialText::parseKeyValue(line, key, value)) continue;
+
+                if (key == "Type") {
+                    type = typeFromName(value);
+                } else if (key == "Resizeable") {
+                    element.resizeable = (std::stoi(value) != 0);
+                } else if (key == "Width") {
+                    element.width = std::stof(value);
+                } else if (key == "Height") {
+                    element.height = std::stof(value);
+                } else if (key == "GroundKey") {
+                    element.groundKey = value;
+                } else if (key == "Templates") {
+                    // Trailing separator, so split hands back an empty last field — and a template
+                    // deleted since the save leaves nothing to place either.
+                    for (const std::string& templateKey : SerialText::split(value, ';')) {
+                        if (!templateKey.empty()) element.templateKeys.push_back(templateKey);
+                    }
+                }
+            }
+
+            // Without a bucket or a variant to place there is no piece here, only a slot the walk
+            // would reserve width for and then leave as a hole.
+            std::vector<Element>* bucket = elementsFor(type);
+            if (!bucket || element.templateKeys.empty()) continue;
+
+            element.type = type;
+            bucket->push_back(element);
+        }
         return true;
+    }
+
+    // Registered pieces go with the scene that defined their templates. spawnedNodes goes too:
+    // those indices are handed back to the graph on a clear, so a surviving list would have the
+    // next run delete nodes it never spawned.
+    void clear() override {
+        walls.clear();
+        floorWalls.clear();
+        windows.clear();
+        floorWindows.clear();
+        entrances.clear();
+        roofs.clear();
+        roofWindows.clear();
+        spawnedNodes.clear();
     }
 };

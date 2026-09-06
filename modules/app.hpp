@@ -56,7 +56,10 @@ class App {
         gui.init(bindless, gpu);
         gui.loadLayout(GUI_LAYOUT_FILE);
         EventSystem::init(scene.sceneGraph);
-        
+        // Registered before any scene is touched: this is what puts the generator's pieces in the
+        // scene file and takes them back out again on load.
+        sceneLoader.registerSerializable(buildingGen);
+
         //default environment map
         uint32_t cubeMapIndex =
             scene.assetManager.loadCubemapFromFile("textures/sky2/posx.jpg", "textures/sky2/posy.jpg", "textures/sky2/posz.jpg", "textures/sky2/negx.jpg", "textures/sky2/negy.jpg", "textures/sky2/negz.jpg");

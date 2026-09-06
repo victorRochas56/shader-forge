@@ -11,6 +11,7 @@
 
 #include "node_ops.hpp"
 #include "scene.hpp"
+#include "serializable_interface.h"
 #include "utils.hpp"
 
 /*
@@ -21,6 +22,13 @@ parses a file and loads a scene from it
 
 class SceneLoader {
   public:
+    // Owners of state that rides along in the scene file, each writing and reading its own block.
+    // Registered once at startup and kept by pointer — they outlive every load, it is only their
+    // contents that come and go with the scene.
+    void registerSerializable(ISerializable& serializable) {
+        serializables.push_back(&serializable);
+    }
+
     // clearScene/loadScene need bindless + the renderer-owned buffer indices
     // to free GPU slots. The SceneGraph re-creates root from resources cached
     // at its own init(), so the loader doesn't need a renderer pointer.
@@ -59,6 +67,13 @@ class SceneLoader {
         writeMeshes(scene.assetManager);
 
         writeTemplates(scene);
+
+        // Registered owners go after the templates they reference by key, so the file reads in
+        // dependency order even though their parsing doesn't rely on it.
+        for (ISerializable* serializable : serializables) {
+            if (serializable) serializable->serialize(ofs);
+        }
+
         // then write all nodes
         child = rootNode.firstChild;
         while (child != 0) {
@@ -105,6 +120,10 @@ class SceneLoader {
                 parseTemplateSection(ifs, scene, bindless, buffers, lightBufferIndex, materialIDToIndex);
             } else if (line == "Node {") {
                 parseNode(ifs, scene, bindless, buffers, lightBufferIndex, SceneGraph::ROOT_INDEX, materialIDToIndex);
+            } else {
+                // Last in the chain: a registered owner naming its block after one of the sections
+                // above would otherwise shadow it. Unclaimed lines fall through as before.
+                parseSerializable(ifs, line);
             }
         }
 
@@ -114,8 +133,21 @@ class SceneLoader {
     }
 
   private:
-    std::fstream ofs;
+    std::ofstream ofs;
+    std::vector<ISerializable*> serializables;
     std::unordered_set<uint32_t> savedMaterialIDs;
+
+    // Hands a block to whichever registered owner named it, and leaves the stream on the line it
+    // was given otherwise, so an unclaimed section is skipped exactly as it always was.
+    bool parseSerializable(std::ifstream& ifs, const std::string& line) {
+        for (ISerializable* serializable : serializables) {
+            if (serializable && line == serializable->identifier + " {") {
+                serializable->parse(ifs);
+                return true;
+            }
+        }
+        return false;
+    }
     // Saved LOD chains for the scene being loaded, keyed the same way loadSceneMesh keys a mesh.
     std::map<std::string, PrecomputedLODs> meshLODCache;
 
@@ -199,39 +231,17 @@ class SceneLoader {
         scene.assetManager.prewarmTextureCache(jobs);
     }
 
-    // trims whitespace from line
-    void trim(std::string& str) {
-        size_t start = str.find_first_not_of(" \t\r\n");
-        size_t end = str.find_last_not_of(" \t\r\n");
-        if (start == std::string::npos || end == std::string::npos) {
-            str = "";
-        } else {
-            str = str.substr(start, end - start + 1);
-        }
-    }
+    // The block format is shared with everything implementing ISerializable, so these forward to
+    // the SerialText versions — one implementation behind both sides of the file.
+    void trim(std::string& str) { SerialText::trim(str); }
 
     bool parseKeyValue(const std::string& line, std::string& key, std::string& value) {
-        size_t colonPos = line.find(':');
-        if (colonPos == std::string::npos) {
-            return false;
-        }
-        key = line.substr(0, colonPos);
-        value = line.substr(colonPos + 1);
-        trim(key);
-        trim(value);
-        return true;
+        return SerialText::parseKeyValue(line, key, value);
     }
 
     // parse comma separated values
     std::vector<std::string> split(const std::string& str, char delimiter) {
-        std::vector<std::string> result;
-        std::stringstream ss(str);
-        std::string item;
-        while (std::getline(ss, item, delimiter)) {
-            trim(item);
-            result.push_back(item);
-        }
-        return result;
+        return SerialText::split(str, delimiter);
     }
 
     void clearSceneInternal(Scene& scene, BindlessSystem& bindless,
@@ -279,6 +289,11 @@ class SceneLoader {
         // reuse: a surviving mesh table means every reload leaves behind the previous scene's
         // geometry, and the LOD chains in the scene file make the rebuild cheap anyway.
         scene.assetManager.releaseAllMeshes();
+        // Registered owners key their state on the templates and nodes that just went away, so
+        // they are dropped here rather than left pointing into the next scene's indices.
+        for (ISerializable* serializable : serializables) {
+            if (serializable) serializable->clear();
+        }
         std::cout << "Scene cleared successfully!" << std::endl;
     }
 

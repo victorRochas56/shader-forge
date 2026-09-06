@@ -85,7 +85,7 @@ FragmentOutput fragMain(VertexOutput input)
     LitPass* pass = pc.litPassData;
 
     float4 color = float4(0,0,0,1);
-    float roughness = 0.01f;
+    float roughness = 0.001f;
 
     //float3 N = normalize(input.normal);
     float amplitude = 0.05f;

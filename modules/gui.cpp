@@ -1172,9 +1172,9 @@ void showBuildingGen(GUI& gui, Scene& scene, BuildingGen& gen) {
     }
 
     gui.separator();
-    gui.inputFloat("Wall Width",&spanX);
+    gui.dragFloat("Wall Width",&spanX, 0.1f, 0.0f, 20.0f);
     gui.sameLine();
-    gui.inputFloat("Wall Height",&spanY);
+    gui.dragFloat("Wall Height",&spanY, 0.1f, 0.0f, 20.0);
     // Distinct window pieces the row may draw from. Capped at what's registered, since the pick is
     // without replacement and there is nothing past that to take.
     int registeredWindows = static_cast<int>(gen.elementsFor(BuildingPiece::WINDOW)->size());
