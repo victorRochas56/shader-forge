@@ -888,18 +888,21 @@ class BuildingGen : public ISerializable
         if(it == scene.templates.end()) return; // template dropped since it was registered
         const NodeTemplate& tmpl = it->second;
 
-        // The slot's width is the template's own except where the walk stretched a pad or a column
-        // held a piece to its width. Stretching is along the piece's own Z, which the turn below
-        // carries round with the rest of the run.
-        float templateWidth = tmpl.bboxMax.z - tmpl.bboxMin.z;
-        float scale = templateWidth > 0.0f ? element.width / templateWidth : 1.0f;
+        // Stretch is the slot's width over the piece's registered width: 1 unless the walk
+        // stretched a pad or a column held a piece to its width. The registered width rather than
+        // the bounds, so trim that sticks out past the slot overhangs instead of being squeezed
+        // in. Along the piece's own Z, which the turn below carries round with the rest of the run.
+        const Element* piece = registered(element);
+        const float ownWidth = piece && piece->width > 0.0f ? piece->width : tmpl.bboxMax.z - tmpl.bboxMin.z;
+        float scale = ownWidth > 0.0f ? element.width / ownWidth : 1.0f;
 
-        // A template's pivot sits wherever it was authored, so offset by its bounds to land the
-        // piece's leading edge on the cursor and its base on origin.y. Only Z takes the
-        // stretch — scaling the Y offset too would drop a stretched piece below its row. The
-        // offset is in the run's own frame, so it turns with the wall; a yaw leaves Y alone.
+        // A template's pivot sits wherever it was authored, so offset by its bounds: their centre
+        // on the slot's centre, so an overhang spills evenly to both sides, and their base on
+        // origin.y. Only Z takes the stretch — scaling the Y offset too would drop a stretched
+        // piece below its row. The offset is in the run's own frame, so it turns with the wall.
         const glm::quat turn = glm::angleAxis(yaw, glm::vec3(0.0f, 1.0f, 0.0f));
-        glm::vec3 localOffset(0.0f, -tmpl.bboxMin.y, along - tmpl.bboxMin.z * scale);
+        const float boundsMidZ = (tmpl.bboxMin.z + tmpl.bboxMax.z) * 0.5f;
+        glm::vec3 localOffset(0.0f, -tmpl.bboxMin.y, along + element.width * 0.5f - boundsMidZ * scale);
         glm::vec3 spawnPos = origin + turn * localOffset;
 
         uint32_t root = scene.placeTemplate(templateKey, spawnPos);

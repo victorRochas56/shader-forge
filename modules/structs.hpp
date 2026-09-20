@@ -74,7 +74,7 @@ struct SkyBoxPushConstants {
 };
 
 // Mirror of VoxelizationPushConstants in shaders/voxelization.slang.
-// 200 bytes — above the 128-byte Vulkan floor, so this needs maxPushConstantsSize >= 256 (NVIDIA
+// 208 bytes — above the 128-byte Vulkan floor, so this needs maxPushConstantsSize >= 256 (NVIDIA
 // has it, most AMD/Intel report 128). To get back under, fold vpm*model into one mvp on the CPU.
 struct VoxelizationPushConstants {
     glm::mat4 vpm;                  // orthographic voxel-grid view-projection
@@ -93,8 +93,23 @@ struct VoxelizationPushConstants {
     uint32_t  skyEnvMapIndex;
     float     skyInjection;         // sky irradiance scale; 0 disables the injection
     uint32_t  packedColor;          // material base colour, RGBA8 linear
+    uint32_t  shadowTile;           // the clip level's VXGI shadow tile: Light::shadowMaps[shadowTile]
+    float     shadowNormalOffset;   // acne bias along the normal (m), scaled with the level's voxel
 };
 static_assert(sizeof(VoxelizationPushConstants) <= 256, "voxelization push constants exceed the 256-byte device limit");
+
+// Mirror of VoxelClipmap in shaders/modules/voxel_clipmap.slang. Level l is a cube of levels[l].w
+// metres centred on levels[l].xyz, `resolution` voxels a side; the stacked volumes keep level l in
+// z slab [l*res, (l+1)*res). vec4 array + uints, so the bytes match under scalar, std430 and std140.
+struct GPUVoxelClipmap {
+    std::array<glm::vec4, MAX_VOXEL_CLIP_LEVELS> levels{}; // xyz centre, w extent (m)
+    uint32_t levelCount = 1;           // active levels this frame
+    uint32_t resolution = 1;           // radiance voxels a side, per level
+    uint32_t irradianceResolution = 1; // irradiance voxels a side, per level
+    uint32_t mipLevels = 1;            // mips per level in the radiance volume
+    glm::vec4 anchor = glm::vec4(0);   // xyz camera position the levels were snapped around; w unused
+};
+static_assert(sizeof(GPUVoxelClipmap) == 16 * MAX_VOXEL_CLIP_LEVELS + 32, "must match VoxelClipmap in voxel_clipmap.slang");
 
 // Mirror of VoxelResolvePushConstants in shaders/voxel_resolve.slang. Shared by both entry points:
 // resolveMain unpacks the atomic buffers into mip 0, downsampleMain folds src -> dst one level down.
@@ -105,8 +120,9 @@ struct VoxelResolvePushConstants {
     uint64_t voxelRadianceAddress; // unused by downsampleMain
     uint32_t dstStorageIndex;      // RWTexture3D<float4> slot being written
     uint32_t srcStorageIndex;      // RWTexture3D<float4> slot being read (unused by resolveMain)
-    uint32_t dstResolution;        // side length of the destination mip
+    uint32_t dstResolution;        // side length of the destination mip, per level
     uint32_t voxelResolution;      // mip-0 side length, for indexing the atomic buffers
+    uint32_t levelCount;           // active clip levels; the z extent is dstResolution * levelCount
 };
 
 // Keep in sync with the VOXDBG_* constants in shaders/voxel_debug.slang.
@@ -120,7 +136,8 @@ struct VoxelDebugSettings {
     bool           drawCubes = false; // cubes via voxel_cubes.slang instead of the fullscreen ray march
     VoxelDebugMode mode     = VoxelDebugMode::Radiance; // ray-march only; cubes always show radiance
     int            volumeSelect = 0;  // 0 = radiance volume, 1..6 = irradiance face (+X,-X,+Y,-Y,+Z,-Z)
-    uint32_t       mipLevel = 0;      // which level of the chain to visualize — good for eyeballing the fold
+    uint32_t       clipLevel = 0;     // which clip level's slab to visualize (clamped to the active count)
+    uint32_t       mipLevel = 0;      // which mip of that level to visualize — good for eyeballing the fold
     float          alphaScale = 1.0f; // ray-march: raise to make a sparse grid readable
     float          cubeThreshold = 0.05f; // cubes: min coverage for a voxel to get a cube
     // Runaway guard for grazing rays. A full diagonal of a 128^3 grid is ~222 steps, so 256 covers the
@@ -152,20 +169,28 @@ struct VXGISettings {
     // Below ~0.05 the unorm8 faces quantize the increment to nothing and convergence stalls.
     float temporalBlend = 0.25f; // 1 = no history
     int updatePhases = 2;        // power of two, 1..8: a voxel re-traces every N frames
+    // Clipmap layout. Level l is CLIP_RESOLUTION voxels of voxelSize0 * 2^l a side, so each level
+    // doubles the covered radius at the same voxel count. Resolution is compile-time (VoxelizationPass).
+    int   clipLevels = 5;            // active levels, 1..MAX_VOXEL_CLIP_LEVELS
+    float voxelSize0 = 0.25f;        // level-0 voxel size in metres
+    // Cone range cap. A cone that reaches it is treated as seeing sky, so this doubles as the
+    // occlusion horizon: the old single grid exited at 32 m, which is where this default comes from.
+    float maxTraceDistance = 32.0f;
+    // Raster cull: skip nodes whose bounding box is under this many of the level's voxels on every
+    // axis. 0 disables. Modular scenes are built from pieces smaller than a coarse voxel, so this
+    // drops whole walls from the far levels — keep it off unless the draw count is the problem.
+    float smallNodeCull = 0.0f;
 };
 
-// Mirror of VoxelGatherPushConstants in shaders/voxel_gather.slang.
+// Mirror of VoxelGatherPushConstants in shaders/voxel_gather.slang. One dispatch per clip level.
 struct VoxelGatherPushConstants {
-    glm::mat4 worldToGridClip;
-    glm::mat4 gridClipToWorld;
+    uint64_t clipmapAddress;       // this frame's GPUVoxelClipmap
+    uint32_t level;                // clip level this dispatch gathers
     uint32_t radianceTextureIndex;
     uint32_t samplerIndex;
-    uint32_t radianceResolution;   // cone-trace grid: voxel size and mip cap
-    uint32_t irradianceResolution; // dispatch/storage grid; divides radianceResolution
-    float    worldExtent;
     std::array<uint32_t, 6> faceStorageIndices;   // VOXEL_FACE_DIRS order: +X,-X,+Y,-Y,+Z,-Z
     std::array<uint32_t, 6> historyTextureIndices; // last frame's faces, sampled slots
-    std::array<int32_t, 3>  historyOffset;         // history coord = id + offset (grid recentre)
+    std::array<int32_t, 3>  historyOffset;         // history coord = id + offset (level recentre)
     float    blendWeight;  // weight of a fresh trace; 1 = replace, no usable history
     uint32_t phaseMask;    // updatePhases-1; 0 traces every voxel every frame
     uint32_t phase;        // which phase updates this frame
@@ -173,37 +198,41 @@ struct VoxelGatherPushConstants {
     uint32_t maxSteps;
     uint32_t fetchBatch;
     uint32_t skyEnvMapIndex;
-    float    skyIntensity; // cone-miss sky radiance scale; 0 disables
+    float    skyIntensity;     // cone-miss sky radiance scale; 0 disables
+    float    maxTraceDistance; // cone range cap (m)
+    uint32_t historyValid;     // 1 when the level's own history slab reprojects (historyOffset is exact)
+    std::array<float, 3> seedCenter; // centre the next level out gathered its history under
+    uint32_t seedFromParent;   // 1 when that slab is a valid gather at the current extent
 };
-// Scalar-packed to match Slang; already past the 128-byte spec floor, so it needs a device that
-// reports 256 (desktop NVIDIA/Intel do; some AMD drivers cap at 128).
-static_assert(sizeof(VoxelGatherPushConstants) == 240, "gather push constants must stay under 256 bytes");
+static_assert(sizeof(VoxelGatherPushConstants) == 136, "must match VoxelGatherPushConstants in voxel_gather.slang");
 
 // Mirror of VoxelCubePushConstants in shaders/voxel_cubes.slang. Shared by extractMain and the cube
 // draw — one struct because two push-constant blocks in one module would collide.
 struct VoxelCubePushConstants {
-    glm::mat4 gridToClip;            // cameraVP * voxelCamInvVPM
+    glm::mat4 gridToClip;            // cameraVP * inverse(level VPM)
     uint64_t  instanceBufferAddress;
     uint64_t  indirectBufferAddress;
     uint32_t  volumeTexIndex;
     uint32_t  mipLevel;
-    uint32_t  mipRes;
+    uint32_t  mipRes;                // level side at mipLevel
     float     threshold;
+    uint32_t  zOffset;               // start of the level's slab at mipLevel: level * mipRes
 };
 
-// Mirror of VoxelDebugPushConstants in shaders/voxel_debug.slang. 112 bytes.
+// Mirror of VoxelDebugPushConstants in shaders/voxel_debug.slang. 116 bytes.
 struct VoxelDebugPushConstants {
-    glm::mat4 camNdcToGrid;  // voxelVPM * inverse(cameraViewProjection)
-    glm::vec3 cameraPosGrid; // camera position in grid UVW
+    glm::mat4 camNdcToGrid;  // level VPM * inverse(cameraViewProjection)
+    glm::vec3 cameraPosGrid; // camera position in level-local UVW
     uint32_t  mipLevel;
     uint32_t  volumeTexIndex;
     uint32_t  samplerIndex;
     uint32_t  depthTexIndex;
     uint32_t  depthSamplerIndex;
-    uint32_t  resolution;
+    uint32_t  resolution;    // level side at mip 0
     uint32_t  mode;
     uint32_t  maxSteps;
     float     alphaScale;
+    uint32_t  level;         // clip level whose slab is marched
 };
 
 enum ImageVisFlags : uint32_t 
@@ -846,9 +875,7 @@ struct LitPassData {
     uint32_t voxelSamplerIndex;
     glm::mat4 viewProjection;
     glm::mat4 prevViewProjection;
-    glm::mat4 voxelViewProjection; // world -> voxel grid clip (VoxelizationPass::gridViewProjection)
-    uint32_t voxelResolution;
-    float voxelWorldExtent;
+    GPUVoxelClipmap voxelClipmap;  // this frame's clip levels (VoxelizationPass::buildClipmap)
     // VXGI cone-trace tuning (VXGISettings sliders); defaults match the old compile-time values
     uint32_t giHemisphereRays = 5;
     uint32_t giMaxSteps = 9;
@@ -857,6 +884,7 @@ struct LitPassData {
     std::array<uint32_t, 6> giIrradianceIndices{}; // per-face irradiance volumes, VOXEL_FACE_DIRS order
     float giStrength = 1.0f;
     float giSkyIntensity = 0.0f; // cone-miss sky radiance scale (skyboxIntensity * vxgi.skyStrength)
+    float giMaxTraceDistance = 32.0f; // cone range cap (m)
 };
 
 // Hot per-light data mirrored into the lit frame UBO (LightHot in common.slang).
@@ -887,32 +915,32 @@ static_assert(sizeof(GPUCascadeHot) == 96, "must match CascadeHot in common.slan
 // the constant cache instead of per-fragment BDA loads. One UBO slot per frame in flight; the
 // LitPassData / GPULight BDA buffers stay authoritative for every other pass.
 struct GPULitFrameUniforms {
-    glm::mat4 voxelViewProjection = glm::mat4(1.0f);
-    glm::vec4 cameraPosExtent = glm::vec4(0);  // xyz cameraPos, w voxelWorldExtent
+    GPUVoxelClipmap voxelClipmap;              // vec4 array + uints: same bytes under std140
+    glm::vec4 cameraPosExtent = glm::vec4(0);  // xyz cameraPos, w unused
     glm::vec4 cameraForwardGI = glm::vec4(0);  // xyz cameraForward, w giStrength
     glm::uvec4 indicesA = glm::uvec4(0);       // sampler, lightCount (<= MAX_UBO_LIGHTS), shadowSampler, shadowAtlas
-    glm::uvec4 indicesB = glm::uvec4(0);       // voxelTexture, voxelSampler, voxelResolution, giMode
+    glm::uvec4 indicesB = glm::uvec4(0);       // voxelTexture, voxelSampler, unused, giMode
     glm::uvec4 giParams = glm::uvec4(0);       // giHemisphereRays, giMaxSteps, giFetchBatch, unused
     glm::uvec4 giIrradianceA = glm::uvec4(0);  // irradiance volume indices 0-3
     glm::uvec4 giIrradianceB = glm::uvec4(0);  // xy irradiance indices 4-5, zw unused
-    glm::vec4 giFloats = glm::vec4(0);         // x giSkyIntensity, yzw unused
+    glm::vec4 giFloats = glm::vec4(0);         // x giSkyIntensity, y giMaxTraceDistance, zw unused
     // Flat pool of directional cascades; GPULightHot::typeFlags.w is a light's base slot.
     GPUCascadeHot cascades[MAX_UBO_CASCADES];
     GPULightHot lights[MAX_UBO_LIGHTS];
 
     void setPassData(const LitPassData& pd) {
-        voxelViewProjection = pd.voxelViewProjection;
-        cameraPosExtent = glm::vec4(pd.cameraPosition, pd.voxelWorldExtent);
+        voxelClipmap = pd.voxelClipmap;
+        cameraPosExtent = glm::vec4(pd.cameraPosition, 0.0f);
         cameraForwardGI = glm::vec4(pd.cameraForward, pd.giStrength);
         indicesA = glm::uvec4(pd.samplerIndex, std::min(pd.lightCount, MAX_UBO_LIGHTS), pd.shadowSamplerIndex, pd.shadowAtlasIndex);
-        indicesB = glm::uvec4(pd.voxelTextureIndex, pd.voxelSamplerIndex, pd.voxelResolution, pd.giMode);
+        indicesB = glm::uvec4(pd.voxelTextureIndex, pd.voxelSamplerIndex, 0u, pd.giMode);
         giParams = glm::uvec4(pd.giHemisphereRays, pd.giMaxSteps, pd.giFetchBatch, 0u);
         giIrradianceA = glm::uvec4(pd.giIrradianceIndices[0], pd.giIrradianceIndices[1], pd.giIrradianceIndices[2], pd.giIrradianceIndices[3]);
         giIrradianceB = glm::uvec4(pd.giIrradianceIndices[4], pd.giIrradianceIndices[5], 0u, 0u);
-        giFloats = glm::vec4(pd.giSkyIntensity, 0.0f, 0.0f, 0.0f);
+        giFloats = glm::vec4(pd.giSkyIntensity, pd.giMaxTraceDistance, 0.0f, 0.0f);
     }
 };
-static_assert(sizeof(GPULitFrameUniforms) == 192 + sizeof(GPUCascadeHot) * MAX_UBO_CASCADES + sizeof(GPULightHot) * MAX_UBO_LIGHTS,
+static_assert(sizeof(GPULitFrameUniforms) == sizeof(GPUVoxelClipmap) + 128 + sizeof(GPUCascadeHot) * MAX_UBO_CASCADES + sizeof(GPULightHot) * MAX_UBO_LIGHTS,
               "must match LitFrameUniforms in common.slang (std140)");
 
 // matches VkDrawIndexedIndirectCommand)
@@ -1224,8 +1252,9 @@ struct GPULight {
     uint32_t numCascades = 3;       
     uint32_t shadowResolution = DEFAULT_SHADOW_RESOLUTION;
     GPUCascade cascades[3]; // for CSM directional lights
-    GPUShadowMap shadowMaps[6]; // more generic than cascades up to 6 for point lights
+    GPUShadowMap shadowMaps[6]; // point lights: six cube faces; directional: one VXGI tile per clip level
 };
+static_assert(MAX_VOXEL_CLIP_LEVELS <= 6, "directional lights keep one VXGI shadow tile per clip level in shadowMaps");
 
 enum class VolumeShape {
     SPHERE,

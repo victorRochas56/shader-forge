@@ -4,6 +4,10 @@
 // The volume is unorm, so radiance lives in it Reinhard-compressed; readers decode per tap. The fold
 // (and the sampler's trilinear) averages compressed values — slightly dim on bright voxels, fine for GI.
 //
+// The volume holds the clip levels stacked along z (voxel_clipmap.slang), so both kernels run over
+// a res x res x (res * levelCount) box. The 2x2x2 fold never straddles a level: every slab is a
+// power-of-two number of voxels deep.
+//
 // The fold is opacity-weighted, not a box filter: a plain average of a 2x2x2 neighbourhood pulls
 // empty voxels into occupied ones and the chain fades to black as you climb it.
 import modules.voxel;
@@ -13,8 +17,9 @@ struct VoxelResolvePushConstants {
     uint*  voxelRadiance;
     uint   dstStorageIndex;
     uint   srcStorageIndex;
-    uint   dstResolution;
+    uint   dstResolution;  // per level
     uint   voxelResolution;
+    uint   levelCount;     // active clip levels; z extent = dstResolution * levelCount
 }
 
 [[vk::push_constant]] ConstantBuffer<VoxelResolvePushConstants> vpc;
@@ -27,9 +32,11 @@ RWTexture3D<float4> storageImages3D[];
 [NumThreads(4, 4, 4)]
 [shader("compute")]
 void resolveMain(uint3 id : SV_DispatchThreadID) {
-    if (any(id >= vpc.voxelResolution)) return;
+    uint res = vpc.voxelResolution;
+    if (any(id >= uint3(res, res, res * vpc.levelCount))) return;
 
-    uint idx = voxelIndex(id, vpc.voxelResolution);
+    // Level l's slab is the l-th res^3 block of the scatter buffers, which is what the stacked z gives.
+    uint idx = voxelIndex(id, res);
     uint packedAlbedo   = vpc.voxelAlbedo[idx];
     uint packedRadiance = vpc.voxelRadiance[idx];
 
@@ -49,7 +56,8 @@ void resolveMain(uint3 id : SV_DispatchThreadID) {
 [NumThreads(4, 4, 4)]
 [shader("compute")]
 void downsampleMain(uint3 id : SV_DispatchThreadID) {
-    if (any(id >= vpc.dstResolution)) return;
+    uint res = vpc.dstResolution;
+    if (any(id >= uint3(res, res, res * vpc.levelCount))) return;
 
     uint3 base = id * 2;
     float3 weightedColor = float3(0);

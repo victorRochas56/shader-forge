@@ -7,6 +7,9 @@
 // occupancy buffer.
 module voxel;
 
+// Clip level layout and world <-> stacked-volume mapping; re-exported so every importer sees it.
+__exported import voxel_clipmap;
+
 [[vk::binding(0, 0)]] Texture3D<float4> textures3D[];
 // Alias of common.slang's cubemaps — same binding, module-local name to avoid a collision in
 // shaders that import both modules.
@@ -50,22 +53,14 @@ public float voxelLoadCoverage(uint textureIndex, uint3 coord, uint mip) {
     return voxelLoadTexel(textureIndex, coord, mip).a;
 }
 
-// Voxel center in world space. Grid clip is orthographic, so w == 1 and the inverse is exact.
-public float3 voxelCenterWorld(uint3 coord, uint resolution, float4x4 gridClipToWorld) {
-    float3 uvw = (float3(coord) + 0.5) / float(resolution);
-    return mul(gridClipToWorld, float4(uvw.xy * 2.0 - 1.0, uvw.z, 1.0)).xyz;
+public float4 voxelSampleVolume(uint textureIndex, uint samplerIndex, float3 uvw) {
+    return textures3D[textureIndex].SampleLevel(samplers[samplerIndex], uvw, 0);
 }
 
+// Scatter-buffer index. z may run past `resolution` into the stacked slabs: level l's slab is the
+// l-th resolution^3 block of the buffer, which is exactly what this yields for z = l*res + local.
 public uint voxelIndex(uint3 coord, uint resolution) {
     return coord.x + resolution * (coord.y + resolution * coord.z);
-}
-
-// World -> volume UVW via the grid's ortho VPM. xy is NDC so it needs the half-range remap; z is
-// already [0,1] under orthoRH_ZO. Same mapping as gridClipToUVW in voxel_debug.slang.
-public float3 worldToGridUVW(float3 worldPos, float4x4 worldToGridClip) {
-    float4 clip = mul(worldToGridClip, float4(worldPos, 1.0));
-    float3 ndc = clip.xyz / clip.w;
-    return float3(ndc.xy * 0.5 + 0.5, ndc.z);
 }
 
 // Compile-time caps for the runtime-tunable trace params (LitPass gi* fields).
@@ -121,18 +116,31 @@ static const float CONE_MAX_MIP = 3.0;
 //
 // Fetches go out in batches of fetchBatch: tap positions depend only on dist, never on sampled
 // data, so batching keeps several texture requests in flight instead of one serialized round-trip
-// per step (long-scoreboard stalls). A batch may overshoot the opacity break or the grid by up to
-// fetchBatch-1 taps; the sampler's transparent-black border makes those composite as no-ops.
-// Runtime bounds mean no [unroll]; the fetch loop still has no data dependency, so requests overlap.
-float3 traceCone(Texture3D<float4> volume, SamplerState smp, float4x4 worldToGridClip,
-                 float3 origin, float3 dir, float voxelSize, float maxDist, float maxMip,
+// per step (long-scoreboard stalls). A batch may overshoot the opacity break or the level exit by
+// up to fetchBatch-1 taps; those are zeroed so they composite as no-ops. Runtime bounds mean no
+// [unroll]; the fetch loop still has no data dependency, so requests overlap.
+//
+// Starts in clip level startLevel and climbs to coarser levels as it goes: each tap samples the
+// finest level whose cube holds the whole footprint, at the mip that matches the footprint. A
+// level's mips are averages of its own data, so a cone stays on the finest data available and only
+// steps up when coverage forces it. The level only ever climbs — a straight ray leaves a nested
+// cube once — so the search is a short forward scan carried between taps.
+float3 traceCone(Texture3D<float4> volume, SamplerState smp, VoxelClipmap cm, uint startLevel,
+                 float3 origin, float3 dir, float maxDist,
                  uint maxSteps, uint fetchBatch, uint envMapIndex, float skyIntensity) {
-    // Grid clip is orthographic (w == 1), so uvw is linear in dist — one affine ray, no per-step matrix mul.
-    float3 uvwOrigin = worldToGridUVW(origin, worldToGridClip);
-    float4 clipDir = mul(worldToGridClip, float4(dir, 0.0));
-    float3 uvwDir = float3(clipDir.xy * 0.5, clipDir.z);
+    uint lastLevel = cm.levelCount - 1;
+    float invRes = 1.0 / float(cm.resolution);
+    float maxMip = float(cm.mipLevels - 1);
+    float startVoxel = cm.levels[startLevel].w * invRes;
+    // The footprint cap is CONE_MAX_MIP mips of level 0, whichever level ends up sampled.
+    float footprintCap = cm.levels[0].w * invRes * exp2(CONE_MAX_MIP);
 
-    // Clamp the march at the grid exit (slab test) instead of bounds-checking every step.
+    // Clamp the march at the outermost level's exit (slab test) instead of bounds-checking every
+    // step. Grid axes are world axes, so its uvw is affine in dist.
+    float4 Lo = cm.levels[lastLevel];
+    float3 uvwOrigin = (origin - Lo.xyz) / Lo.w + 0.5;
+    float3 uvwDir = dir / Lo.w;
+
     //
     // The gather traces VOXEL_FACE_DIRS, so its centre cone is exactly axis-aligned and two uvwDir
     // components are zero — and a matrix product reaches zero as -0.0 as easily as +0.0. Dividing by
@@ -148,19 +156,35 @@ float3 traceCone(Texture3D<float4> volume, SamplerState smp, float4x4 worldToGri
     maxDist = min(maxDist, min(min(tFar.x, tFar.y), tFar.z));
 
     float4 acc = float4(0.0);
-    float dist = voxelSize;
+    float dist = startVoxel;
+    uint level = startLevel;
     for (uint i = 0; i < maxSteps / fetchBatch && dist < maxDist && acc.a < 0.99; i++) {
         float4 s[MAX_FETCH_BATCH];
         float stepVoxels[MAX_FETCH_BATCH];
         float d = dist;
         for (uint j = 0; j < fetchBatch; j++) {
+            float3 p = origin + dir * d;
             // Clamped both ways, so mip, step length and density exponent all cap together — a
             // widening cone past CONE_MAX_MIP would sample a footprint it no longer steps over.
-            float diameter = clamp(2.0 * CONE_TAN * d, voxelSize, voxelSize * exp2(maxMip));
+            float diameter = clamp(2.0 * CONE_TAN * d, startVoxel, footprintCap);
+            // Coverage picks the level: the finest whose camera-anchored radius holds the whole
+            // footprint, with a voxel of slack so the x/y border never lands inside it. Anchoring to
+            // the camera rather than the snapped cube keeps the choice continuous as the camera moves.
+            float anchorDist = clipAnchorDistance(cm, p);
+            while (level < lastLevel && anchorDist + 0.5 * diameter + cm.levels[level].w * invRes > clipLevelRadius(cm, level)) level++;
+            float4 L = cm.levels[level];
+            float voxelSize = L.w * invRes;
             float mip = clamp(log2(diameter / voxelSize), 0.0, maxMip);
-            s[j] = volume.SampleLevel(smp, uvwOrigin + uvwDir * d, mip);
-            stepVoxels[j] = diameter / voxelSize; // mip-0 voxels this tap stands for
-            d += diameter; // one cone diameter, so the taps tile the cone without overlap
+            // A level forced by coverage can't tap finer than its own voxel, so the step grows with it.
+            float footprint = max(diameter, voxelSize);
+            // z clamp by half a texel of the coarser mip the trilinear blends, so the footprint stays
+            // in this level's slab.
+            float3 uvw = clipStackedUVW((p - L.xyz) / L.w + 0.5, level, 0.5 * exp2(ceil(mip)) * invRes);
+            float4 tap = volume.SampleLevel(smp, uvw, mip);
+            // Past the exit the z clamp would re-read the slab edge instead of the border: zero it.
+            s[j] = d < maxDist ? tap : float4(0.0);
+            stepVoxels[j] = footprint / voxelSize; // mip-0 voxels of this level the tap stands for
+            d += footprint; // one footprint, so the taps tile the cone without overlap
         }
         // Coverage at mip m is mean occupancy over a (2^m)^3 block, not opacity along the ray — a
         // 1-voxel wall inside a 16-voxel footprint reads 1/16 and the cone walks straight through it.
@@ -186,14 +210,15 @@ float3 traceCone(Texture3D<float4> volume, SamplerState smp, float4x4 worldToGri
     return acc.rgb;
 }
 
-public float3 coneTraceVXGI(uint voxel3DTextureIndex, uint voxelSamplerIndex, float4x4 worldToGridClip,
-                            uint resolution, float worldExtent, float3 worldPos, float3 N,
-                            uint hemisphereRays, uint maxSteps, uint fetchBatch,
-                            uint envMapIndex, float skyIntensity) {
+// Hemisphere cone fan at worldPos. The cones start tracing in startLevel (the surface's own, finest
+// containing level) and climb from there. maxTraceDistance caps every cone; a cone that reaches it
+// (or the outermost level's exit) is treated as seeing sky.
+public float3 coneTraceVXGI(uint voxel3DTextureIndex, uint voxelSamplerIndex, VoxelClipmap cm, uint startLevel,
+                            float3 worldPos, float3 N, uint hemisphereRays, uint maxSteps, uint fetchBatch,
+                            uint envMapIndex, float skyIntensity, float maxTraceDistance) {
     Texture3D<float4> volume = textures3D[voxel3DTextureIndex];
     SamplerState smp = samplers[voxelSamplerIndex];
-    float voxelSize = worldExtent / resolution;
-    float maxMip = min(log2(float(resolution)), CONE_MAX_MIP);
+    float voxelSize = clipVoxelSize(cm, startLevel);
     uint rays  = min(hemisphereRays, uint(MAX_HEMISPHERE_RAYS));
     uint batch = min(max(fetchBatch, 1u), uint(MAX_FETCH_BATCH));
 
@@ -210,7 +235,7 @@ public float3 coneTraceVXGI(uint voxel3DTextureIndex, uint voxelSamplerIndex, fl
     float totalWeight = 0.0;
     for (uint i = 0; i < rays + 1; i++) {
         float3 dir = normalize(T * CONE_DIRS[i].x + B * CONE_DIRS[i].y + N * CONE_DIRS[i].z);
-        gi += CONE_WEIGHTS[i] * traceCone(volume, smp, worldToGridClip, origin, dir, voxelSize, worldExtent * 0.5, maxMip, maxSteps, batch, envMapIndex, skyIntensity);
+        gi += CONE_WEIGHTS[i] * traceCone(volume, smp, cm, startLevel, origin, dir, maxTraceDistance, maxSteps, batch, envMapIndex, skyIntensity);
         totalWeight += CONE_WEIGHTS[i];
     }
     return gi / totalWeight;
@@ -234,38 +259,71 @@ float3 decodeIrradiance(float4 s) {
 // voxel is the right source — face selection by normal sign already separates the two sides of thin
 // geometry sharing a voxel.
 //
+// The taps come from the finest clip level whose camera-anchored radius holds worldPos with a voxel
+// of margin (the trilinear footprint is half a voxel; the rest is slack). Within AMBIENT_BLEND_VOXELS
+// of that margin a second set from the next level out is fetched and the two are lerped, so the
+// doubling of voxel size across the boundary reads as a fade rather than a step — and because the
+// band is measured from the camera, it slides with the camera instead of jumping a snap step every
+// time the level recentres. Both sets are premultiplied by `valid`, so they lerp before the decode.
+//
 // Split into taps + resolve so callers can issue the fetches early (they only need worldPos + N)
 // and decode at point of use — the tap latency then hides behind independent work in between.
+static const float AMBIENT_BLEND_VOXELS = 4.0;
+
 public struct AmbientCubeTaps {
     public float4 s0;
     public float4 s1;
     public float4 s2;
-    public float3 w; // N² face weights, sum to 1
+    public float4 t0; // next level out; zero unless blend < 1
+    public float4 t1;
+    public float4 t2;
+    public float3 w;     // N² face weights, sum to 1
+    public float  blend; // weight of s over t: 1 deep inside the level, 0 at its margin
 };
 
-public AmbientCubeTaps sampleAmbientCubeTaps(uint faceIndices[6], uint samplerIndex, float4x4 worldToGridClip,
+public AmbientCubeTaps sampleAmbientCubeTaps(uint faceIndices[6], uint samplerIndex, VoxelClipmap cm,
                                              float3 worldPos, float3 N) {
     SamplerState smp = samplers[samplerIndex];
     N = normalize(N);
-    float3 uvw = worldToGridUVW(worldPos, worldToGridClip);
     uint fx = N.x < 0.0 ? 1 : 0;
     uint fy = N.y < 0.0 ? 3 : 2;
     uint fz = N.z < 0.0 ? 5 : 4;
     AmbientCubeTaps t;
     t.w = N * N;
+
+    float invIrr = 1.0 / float(cm.irradianceResolution);
+    uint level = clipFinestLevel(cm, worldPos, invIrr);
+    float4 L = cm.levels[level];
+    float3 uvw = clipStackedUVW(clipLevelUVW(cm, level, worldPos), level, 0.5 * invIrr);
     t.s0 = textures3D[faceIndices[fx]].SampleLevel(smp, uvw, 0);
     t.s1 = textures3D[faceIndices[fy]].SampleLevel(smp, uvw, 0);
     t.s2 = textures3D[faceIndices[fz]].SampleLevel(smp, uvw, 0);
+
+    // How far inside the level's usable radius worldPos sits, in this level's irradiance voxels.
+    // Negative only when nothing holds worldPos and the outermost level was the fallback, which
+    // never blends.
+    float voxel = L.w * invIrr;
+    float edge = (clipLevelRadius(cm, level) - voxel - clipAnchorDistance(cm, worldPos)) / voxel;
+    t.blend = level < cm.levelCount - 1 ? saturate(edge / AMBIENT_BLEND_VOXELS) : 1.0;
+    t.t0 = float4(0.0);
+    t.t1 = float4(0.0);
+    t.t2 = float4(0.0);
+    if (t.blend < 1.0) {
+        uint next = level + 1;
+        float3 uvwNext = clipStackedUVW(clipLevelUVW(cm, next, worldPos), next, 0.5 * invIrr);
+        t.t0 = textures3D[faceIndices[fx]].SampleLevel(smp, uvwNext, 0);
+        t.t1 = textures3D[faceIndices[fy]].SampleLevel(smp, uvwNext, 0);
+        t.t2 = textures3D[faceIndices[fz]].SampleLevel(smp, uvwNext, 0);
+    }
     return t;
 }
 
 public float3 resolveAmbientCubeGI(AmbientCubeTaps t) {
-    return t.w.x * decodeIrradiance(t.s0)
-         + t.w.y * decodeIrradiance(t.s1)
-         + t.w.z * decodeIrradiance(t.s2);
+    return t.w.x * decodeIrradiance(lerp(t.t0, t.s0, t.blend))
+         + t.w.y * decodeIrradiance(lerp(t.t1, t.s1, t.blend))
+         + t.w.z * decodeIrradiance(lerp(t.t2, t.s2, t.blend));
 }
 
-public float3 sampleAmbientCubeGI(uint faceIndices[6], uint samplerIndex, float4x4 worldToGridClip,
-                                  uint resolution, float worldExtent, float3 worldPos, float3 N) {
-    return resolveAmbientCubeGI(sampleAmbientCubeTaps(faceIndices, samplerIndex, worldToGridClip, worldPos, N));
+public float3 sampleAmbientCubeGI(uint faceIndices[6], uint samplerIndex, VoxelClipmap cm, float3 worldPos, float3 N) {
+    return resolveAmbientCubeGI(sampleAmbientCubeTaps(faceIndices, samplerIndex, cm, worldPos, N));
 }

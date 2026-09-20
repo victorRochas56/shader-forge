@@ -94,7 +94,7 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
 
     // these buffers store the data once per frame in flight since they are usually accessed every frame by the CPU
     buffers.modelMatrixBufferIndex         = bindless.descriptorSet->createFixedBuffer<glm::mat4>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true, "ModelMatrix");
-    shadowInstanceDataBufferIndex          = bindless.descriptorSet->createFixedBuffer<ShadowInstanceData>(MAX_FRAMES_IN_FLIGHT * MAX_SHADOW_CASTERS * MAX_FIXED_BUFFER, true, "ShadowInstanceData");
+    shadowInstanceDataBufferIndex          = bindless.descriptorSet->createFixedBuffer<ShadowInstanceData>(MAX_FRAMES_IN_FLIGHT * MAX_SHADOW_CASTERS * MAX_SHADOW_INSTANCES, true, "ShadowInstanceData");
     shadowMeshDrawDataBufferIndex          = bindless.descriptorSet->createFixedBuffer<ShadowMeshDrawData>(MAX_FRAMES_IN_FLIGHT * MAX_SHADOW_CASTERS * MAX_FIXED_BUFFER, true, "ShadowMeshDrawData");
     passResources.buffers.lightBufferIndex = bindless.descriptorSet->createFixedBuffer<GPULight>(MAX_LIGHTS * MAX_FRAMES_IN_FLIGHT, true, "Light");
     litPassDataBufferIndex                 = bindless.descriptorSet->createFixedBuffer<LitPassData>(MAX_FRAMES_IN_FLIGHT * MAX_FIXED_BUFFER, true, "LitPassData");
@@ -104,7 +104,7 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         bindless.descriptorSet->setBufferFrameOffset(buffers.modelMatrixBufferIndex, i, MAX_FIXED_BUFFER * i);
         bindless.descriptorSet->setBufferFrameOffset(passResources.buffers.lightBufferIndex, i, MAX_LIGHTS * i);
-        bindless.descriptorSet->setBufferFrameOffset(shadowInstanceDataBufferIndex, i, MAX_SHADOW_CASTERS * MAX_FIXED_BUFFER * i);
+        bindless.descriptorSet->setBufferFrameOffset(shadowInstanceDataBufferIndex, i, MAX_SHADOW_CASTERS * MAX_SHADOW_INSTANCES * i);
         bindless.descriptorSet->setBufferFrameOffset(shadowMeshDrawDataBufferIndex, i, MAX_SHADOW_CASTERS * MAX_FIXED_BUFFER * i);
         bindless.descriptorSet->setBufferFrameOffset(litPassDataBufferIndex,i, MAX_FIXED_BUFFER * i);
         bindless.descriptorSet->setBufferFrameOffset(billboardBufferIndex, i, MAX_FIXED_BUFFER * i);
@@ -332,9 +332,7 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
                                                                            .voxelSamplerIndex = passResources.volumeSamplerIndex,
                                                                            .viewProjection = scene.activeCamera.viewProjection,
                                                                            .prevViewProjection = scene.activeCamera.viewProjection,
-                                                                           .voxelViewProjection = VoxelizationPass::gridViewProjection(scene.activeCamera.position),
-                                                                           .voxelResolution = VoxelizationPass::VOXEL_RESOLUTION,
-                                                                           .voxelWorldExtent = VoxelizationPass::VOXEL_WORLD_EXTENT,
+                                                                           .voxelClipmap = VoxelizationPass::buildClipmap(features, scene.activeCamera.position),
                                                                            .giIrradianceIndices = static_cast<VoxelizationPass*>(passes.at(PassId::VOXELIZATION).get())->getIrradianceTextureIndices()});
 }
 
@@ -1096,16 +1094,15 @@ void Renderer::recordGeometryPass(vk::raii::CommandBuffer& cmd, uint32_t imageIn
         .voxelSamplerIndex = passResources.volumeSamplerIndex,
         .viewProjection = scene.activeCamera.viewProjection,
         .prevViewProjection = scene.activeCamera.prevViewProjection,
-        .voxelViewProjection = VoxelizationPass::gridViewProjection(scene.activeCamera.position),
-        .voxelResolution = VoxelizationPass::VOXEL_RESOLUTION,
-        .voxelWorldExtent = VoxelizationPass::VOXEL_WORLD_EXTENT,
+        .voxelClipmap = VoxelizationPass::buildClipmap(features, scene.activeCamera.position),
         .giHemisphereRays = static_cast<uint32_t>(features.vxgi.hemisphereRays),
         .giMaxSteps = static_cast<uint32_t>(features.vxgi.maxSteps),
         .giFetchBatch = static_cast<uint32_t>(features.vxgi.fetchBatch),
         .giMode = static_cast<uint32_t>(features.vxgi.mode),
         .giIrradianceIndices = static_cast<VoxelizationPass*>(passes.at(PassId::VOXELIZATION).get())->getIrradianceTextureIndices(),
         .giStrength = features.vxgi.strength,
-        .giSkyIntensity = features.skyboxIntensity * features.vxgi.skyStrength
+        .giSkyIntensity = features.skyboxIntensity * features.vxgi.skyStrength,
+        .giMaxTraceDistance = features.vxgi.maxTraceDistance
     };
     bindless.descriptorSet->updateFixedBufferWithOffset<LitPassData>(litPassDataBufferIndex,0,litPassData,gpu.currentFrame);
 
@@ -1544,7 +1541,7 @@ void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light, uint
     // Determine face count up front — draw data is baked per-face below.
     uint32_t faceCount = 0;
     if (light.type == LightType::Directional) {
-        faceCount = light.numCascades + 1; // +1 for VXGI radiance as it needs to encapsulate a different view of the scene
+        faceCount = light.numCascades + VoxelizationPass::activeLevels(features); // plus one VXGI tile per active clip level
     } else if (light.type == LightType::Point) {
         faceCount = 6;
     }
@@ -1589,7 +1586,7 @@ void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light, uint
             if(f < light.numCascades) {
                 lsm = light.cascades[f].lightSpaceMatrix;
             } else {
-                lsm = light.shadowMaps[0].lightSpaceMatrix;
+                lsm = light.shadowMaps[f - light.numCascades].lightSpaceMatrix; // VXGI tile of clip level f - numCascades
             }
         } else {
             lsm = light.shadowMaps[f].lightSpaceMatrix;
@@ -1608,19 +1605,20 @@ void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light, uint
     if (!indirectCommands.empty()) {
         memcpy(static_cast<char*>(indirectDrawBufferMapped) + frameByteOffset, indirectCommands.data(), indirectCommands.size() * sizeof(DrawIndexedIndirectCommand));
 
-        if (shadowInstanceDataList.size() > MAX_FIXED_BUFFER) {
+        if (shadowInstanceDataList.size() > MAX_SHADOW_INSTANCES) {
             std::cerr << "Warning: shadow instance data (" << shadowInstanceDataList.size()
-                      << ") exceeds MAX_FIXED_BUFFER (" << MAX_FIXED_BUFFER << "); truncating" << std::endl;
+                      << ") exceeds MAX_SHADOW_INSTANCES (" << MAX_SHADOW_INSTANCES << "); truncating" << std::endl;
         }
         if (shadowMeshDrawDataList.size() > MAX_FIXED_BUFFER) {
             std::cerr << "Warning: shadow mesh draw data (" << shadowMeshDrawDataList.size()
                       << ") exceeds MAX_FIXED_BUFFER (" << MAX_FIXED_BUFFER << "); truncating" << std::endl;
         }
-        uint32_t slotElementOffset = slotIdx * MAX_FIXED_BUFFER;
-        uint32_t instanceCopyCount = static_cast<uint32_t>(std::min<size_t>(shadowInstanceDataList.size(), MAX_FIXED_BUFFER));
+        uint32_t instanceSlotOffset = slotIdx * MAX_SHADOW_INSTANCES;
+        uint32_t meshSlotOffset     = slotIdx * MAX_FIXED_BUFFER;
+        uint32_t instanceCopyCount = static_cast<uint32_t>(std::min<size_t>(shadowInstanceDataList.size(), MAX_SHADOW_INSTANCES));
         uint32_t meshCopyCount     = static_cast<uint32_t>(std::min<size_t>(shadowMeshDrawDataList.size(), MAX_FIXED_BUFFER));
-        bindless.descriptorSet->writeFixedBuffer<ShadowInstanceData>(shadowInstanceDataBufferIndex, shadowInstanceDataList.data(), instanceCopyCount, slotElementOffset, gpu.currentFrame);
-        bindless.descriptorSet->writeFixedBuffer<ShadowMeshDrawData>(shadowMeshDrawDataBufferIndex, shadowMeshDrawDataList.data(), meshCopyCount, slotElementOffset, gpu.currentFrame);
+        bindless.descriptorSet->writeFixedBuffer<ShadowInstanceData>(shadowInstanceDataBufferIndex, shadowInstanceDataList.data(), instanceCopyCount, instanceSlotOffset, gpu.currentFrame);
+        bindless.descriptorSet->writeFixedBuffer<ShadowMeshDrawData>(shadowMeshDrawDataBufferIndex, shadowMeshDrawDataList.data(), meshCopyCount, meshSlotOffset, gpu.currentFrame);
     }
 
     // Bind the atlas once; each face/cascade is rendered into its tile via viewport+scissor.
@@ -1642,7 +1640,7 @@ void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light, uint
             if(i < light.numCascades) {
                 uvRange = light.cascades[i].shadowAtlasUVRange;
             } else {
-                uvRange = light.shadowMaps[0].shadowAtlasUVRange;
+                uvRange = light.shadowMaps[i - light.numCascades].shadowAtlasUVRange;
             }
         } else {
             uvRange = light.shadowMaps[i].shadowAtlasUVRange;
@@ -1672,7 +1670,7 @@ void Renderer::recordShadowPass(vk::raii::CommandBuffer& cmd, Light& light, uint
             ShadowPushConstants pushConstants = {
                 .positionBufferAddress      = bindless.descriptorSet->getVariableBuffers()[positionBufferIndex]->address,
                 .shadowInstanceDataAddress  = bindless.descriptorSet->getFixedBuffers()[shadowInstanceDataBufferIndex]->address
-                                              + (static_cast<vk::DeviceSize>(slotIdx) * MAX_FIXED_BUFFER + static_cast<vk::DeviceSize>(i) * instancesPerFace) * sizeof(ShadowInstanceData),
+                                              + (static_cast<vk::DeviceSize>(slotIdx) * MAX_SHADOW_INSTANCES + static_cast<vk::DeviceSize>(i) * instancesPerFace) * sizeof(ShadowInstanceData),
                 .shadowMeshDrawDataAddress  = bindless.descriptorSet->getFixedBuffers()[shadowMeshDrawDataBufferIndex]->address
                                               + static_cast<vk::DeviceSize>(slotIdx) * MAX_FIXED_BUFFER * sizeof(ShadowMeshDrawData),
             };
@@ -1940,11 +1938,13 @@ void calculateCascadedLightSpaceMatrices(Light& light, Camera& camera, Renderer*
         lastSplitDist = splitDist;
     }
 
-    // shadowMaps[0] is the VXGI shadow map: tight ortho bounds around the voxel volume
-    // (the camera-snapped cube VoxelizationPass rasterizes) instead of a camera sub-frustum.
-    {
-        glm::vec3 gridCenter = VoxelizationPass::snappedGridCenter(camera.position);
-        constexpr float half = VoxelizationPass::VOXEL_WORLD_EXTENT * 0.5f;
+    // shadowMaps[l] is clip level l's VXGI shadow map: tight ortho bounds around that level's cube
+    // instead of a camera sub-frustum, so the radiance injected at every level is shadowed at a
+    // texel size that scales with its voxel.
+    GPUVoxelClipmap clipmap = VoxelizationPass::buildClipmap(renderer->features, camera.position);
+    for (uint32_t l = 0; l < clipmap.levelCount; l++) {
+        glm::vec3 gridCenter = glm::vec3(clipmap.levels[l]);
+        float half = clipmap.levels[l].w * 0.5f;
 
         float zPullBack = 500.0f;
         glm::mat4 lightView = glm::lookAt(gridCenter - lightDir * zPullBack, gridCenter, up);
@@ -1973,6 +1973,6 @@ void calculateCascadedLightSpaceMatrices(Light& light, Camera& camera, Renderer*
         lightProj[3][0] += roundOffset.x;
         lightProj[3][1] += roundOffset.y;
 
-        light.shadowMaps[0].lightSpaceMatrix = lightProj * lightView;
+        light.shadowMaps[l].lightSpaceMatrix = lightProj * lightView;
     }
 }

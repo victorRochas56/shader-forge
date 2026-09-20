@@ -41,11 +41,15 @@ FragmentOutput litFragImpl<let GI_MODE : int, let DEBUG_CASCADES : bool>(VertexO
     giTaps.s0 = float4(0.0);
     giTaps.s1 = float4(0.0);
     giTaps.s2 = float4(0.0);
+    giTaps.t0 = float4(0.0);
+    giTaps.t1 = float4(0.0);
+    giTaps.t2 = float4(0.0);
     giTaps.w = float3(0.0);
+    giTaps.blend = 1.0;
     if (GI_MODE == 1) {
         uint faceIndices[6] = { UF.giIrradianceA.x, UF.giIrradianceA.y, UF.giIrradianceA.z,
                                 UF.giIrradianceA.w, UF.giIrradianceB.x, UF.giIrradianceB.y };
-        giTaps = sampleAmbientCubeTaps(faceIndices, UF.indicesB.y, UF.voxelViewProjection, input.worldPos, input.normal);
+        giTaps = sampleAmbientCubeTaps(faceIndices, UF.indicesB.y, UF.voxelClipmap, input.worldPos, input.normal);
     }
 
     float3 N_world = normalize(input.normal);
@@ -167,10 +171,12 @@ FragmentOutput litFragImpl<let GI_MODE : int, let DEBUG_CASCADES : bool>(VertexO
     if (GI_MODE == 1) {
         GI = resolveAmbientCubeGI(giTaps);
     } else {
-        GI = coneTraceVXGI(UF.indicesB.x, UF.indicesB.y, UF.voxelViewProjection,
-                           UF.indicesB.z, UF.cameraPosExtent.w, input.worldPos, input.normal,
+        // Start in the finest level that holds the surface with room for the two-voxel origin offset.
+        uint giLevel = clipFinestLevel(UF.voxelClipmap, input.worldPos, 2.0 / float(UF.voxelClipmap.resolution));
+        GI = coneTraceVXGI(UF.indicesB.x, UF.indicesB.y, UF.voxelClipmap, giLevel,
+                           input.worldPos, input.normal,
                            UF.giParams.x, UF.giParams.y, UF.giParams.z,
-                           input.matInfo.x, UF.giFloats.x);
+                           input.matInfo.x, UF.giFloats.x, UF.giFloats.y);
     }
     GI *= UF.cameraForwardGI.w;
 

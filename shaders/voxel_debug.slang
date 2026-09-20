@@ -1,11 +1,10 @@
 // Voxel grid visualizer. Fullscreen ray-march of the RGBA8 volume the voxelization pass builds,
 // alpha-blended over the HDR composite so it reads as an overlay on the real scene.
 //
-// The grid is oriented along the camera's look direction at voxelization time, so it is an OBB in
-// world space, not an AABB — marching it in world space would need the full transform per step.
-// Instead everything is done in grid space: the CPU folds voxelVPM * invCameraViewProjection into
-// camNdcToGrid, so one matrix multiply takes a camera-NDC point straight into the grid's cube, and
-// the march is a straight line through [0,1]^3.
+// Everything is done in level space: the CPU folds the selected clip level's VPM with the inverse
+// camera view-projection into camNdcToGrid, so one matrix multiply takes a camera-NDC point straight
+// into the level's cube, and the march is a straight line through [0,1]^3. The sample coordinate is
+// then remapped into that level's slab of the stacked volume.
 //
 // The far end of the ray is the scene surface (reconstructed from the depth buffer), which gives
 // depth occlusion for free — voxels behind geometry don't draw over it.
@@ -19,17 +18,18 @@ static const uint VOXDBG_ALBEDO    = 2; // radiance normalized to its own max �
 static const uint VOXDBG_DEPTH     = 3; // distance to the first hit, as a heat ramp
 
 struct VoxelDebugPushConstants {
-    float4x4 camNdcToGrid;  // camera NDC (+ depth) -> voxel grid clip space
-    float3   cameraPosGrid; // camera position in grid UVW
+    float4x4 camNdcToGrid;  // camera NDC (+ depth) -> level clip space
+    float3   cameraPosGrid; // camera position in level-local UVW
     uint     mipLevel;
     uint     volumeTexIndex;
     uint     samplerIndex;
     uint     depthTexIndex;
     uint     depthSamplerIndex;
-    uint     resolution;    // mip-0 grid side
+    uint     resolution;    // level side at mip 0
     uint     mode;
     uint     maxSteps;
     float    alphaScale;    // opacity multiplier — raise to make sparse grids readable
+    uint     level;         // clip level whose slab is marched
 }
 
 [[vk::push_constant]] ConstantBuffer<VoxelDebugPushConstants> vdpc;
@@ -108,12 +108,13 @@ float4 fragMain(VSOutput input) : SV_Target {
     float  transmittance = 1.0;
     float  firstHitT = -1.0;
     float  peak = 0.0;
+    float  halfTexelZ = 0.5 * exp2(float(vdpc.mipLevel)) / float(vdpc.resolution); // keeps the trilinear in this slab
 
     for (uint i = 0; i < steps; i++) {
         float t = tNear + (float(i) + 0.5) * stepSize;
         if (t >= tFar) break;
 
-        float3 uvw = origin + dir * t;
+        float3 uvw = clipStackedUVW(origin + dir * t, vdpc.level, halfTexelZ);
         float4 s = textures3D[vdpc.volumeTexIndex].SampleLevel(samp, uvw, float(vdpc.mipLevel));
         s.rgb = voxelToneMapInv(s.rgb); // back to linear HDR — the overlay blends into the HDR composite
 

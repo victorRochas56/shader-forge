@@ -1,3 +1,6 @@
+// VoxelClipmap, embedded in LitPass and LitFrameUniforms below; re-exported so importers see the type.
+__exported import voxel_clipmap;
+
 // Per-instance data stored in a GPU buffer, indexed by SV_InstanceID + firstInstance
 struct LitInstanceData {
     uint modelMatrixIndex;
@@ -58,9 +61,7 @@ struct LitPass {
     uint voxelSamplerIndex;
     float4x4 viewProjection;
     float4x4 prevViewProjection;
-    float4x4 voxelViewProjection; // world -> voxel grid clip
-    uint voxelResolution;
-    float voxelWorldExtent;
+    VoxelClipmap voxelClipmap; // this frame's clip levels
     // VXGI cone-trace tuning (GUI sliders)
     uint giHemisphereRays; // side cones at 60° (0..5); the normal cone always runs
     uint giMaxSteps;       // taps per cone
@@ -69,6 +70,7 @@ struct LitPass {
     uint giIrradianceIndices[6]; // per-face irradiance volumes, VOXEL_FACE_DIRS order
     float giStrength;
     float giSkyIntensity;  // cone-miss sky radiance scale (skyboxIntensity * vxgi.skyStrength)
+    float giMaxTraceDistance; // cone range cap (m)
 };
 
 #define MAX_UBO_LIGHTS 256
@@ -98,15 +100,15 @@ struct CascadeHot {
 // data reads go through the constant cache here instead of per-fragment BDA loads; the fat
 // Light/LitPass BDA buffers stay authoritative for every other pass.
 struct LitFrameUniforms {
-    float4x4 voxelViewProjection; // world -> voxel grid clip
-    float4 cameraPosExtent;       // xyz cameraPos, w voxelWorldExtent
+    VoxelClipmap voxelClipmap;    // float4 array + uints: std140 matches the C++ bytes
+    float4 cameraPosExtent;       // xyz cameraPos, w unused
     float4 cameraForwardGI;       // xyz cameraForward, w giStrength
     uint4  indicesA;              // x samplerIndex, y lightCount (<= MAX_UBO_LIGHTS), z shadowSamplerIndex, w shadowAtlasIndex
-    uint4  indicesB;              // x voxelTextureIndex, y voxelSamplerIndex, z voxelResolution, w giMode
+    uint4  indicesB;              // x voxelTextureIndex, y voxelSamplerIndex, z unused, w giMode
     uint4  giParams;              // x giHemisphereRays, y giMaxSteps, z giFetchBatch, w unused
     uint4  giIrradianceA;         // irradiance volume indices 0-3 (VOXEL_FACE_DIRS order)
     uint4  giIrradianceB;         // xy irradiance indices 4-5, zw unused
-    float4 giFloats;              // x giSkyIntensity, yzw unused
+    float4 giFloats;              // x giSkyIntensity, y giMaxTraceDistance, zw unused
     // Flat pool of directional cascades; LightHot::typeFlags.w is a light's base slot.
     CascadeHot cascades[MAX_UBO_CASCADES];
     LightHot lights[MAX_UBO_LIGHTS];
@@ -399,20 +401,21 @@ float calculateShadowHot(float3 fragWorldPos, float3 cameraPos, float3 cameraFor
     return 0.0;
 }
 
-// Shadow lookup for voxel radiance injection. Directional lights sample the dedicated VXGI
-// tile (shadowMaps[0], fit around the voxel volume) instead of the camera-driven cascades,
-// so injected radiance doesn't shift with the view. Point lights use the regular cube faces.
-float calculateVXGIShadow(float3 fragWorldPos, float3 geometricNormal, float3 L, Light* light, uint shadowAtlasIdx)
+// Shadow lookup for voxel radiance injection. Directional lights sample the VXGI tile of the clip
+// level being voxelized (shadowMaps[tile], fit around that level's cube) instead of the
+// camera-driven cascades, so injected radiance doesn't shift with the view. Point lights use the
+// regular cube faces. normalOffset is the acne bias in metres; the caller scales it with the
+// level's voxel, since the tile's texel scales the same way.
+float calculateVXGIShadow(float3 fragWorldPos, float3 geometricNormal, float3 L, Light* light, uint shadowAtlasIdx, uint tile, float normalOffset)
 {
     if (light.type == LightType::Point) {
         return calculatePointShadow(fragWorldPos, geometricNormal, L, light, shadowAtlasIdx);
     }
 
-    // ~one voxel of normal offset against acne; the tile has no per-cascade texel metadata.
     float NdotL = saturate(abs(dot(geometricNormal, L)));
-    float3 biasedPos = fragWorldPos + geometricNormal * (1.0 - NdotL) * 0.2;
+    float3 biasedPos = fragWorldPos + geometricNormal * (1.0 - NdotL) * normalOffset;
 
-    float4 fragPosLightSpace = mul(light.shadowMaps[0].lightSpaceMatrix, float4(biasedPos, 1.0));
+    float4 fragPosLightSpace = mul(light.shadowMaps[tile].lightSpaceMatrix, float4(biasedPos, 1.0));
     float3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
     projCoords.x = projCoords.x * 0.5 + 0.5;
     projCoords.y = projCoords.y * 0.5 + 0.5;
@@ -426,7 +429,7 @@ float calculateVXGIShadow(float3 fragWorldPos, float3 geometricNormal, float3 L,
 
     float currentDepth = projCoords.z - 0.0001f;
 
-    float4 atlasRange = light.shadowMaps[0].shadowAtlasRange;
+    float4 atlasRange = light.shadowMaps[tile].shadowAtlasRange;
     float2 rangeMin  = atlasRange.xy;
     float2 rangeSpan = atlasRange.zw - atlasRange.xy;
 

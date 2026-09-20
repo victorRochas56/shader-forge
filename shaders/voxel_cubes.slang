@@ -6,7 +6,7 @@
 // collide); each entry just ignores the fields it doesn't use.
 
 struct CubeInstance {
-    uint coord; // 10|10|10 packed voxel coord — caps the grid at 1024^3
+    uint coord; // 10|10|10 packed level-local voxel coord — caps a level at 1024^3
     uint color; // RGBA8, tonemapped
 };
 
@@ -18,13 +18,14 @@ struct DrawArgs { // VkDrawIndirectCommand
 };
 
 struct VoxelCubePushConstants {
-    float4x4      gridToClip;  // cameraVP * voxelCamInvVPM: grid clip space -> camera clip space
+    float4x4      gridToClip;  // cameraVP * inverse(level VPM): level clip space -> camera clip space
     CubeInstance* instances;
     DrawArgs*     drawArgs;
     uint          volumeTexIndex;
     uint          mipLevel;
-    uint          mipRes;      // grid side at mipLevel
+    uint          mipRes;      // level side at mipLevel
     float         threshold;   // min coverage (volume alpha) for a voxel to get a cube
+    uint          zOffset;     // start of the level's slab in the stacked volume at mipLevel
 }
 
 [[vk::push_constant]] ConstantBuffer<VoxelCubePushConstants> cpc;
@@ -36,10 +37,10 @@ struct VoxelCubePushConstants {
 void extractMain(uint3 id : SV_DispatchThreadID) {
     if (any(id >= cpc.mipRes)) return;
 
-    float4 s = textures3D[cpc.volumeTexIndex].Load(int4(id, cpc.mipLevel));
+    float4 s = textures3D[cpc.volumeTexIndex].Load(int4(id.x, id.y, id.z + cpc.zOffset, cpc.mipLevel));
     if (s.a < cpc.threshold) return;
 
-    // Thread count is exactly mipRes^3 <= the buffer's mip-0 capacity, so slot can't overflow.
+    // Thread count is exactly mipRes^3 <= the buffer's one-level mip-0 capacity, so slot can't overflow.
     uint slot;
     InterlockedAdd(cpc.drawArgs[0].instanceCount, 1, slot);
 

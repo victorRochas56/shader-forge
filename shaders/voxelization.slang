@@ -27,6 +27,8 @@ struct VoxelizationPushConstants {
     uint     skyEnvMapIndex;
     float    skyInjection; // sky irradiance scale; 0 disables the injection
     uint     packedColor;  // material base colour, RGBA8 linear
+    uint     shadowTile;   // the clip level's VXGI shadow tile (Light.shadowMaps[shadowTile])
+    float    shadowNormalOffset; // acne bias along the normal (m), scaled with the level's voxel
 };
 
 [[vk::push_constant]]
@@ -132,7 +134,8 @@ void fragMain(VoxelGSOut input)
         float shadow = 0.0;
 
         if(currentLight.castsShadows == 1) {
-            shadow = calculateVXGIShadow(input.worldPos, input.normal, L, currentLight, voxelPc.shadowAtlasIndex);
+            shadow = calculateVXGIShadow(input.worldPos, input.normal, L, currentLight, voxelPc.shadowAtlasIndex,
+                                         voxelPc.shadowTile, voxelPc.shadowNormalOffset);
         }
         
         float distance = length(currentLight.position - input.worldPos);

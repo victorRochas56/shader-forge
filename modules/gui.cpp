@@ -442,8 +442,13 @@ void showToggles(GUI& gui, RenderFeatures& f){
         const char* volItems[] = {"Radiance", "Irradiance +X", "Irradiance -X", "Irradiance +Y", "Irradiance -Y", "Irradiance +Z", "Irradiance -Z"};
         gui.combo("Volume", &f.voxelDebug.volumeSelect, volItems, guiArraySize(volItems));
         gui.setItemTooltip("Radiance volume, or one ambient-cube irradiance face (single mip).");
+        int voxLevel = static_cast<int>(f.voxelDebug.clipLevel);
+        if(gui.sliderInt("Clip Level", &voxLevel, 0, std::max(f.vxgi.clipLevels, 1) - 1)){
+            f.voxelDebug.clipLevel = static_cast<uint32_t>(voxLevel);
+        }
+        gui.setItemTooltip("Which clip level's slab to show. Level 0 is the finest; each level out doubles the voxel size and the covered radius.");
         int voxMip = static_cast<int>(f.voxelDebug.mipLevel);
-        if(gui.sliderInt("Voxel Mip", &voxMip, 0, 7)){
+        if(gui.sliderInt("Voxel Mip", &voxMip, 0, 3)){ // VoxelizationPass::MIPS_PER_LEVEL - 1
             f.voxelDebug.mipLevel = static_cast<uint32_t>(voxMip);
         }
         if(f.voxelDebug.drawCubes){
@@ -472,6 +477,14 @@ void showToggles(GUI& gui, RenderFeatures& f){
     gui.setItemTooltip("Sky collected by cones that leave the grid. Occlusion-aware: open areas gain, enclosed ones don't.");
     gui.sliderFloat("GI Sky Injection", &f.vxgi.skyInjection, 0.0f, 2.0f);
     gui.setItemTooltip("Sky added to every voxelized surface so sky-lit geometry bounces. Visibility is assumed 1, so this is a flat ambient — raising it washes out the contrast from Sky Strength.");
+    gui.sliderInt("Clip Levels", &f.vxgi.clipLevels, 1, static_cast<int>(MAX_VOXEL_CLIP_LEVELS));
+    gui.setItemTooltip("Nested voxel levels around the camera. Each level out doubles the voxel size and the covered radius; cones and the ambient-cube lookup climb through them.");
+    gui.sliderFloat("Voxel Size", &f.vxgi.voxelSize0, 0.0625f, 1.0f, "%.3f m");
+    gui.setItemTooltip("Level-0 voxel size; level 0 spans 128 of them. Changing it resets the gather history.");
+    gui.sliderFloat("GI Trace Distance", &f.vxgi.maxTraceDistance, 4.0f, 256.0f, "%.0f m");
+    gui.setItemTooltip("Cone range cap. A cone that reaches it collects sky, so this is also the occlusion horizon.");
+    gui.sliderFloat("Voxel Node Cull", &f.vxgi.smallNodeCull, 0.0f, 4.0f, "%.1f voxels");
+    gui.setItemTooltip("Skip nodes smaller than this many of a level's voxels on every axis. 0 = off. Modular pieces smaller than a coarse voxel vanish from the far levels with this on.");
     if (f.vxgi.mode == 0) {
         gui.sliderInt("GI Side Cones", &f.vxgi.hemisphereRays, 0, 5);
         gui.sliderInt("GI Steps", &f.vxgi.maxSteps, 1, 64);
@@ -489,7 +502,7 @@ void showToggles(GUI& gui, RenderFeatures& f){
         if(gui.combo("Gather Rate", &rateSel, rateItems, guiArraySize(rateItems))){
             f.vxgi.updatePhases = 1 << rateSel;
         }
-        gui.setItemTooltip("Share of voxels re-traced per frame, in 4-voxel blocks; the rest carry history forward. Cuts gather cost, at proportionally slower GI response.");
+        gui.setItemTooltip("Share of level-0 voxels re-traced per frame, in 4-voxel blocks; the rest carry history forward. Each level out re-traces half as often, down to 1/8. Every frame means every level, every frame.");
     }
 
     if(gui.button("Show BBOXes")){
@@ -1183,6 +1196,8 @@ void showBuildingGen(GUI& gui, Scene& scene, BuildingGen& gen) {
     gui.separatorText("Registered");
     BuildingPiece::Type removeType = BuildingPiece::NONE;
     uint32_t removeIndex = 0;
+    BuildingPiece::Type remeasureType = BuildingPiece::NONE;
+    uint32_t remeasureIndex = 0;
     BuildingPiece::Type unlinkType = BuildingPiece::NONE;
     uint32_t unlinkIndex = 0, unlinkLink = 0;
     for(int t = 0; t < BuildingPiece::NONE; t++) {
@@ -1201,8 +1216,19 @@ void showBuildingGen(GUI& gui, Scene& scene, BuildingGen& gen) {
                 removeIndex = i;
             }
             gui.sameLine();
-            gui.textf("%s : %s  %.2f x %.2f%s", BuildingPiece::typeName(element.type), variants.c_str(),
-                      element.width, element.height, element.resizeable ? "  (resizeable)" : "");
+            gui.textf("%s : %s%s", BuildingPiece::typeName(element.type), variants.c_str(), element.resizeable ? "  (resizeable)" : "");
+            // Measured off the templates' bounds at registration; editable for when that's off
+            // (trim past the slot, say). Re-measure puts the bounds back. Double click to type.
+            gui.setNextItemWidth(64.0f);
+            if(gui.dragFloat("W##" + rowID, &(*bucket)[i].width, 0.01f, 0.0f, 100.0f, "%.2f")) previewDirty = true;
+            gui.sameLine();
+            gui.setNextItemWidth(64.0f);
+            if(gui.dragFloat("H##" + rowID, &(*bucket)[i].height, 0.01f, 0.0f, 100.0f, "%.2f")) previewDirty = true;
+            gui.sameLine();
+            if(gui.button("Re-measure##" + rowID)) {
+                remeasureType = element.type;
+                remeasureIndex = i;
+            }
 
             // Pieces with a ground-floor type pick the element that stands in for them on the bottom
             // row. Listed by first variant, which is the key the pairing is stored as.
@@ -1243,6 +1269,13 @@ void showBuildingGen(GUI& gui, Scene& scene, BuildingGen& gen) {
     if(removeType != BuildingPiece::NONE) {
         auto* bucket = gen.elementsFor(removeType);
         bucket->erase(bucket->begin() + removeIndex);
+        previewDirty = true;
+    }
+    // Re-registering the same keys re-measures and keeps the pairing and rules; it moves the
+    // piece to the end of its bucket, which is why it waits for the walk to finish.
+    if(remeasureType != BuildingPiece::NONE) {
+        const BuildingPiece::Element piece = (*gen.elementsFor(remeasureType))[remeasureIndex];
+        gen.registerElement(piece.templateKeys, piece.type, piece.resizeable, scene);
         previewDirty = true;
     }
 

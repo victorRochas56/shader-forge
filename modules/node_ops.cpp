@@ -57,7 +57,10 @@ void enableLightShadows(Light& light, const std::string& nodeName, Scene& scene)
         for (int i = 0; i < light.numCascades; i++) {
             scene.shadowAtlas.allocateShadowMap(light.shadowResolution, light.cascades[i].shadowAtlasTile, light.cascades[i].shadowAtlasUVRange);
         }
-        scene.shadowAtlas.allocateShadowMap(VXGI_DIRECTIONAL_SHADOW_RESOLUTION, light.shadowMaps[0].shadowAtlasTile, light.shadowMaps[0].shadowAtlasUVRange);
+        // One VXGI tile per clip level, each fit around its level's cube (calculateCascadedLightSpaceMatrices).
+        for (uint32_t i = 0; i < MAX_VOXEL_CLIP_LEVELS; i++) {
+            scene.shadowAtlas.allocateShadowMap(VXGI_DIRECTIONAL_SHADOW_RESOLUTION, light.shadowMaps[i].shadowAtlasTile, light.shadowMaps[i].shadowAtlasUVRange);
+        }
         break;
     case LightType::Point:
         for (int i = 0; i < 6; i++) {
@@ -75,6 +78,9 @@ void disableLightShadows(Light& light, Scene& scene) {
     case LightType::Directional:
         for (int i = 0; i < light.numCascades; i++) {
             scene.shadowAtlas.freeShadowMap(light.cascades[i].shadowAtlasTile);
+        }
+        for (uint32_t i = 0; i < MAX_VOXEL_CLIP_LEVELS; i++) {
+            scene.shadowAtlas.freeShadowMap(light.shadowMaps[i].shadowAtlasTile);
         }
         break;
     case LightType::Point:

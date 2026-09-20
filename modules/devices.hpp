@@ -9,6 +9,7 @@
 #include <cassert>
 #include <iostream>
 #include <vector>
+#include "constants.hpp"
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_raii.hpp>
 #define GLFW_INCLUDE_VULKAN
@@ -171,6 +172,8 @@ class Device {
 
         logicalDevice = vk::raii::Device(physicalDevice, deviceCreateInfo);
         assert(physicalDevice.getProperties().limits.maxPushConstantsSize >= 256 && "GPU must support at least 256 bytes of push constants for BDA");
+        // The VXGI volumes stack every clip level along z of one 3D image (voxelization_pass.hpp).
+        assert(physicalDevice.getProperties().limits.maxImageDimension3D >= VOXEL_CLIP_RESOLUTION * MAX_VOXEL_CLIP_LEVELS && "GPU must support 3D images deep enough for the stacked VXGI clipmap");
         graphicsQueue = vk::raii::Queue(logicalDevice, graphicsIndex, 0);
         presentQueue = vk::raii::Queue(logicalDevice, presentIndex, 0);
     }

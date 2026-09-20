@@ -174,6 +174,8 @@ class Scene {
             case LightType::Directional:
                 for (int i = 0; i < light.numCascades; i++)
                     shadowAtlas.freeShadowMap(light.cascades[i].shadowAtlasTile);
+                for (uint32_t i = 0; i < MAX_VOXEL_CLIP_LEVELS; i++) // VXGI tiles
+                    shadowAtlas.freeShadowMap(light.shadowMaps[i].shadowAtlasTile);
                 break;
             case LightType::Point:
                 for (int i = 0; i < 6; i++)
@@ -206,6 +208,8 @@ class Scene {
                 case LightType::Directional:
                     for (int i = 0; i < light.numCascades; i++)
                         shadowAtlas.freeShadowMap(light.cascades[i].shadowAtlasTile);
+                    for (uint32_t i = 0; i < MAX_VOXEL_CLIP_LEVELS; i++) // VXGI tiles
+                        shadowAtlas.freeShadowMap(light.shadowMaps[i].shadowAtlasTile);
                     break;
                 case LightType::Point:
                     for (int i = 0; i < 6; i++)

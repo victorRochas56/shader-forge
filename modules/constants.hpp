@@ -30,6 +30,9 @@ constexpr uint32_t PARTICLE_POOL_SIZE = 128u * 1024u * 1024u;
 constexpr uint32_t MAX_VARIABLE_BUFFER = 2048;
 constexpr uint32_t MAX_INDIRECT_COMMANDS = 10000; // per frame slot count for indirect draw buffers
 constexpr uint32_t MAX_SHADOW_CASTERS = 8; // per-frame slot count for shadow indirect/draw-data buffers
+// Per-slot instance capacity of the shadow instance buffer, shared by every face a light renders
+// (cascades plus one VXGI tile per clip level, or six cube faces).
+constexpr uint32_t MAX_SHADOW_INSTANCES = 4 * MAX_FIXED_BUFFER;
 // Cascade pool in the lit frame UBO: 3 cascades per shadow-casting directional light.
 constexpr uint32_t MAX_UBO_CASCADES = MAX_SHADOW_CASTERS * 3;
 
@@ -41,7 +44,12 @@ constexpr uint32_t SHADOW_ATLAS_QUADTREE_COUNT   = (4u * SHADOW_ATLAS_LEAF_COUNT
 
 constexpr uint32_t DEFAULT_CSM_SHADOW_RESOLUTION = 2048;
 constexpr uint32_t DEFAULT_SHADOW_RESOLUTION = 512;
-constexpr uint32_t VXGI_DIRECTIONAL_SHADOW_RESOLUTION = 256;
+constexpr uint32_t VXGI_DIRECTIONAL_SHADOW_RESOLUTION = 256; // per clip level
+// Clip levels allocated in the stacked VXGI volumes (== MAX_CLIP_LEVELS in shaders/modules/voxel_clipmap.slang).
+// VXGISettings::clipLevels picks how many of them are built each frame.
+constexpr uint32_t MAX_VOXEL_CLIP_LEVELS = 6;
+// Radiance voxels a side per level; the stacked volume is this * MAX_VOXEL_CLIP_LEVELS deep.
+constexpr uint32_t VOXEL_CLIP_RESOLUTION = 128;
 const float CASCADE_OVERLAP_FACTOR = 1.1f; 
 const float FOV_EDGE_PADDING = 1.15f; 
 
