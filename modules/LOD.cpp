@@ -8,7 +8,10 @@
 // don't act as fake borders and crack open. Collapses only reuse existing positions, and
 // each emitted corner picks the seam copy closest in attributes, so every LOD indexes the
 // original vertex buffer. LODs holds the index count of each LOD: [LOD0.length, LOD1.length, ...].
-void generateLODs(const std::vector<Vertex>& vertices, std::vector<uint32_t>& indices, std::vector<uint32_t>& LODs) {
+// preserveBorders locks free edges (edges with one adjacent triangle) so they survive every level
+// byte-identical, which is what keeps modular pieces slotting together without gaps.
+void generateLODs(const std::vector<Vertex>& vertices, std::vector<uint32_t>& indices, std::vector<uint32_t>& LODs,
+                  bool preserveBorders) {
     constexpr int    kExtraLODs = 3;    // LOD1..LOD3
     constexpr double kKeepRatio = 0.25; // triangles kept per level
     constexpr size_t kMinTris   = 16;   // don't generate levels below this
@@ -36,6 +39,9 @@ void generateLODs(const std::vector<Vertex>& vertices, std::vector<uint32_t>& in
     Simplify::refs.clear();
     Simplify::materials.clear();
     Simplify::preserve_vertices = true;
+    // borders are found on the welded topology, so only genuine free edges lock;
+    // UV/normal splits were merged above and stay collapsible
+    Simplify::preserve_borders = preserveBorders;
 
     Simplify::vertices.resize(weldGroup.size());
     for (size_t w = 0; w < weldGroup.size(); w++) {
@@ -104,4 +110,5 @@ void generateLODs(const std::vector<Vertex>& vertices, std::vector<uint32_t>& in
     }
 
     Simplify::preserve_vertices = false;
+    Simplify::preserve_borders = false;
 }

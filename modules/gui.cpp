@@ -416,7 +416,6 @@ void showToggles(GUI& gui, RenderFeatures& f){
         gui.sliderInt("Max Steps", &f.ssr.maxSteps, 16, 128);
         gui.sliderFloat("Thickness", &f.ssr.thickness, 0.01f, 5.0f);
         gui.sliderFloat("Roughness Threshold", &f.ssr.roughnessThreshold, 0.0f, 1.0f);
-        gui.sliderFloat("Temporal Blend", &f.ssr.temporalBlend, 0.01f, 1.0f);
         if(gui.sliderFloat("Resolution Scale", &f.ssr.resolutionScale, 0.25f, 1.0f)){
             f.ssr.resolutionDirty = true;
         }
@@ -1091,9 +1090,63 @@ bool elementResizeable = false;
 // any of them for a slot.
 std::unordered_set<std::string> pendingVariants;
 std::string registerStatus;
-float spanX = 0;
-float spanY = 0;
+// Rule editor: the piece whose rules are being edited, the neighbour cell picked on its grid, and
+// the piece to add there. Pieces as type + first variant key.
+BuildingPiece::Type linkFromType = BuildingPiece::NONE;
+std::string linkFromKey;
+BuildingPiece::Offset linkCell = {1, 0};
+BuildingPiece::Type linkToType = BuildingPiece::NONE;
+std::string linkToKey;
+std::string linkStatus;
+// Sample wall grown from the rules; redone when they or the pieces change.
+std::vector<std::vector<BuildingPiece::Element>> previewRows;
+bool previewDirty = true;
+uint32_t previewSeed = 1;
+
+// A grid cell's label: the piece's first variant.
+static std::string cellLabel(const BuildingPiece::Element& element) {
+    return element.templateKeys.empty() ? "?" : element.templateKeys[0];
+}
+static glm::vec4 typeColor(BuildingPiece::Type type) {
+    switch(type) {
+    case BuildingPiece::WALL: case BuildingPiece::FLOORWALL:     return glm::vec4(0.36f, 0.36f, 0.40f, 1.0f);
+    case BuildingPiece::WINDOW: case BuildingPiece::FLOORWINDOW: return glm::vec4(0.22f, 0.42f, 0.66f, 1.0f);
+    case BuildingPiece::LINKED:                                  return glm::vec4(0.20f, 0.55f, 0.50f, 1.0f);
+    case BuildingPiece::ENTRANCE:                                return glm::vec4(0.62f, 0.42f, 0.20f, 1.0f);
+    default:                                                     return glm::vec4(0.45f, 0.35f, 0.55f, 1.0f);
+    }
+}
+
+// Dropdown over every registered piece.
+static void pieceCombo(GUI& gui, BuildingGen& gen, std::string_view label, BuildingPiece::Type& type, std::string& key) {
+    const bool valid = gen.findElement(type, key) != nullptr;
+    if(!gui.beginCombo(label, valid ? std::string(BuildingPiece::typeName(type)) + " : " + key : "<none>")) return;
+    for(int t = 0; t < BuildingPiece::NONE; t++) {
+        const BuildingPiece::Type itemType = static_cast<BuildingPiece::Type>(t);
+        for(const BuildingPiece::Element& element : *gen.elementsFor(itemType)) {
+            if(element.templateKeys.empty()) continue;
+            const std::string& first = element.templateKeys[0];
+            if(gui.comboItem(std::string(BuildingPiece::typeName(itemType)) + " : " + first, itemType == type && first == key)) {
+                type = itemType;
+                key = first;
+            }
+        }
+    }
+    gui.endCombo();
+}
+
+float buildingHeight = 6.0f;
+// How much odd edges give up at each end so a corner isn't filled twice. Roughly the wall thickness.
+float cornerInset = 0.0f;
 int windowCount = 1;
+// Symmetric walls: half the width is walked and reflected. Off, each wall is walked end to end.
+bool mirrorWalls = true;
+uint32_t manipNode = MAX_NODES;
+// While on and the window is open, left clicks on the ground add corners.
+bool drawFootprint = true;
+BuildingPiece::Footprint footprint;
+// Indexed by edge; grows with the plan, false for new edges.
+std::vector<bool> entranceEdges = {true};
 void showBuildingGen(GUI& gui, Scene& scene, BuildingGen& gen) {
     if(!gui.beginWindow("Building Gen", nullptr, glm::vec2(500,500),glm::vec2(500,500))) return;
 
@@ -1118,6 +1171,7 @@ void showBuildingGen(GUI& gui, Scene& scene, BuildingGen& gen) {
         if(gen.registerElement(keys, type, elementResizeable, scene)) {
             registerStatus = "registered " + std::to_string(keys.size()) + " variant(s) as " + BuildingPiece::typeName(type);
             pendingVariants.clear();
+            previewDirty = true;
         } else {
             registerStatus = "registration failed — a template went missing";
         }
@@ -1129,6 +1183,8 @@ void showBuildingGen(GUI& gui, Scene& scene, BuildingGen& gen) {
     gui.separatorText("Registered");
     BuildingPiece::Type removeType = BuildingPiece::NONE;
     uint32_t removeIndex = 0;
+    BuildingPiece::Type unlinkType = BuildingPiece::NONE;
+    uint32_t unlinkIndex = 0, unlinkLink = 0;
     for(int t = 0; t < BuildingPiece::NONE; t++) {
         auto* bucket = gen.elementsFor(static_cast<BuildingPiece::Type>(t));
         for(uint32_t i = 0; i < bucket->size(); i++) {
@@ -1139,7 +1195,8 @@ void showBuildingGen(GUI& gui, Scene& scene, BuildingGen& gen) {
                 variants += key;
             }
             // "##" keeps the button IDs apart without drawing the suffix.
-            if(gui.button("x##" + std::string(BuildingPiece::typeName(element.type)) + std::to_string(i))) {
+            const std::string rowID = std::string(BuildingPiece::typeName(element.type)) + std::to_string(i);
+            if(gui.button("x##" + rowID)) {
                 removeType = element.type;
                 removeIndex = i;
             }
@@ -1149,41 +1206,251 @@ void showBuildingGen(GUI& gui, Scene& scene, BuildingGen& gen) {
 
             // Pieces with a ground-floor type pick the element that stands in for them on the bottom
             // row. Listed by first variant, which is the key the pairing is stored as.
-            BuildingPiece::Type groundType = BuildingPiece::groundFloorType(element.type);
-            const auto* groundBucket = groundType != BuildingPiece::NONE ? gen.elementsFor(groundType) : nullptr;
-            if(groundBucket != nullptr) {
-                std::string rowID = std::string(BuildingPiece::typeName(element.type)) + std::to_string(i);
+            const std::vector<BuildingPiece::Type> groundTypes = BuildingPiece::groundFloorTypes(element.type);
+            if(!groundTypes.empty()) {
                 if(gui.beginCombo("Ground##" + rowID, element.groundKey.empty() ? "<none>" : element.groundKey)) {
                     if(gui.comboItem("<none>", element.groundKey.empty())) (*bucket)[i].groundKey.clear();
-                    for(const BuildingPiece::Element& pair : *groundBucket) {
-                        if(pair.templateKeys.empty()) continue;
-                        const std::string& key = pair.templateKeys[0];
-                        if(gui.comboItem(key, key == element.groundKey)) (*bucket)[i].groundKey = key;
+                    for(BuildingPiece::Type groundType : groundTypes) {
+                        for(const BuildingPiece::Element& pair : *gen.elementsFor(groundType)) {
+                            if(pair.templateKeys.empty()) continue;
+                            const std::string& key = pair.templateKeys[0];
+                            if(gui.comboItem(key, key == element.groundKey)) (*bucket)[i].groundKey = key;
+                        }
                     }
                     gui.endCombo();
                 }
             }
+
+            for(uint32_t l = 0; l < element.linkedElements.size(); l++) {
+                const BuildingPiece::LinkedElement& link = element.linkedElements[l];
+                if(gui.button("x##link" + rowID + "_" + std::to_string(l))) {
+                    unlinkType = element.type;
+                    unlinkIndex = i;
+                    unlinkLink = l;
+                }
+                gui.sameLine();
+                gui.textf("    %s -> %s : %s%s", BuildingPiece::linkPosName(link.linkPos), BuildingPiece::typeName(link.type),
+                          link.key.c_str(), gen.findElement(link.type, link.key) ? "" : "  (missing)");
+            }
         }
     }
     // Erased after the walk — pulling a row out mid-iteration would invalidate the loop's bucket.
+    if(unlinkType != BuildingPiece::NONE) {
+        auto& links = (*gen.elementsFor(unlinkType))[unlinkIndex].linkedElements;
+        links.erase(links.begin() + unlinkLink);
+        previewDirty = true;
+    }
     if(removeType != BuildingPiece::NONE) {
         auto* bucket = gen.elementsFor(removeType);
         bucket->erase(bucket->begin() + removeIndex);
+        previewDirty = true;
     }
 
-    gui.separator();
-    gui.dragFloat("Wall Width",&spanX, 0.1f, 0.0f, 20.0f);
+    // Rules: each piece says what its neighbouring cells hold. Pick the piece, click a cell on
+    // the grid around it, and add pieces to that cell. Pieces that should only ever appear
+    // through a rule go under Linked.
+    gui.separatorText("Rules");
+    pieceCombo(gui, gen, "Piece", linkFromType, linkFromKey);
+    const BuildingPiece::Element* from = gen.findElement(linkFromType, linkFromKey);
+
+    // 3x3 around the piece, above at the top, the walk running left to right. Each cell shows
+    // what the piece already puts there, so the grid reads as the whole rule set.
+    const glm::vec2 cellSize(96.0f, 0.0f);
+    for(int dy = 1; dy >= -1; dy--) {
+        for(int dx = -1; dx <= 1; dx++) {
+            if(dx != -1) gui.sameLine();
+            const BuildingPiece::Offset at{dx, dy};
+            const std::string cellID = "##cell" + std::to_string(dx + 1) + std::to_string(dy + 1);
+            if(dx == 0 && dy == 0) {
+                gui.colorButton((from ? cellLabel(*from) : std::string("<none>")) + cellID,
+                                from ? typeColor(from->type) : glm::vec4(0.25f, 0.25f, 0.25f, 1.0f), cellSize);
+                continue;
+            }
+            std::string label;
+            if(from) {
+                for(const BuildingPiece::LinkedElement& link : from->linkedElements) {
+                    if(!BuildingPiece::reaches(link.linkPos, at)) continue;
+                    if(!label.empty()) label += ", ";
+                    label += link.key;
+                }
+            }
+            if(label.empty()) label = "-";
+            if(gui.buttonToggled(label + cellID, linkCell == at, cellSize)) linkCell = at;
+            gui.setItemTooltip(BuildingPiece::linkPosName(BuildingPiece::linkPosAt(at)));
+        }
+    }
+
+    // The picked cell's rules, each removable, and a row to add one.
+    const BuildingPiece::LinkedPos cellPos = BuildingPiece::linkPosAt(linkCell);
+    gui.textf("%s:", BuildingPiece::linkPosName(cellPos));
+    uint32_t unlinkRule = UINT32_MAX;
+    if(from) {
+        for(uint32_t l = 0; l < from->linkedElements.size(); l++) {
+            const BuildingPiece::LinkedElement& link = from->linkedElements[l];
+            if(!BuildingPiece::reaches(link.linkPos, linkCell)) continue;
+            if(gui.button("x##rule" + std::to_string(l))) unlinkRule = l;
+            gui.sameLine();
+            // A two-way link shows in both its cells and goes with either.
+            gui.textf("%s : %s%s%s", BuildingPiece::typeName(link.type), link.key.c_str(),
+                      link.linkPos == cellPos ? "" : "  (both ways)", gen.findElement(link.type, link.key) ? "" : "  (missing)");
+        }
+    }
+    if(unlinkRule != UINT32_MAX) {
+        auto& links = gen.findElement(linkFromType, linkFromKey)->linkedElements;
+        links.erase(links.begin() + unlinkRule);
+        previewDirty = true;
+    }
+    pieceCombo(gui, gen, "##rulePiece", linkToType, linkToKey);
     gui.sameLine();
-    gui.dragFloat("Wall Height",&spanY, 0.1f, 0.0f, 20.0);
-    // Distinct window pieces the row may draw from. Capped at what's registered, since the pick is
-    // without replacement and there is nothing past that to take.
-    int registeredWindows = static_cast<int>(gen.elementsFor(BuildingPiece::WINDOW)->size());
-    gui.sliderInt("Window Variety", &windowCount, 1, std::max(registeredWindows, 1));
-    if(gui.button("Generate Wall")) {
-        gen.makeWall(glm::vec3(0,0,0), glm::vec2(spanX,spanY), static_cast<uint32_t>(windowCount), 2.0, 3.0, scene);
+    if(gui.button("Add")) {
+        linkStatus = gen.addLink(linkFromType, linkFromKey, {linkToType, linkToKey, cellPos})
+            ? linkFromKey + " " + BuildingPiece::linkPosName(cellPos) + " -> " + linkToKey
+            : "pick a piece above and one to add, or that rule already exists";
+        previewDirty = true;
+    }
+    if(!linkStatus.empty()) gui.text(linkStatus);
+
+    // A sample wall grown from the rules, so a change shows without rebuilding the building.
+    gui.separatorText("Preview");
+    if(gui.button("Reroll##preview")) {
+        previewSeed = BuildingGen::mixSeed(previewSeed + 1);
+        previewDirty = true;
+    }
+    if(previewDirty) {
+        previewRows = gen.previewRows(6, 4, static_cast<uint32_t>(windowCount), mirrorWalls, previewSeed);
+        previewDirty = false;
+    }
+    // Top row first, so it reads like the wall.
+    for(size_t r = previewRows.size(); r-- > 0;) {
+        const std::vector<BuildingPiece::Element>& row = previewRows[r];
+        for(size_t c = 0; c < row.size(); c++) {
+            if(c != 0) gui.sameLine();
+            gui.colorButton(cellLabel(row[c]) + "##p" + std::to_string(r) + "_" + std::to_string(c), typeColor(row[c].type), glm::vec2(64.0f, 0.0f));
+            gui.setItemTooltip(cellLabel(row[c]));
+        }
+    }
+    if(previewRows.empty()) gui.text("register a wall to see a preview");
+
+    // Any change to the plan or its settings sets this; the building is rebuilt once at the end.
+    bool rebuild = false;
+
+    gui.separatorText("Footprint");
+    gui.checkbox("Draw Footprint", &drawFootprint);
+    gui.sameLine();
+    if(gui.button("Undo Point") && !footprint.corners.empty()) {
+        footprint.corners.pop_back();
+        rebuild = true;
+    }
+    gui.sameLine();
+    if(gui.button("Clear")) {
+        footprint.corners.clear();
+        entranceEdges = {true};
+        rebuild = true;
+    }
+    gui.sameLine();
+    if(gui.button("Reroll")) {
+        gen.seed = BuildingGen::mixSeed(gen.seed + 1);
+        rebuild = true;
+    }
+    if(drawFootprint) gui.text("click the ground to add a corner, backspace to undo");
+
+    // Ground (y = 0) point under the cursor, when it isn't over the GUI.
+    InputState& input = InputManager::getCurrentState();
+    InputState& prevInput = InputManager::getPreviousState();
+    bool hasCursorPoint = false;
+    glm::vec2 cursorPoint(0.0f);
+    if(drawFootprint) {
+        InputManager::getInstance().canSelect = false;
+
+        if(!gui.wantsMouse()) {
+            glm::vec3 origin, direction;
+            scene.activeCamera.rayFromScreenCoords(input.ndcMousePos.x, input.ndcMousePos.y, origin, direction);
+            float t = 0.0f;
+            if(intersectPlane(glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(0.0f), origin, direction, t)) {
+                glm::vec3 hit = origin + direction * t;
+                cursorPoint = glm::vec2(hit.x, hit.z);
+                hasCursorPoint = true;
+            }
+        }
+
+        // Same press edge the selection raycast uses.
+        bool clicked = input.mouse_button == 0 && input.mouse_action == GLFW_PRESS && prevInput.mouse_action != GLFW_PRESS;
+        if(clicked && hasCursorPoint) {
+            footprint.corners.push_back(cursorPoint);
+            rebuild = true;
+        }
+
+        bool backspace = input.keyStates[GLFW_KEY_BACKSPACE] == GLFW_PRESS && prevInput.keyStates[GLFW_KEY_BACKSPACE] != GLFW_PRESS;
+        if(backspace && !gui.wantsKeyboard() && !footprint.corners.empty()) {
+            footprint.corners.pop_back();
+            rebuild = true;
+        }
     }
 
-    Gizmos::drawBox(glm::vec3(0.5, 0, 0),glm::vec3(-0.5, spanY, spanX),glm::vec4(1,1,0,1));
+    gui.dragFloat("Height", &buildingHeight, 0.1f, 0.0f, 40.0f);
+    rebuild |= gui.isItemDeactivatedAfterEdit();
+    gui.sameLine();
+    gui.dragFloat("Corner Inset", &cornerInset, 0.05f, 0.0f, 5.0f);
+    rebuild |= gui.isItemDeactivatedAfterEdit();
+    // Distinct window pieces the row may draw from, capped at what's registered.
+    int registeredWindows = static_cast<int>(gen.elementsFor(BuildingPiece::WINDOW)->size());
+    if(gui.sliderInt("Window Variety", &windowCount, 1, std::max(registeredWindows, 1))) rebuild = previewDirty = true;
+    if(gui.checkbox("Mirror Walls", &mirrorWalls)) rebuild = previewDirty = true;
+
+    // Hovering an edge's box highlights it in the viewport, since edges have no names.
+    gui.separatorText("Entrances");
+    const int edges = footprint.edgeCount();
+    if(static_cast<int>(entranceEdges.size()) < edges) entranceEdges.resize(edges, false);
+    int hoveredEdge = -1;
+    bool anyEntrance = false;
+    for(int edge = 0; edge < edges; edge++) {
+        bool hasEntrance = entranceEdges[edge];
+        if(gui.checkbox("Edge " + std::to_string(edge + 1), &hasEntrance)) {
+            entranceEdges[edge] = hasEntrance;
+            rebuild = true;
+        }
+        if(gui.isItemHovered()) hoveredEdge = edge;
+        anyEntrance |= hasEntrance;
+        if(edge % 4 != 3 && edge != edges - 1) gui.sameLine();
+    }
+    if(edges == 0) gui.text("no edges yet");
+    if(anyEntrance && gen.elementsFor(BuildingPiece::ENTRANCE)->empty()) {
+        gui.text("no entrance registered — those edges come out solid");
+    }
+
+    if(rebuild) {
+        gen.makeBuilding(footprint, buildingHeight, static_cast<uint32_t>(windowCount), entranceEdges, cornerInset, mirrorWalls, scene);
+    }
+
+    // Green plan, cyan entrance marks, yellow hovered edge, white preview of the next corner.
+    const glm::vec4 planColor = glm::vec4(0,1,0,1);
+    const glm::vec4 markColor = glm::vec4(0,1,1,1);
+    const glm::vec4 hoverColor = glm::vec4(1,1,0,1);
+    const glm::vec4 previewColor = glm::vec4(1,1,1,1);
+    const glm::vec3 rise = glm::vec3(0.0f, buildingHeight, 0.0f);
+    const glm::vec3 markRise = glm::vec3(0.0f, std::min(2.0f, buildingHeight), 0.0f);
+    auto ground = [](glm::vec2 p) { return glm::vec3(p.x, 0.0f, p.y); };
+
+    for(const glm::vec2& corner : footprint.corners) {
+        Gizmos::drawLine(ground(corner), ground(corner) + rise, planColor);
+    }
+    for(int edge = 0; edge < edges; edge++) {
+        const glm::vec3 a = ground(footprint.corner(edge)), b = ground(footprint.corner(edge + 1));
+        const glm::vec4 color = edge == hoveredEdge ? hoverColor : planColor;
+        Gizmos::drawLine(a, b, color);
+        Gizmos::drawLine(a + rise, b + rise, color);
+
+        if(!entranceEdges[edge]) continue;
+        Gizmos::drawLine(a + markRise, b + markRise, markColor);
+        Gizmos::drawLine(a, a + markRise, markColor);
+        Gizmos::drawLine(b, b + markRise, markColor);
+    }
+    if(hasCursorPoint) {
+        const glm::vec3 c = ground(cursorPoint);
+        Gizmos::drawCircle(c, 0.25f, glm::vec3(0.0f, 1.0f, 0.0f), previewColor);
+        if(!footprint.corners.empty()) Gizmos::drawLine(ground(footprint.corners.back()), c, previewColor);
+        if(footprint.size() >= 2) Gizmos::drawLine(c, ground(footprint.corners.front()), previewColor);
+    }
 
     gui.endWindow();
 }

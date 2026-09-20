@@ -829,6 +829,12 @@ public:
                           active ? style.buttonOnHover : style.buttonHover);
     }
 
+    // A button in a colour of the caller's choosing; hover lifts it a little.
+    bool colorButton(std::string_view label, glm::vec4 color, glm::vec2 size = glm::vec2(0)) {
+        glm::vec4 hover(glm::min(glm::vec3(color) * 1.2f + 0.05f, glm::vec3(1.0f)), color.a);
+        return buttonImpl(label, size, color, hover);
+    }
+
     // px left on the current row, i.e. what a -1 width resolves to. ImGui's -1 sizing convention.
     float availableWidth() {
         GUILayout* layout = getLayout(currentWindow());
@@ -1326,7 +1332,11 @@ public:
     bool beginCombo(std::string_view label, std::string_view preview) {
         uint64_t id = hashID(label, currentID());
         GUILayout* layout = getLayout(currentWindow());
-        float width = (layout != nullptr && layout->nextItemWidth > 0.0f) ? layout->nextItemWidth : style.itemWidth;
+        // Wide enough for its preview when nothing set a width, so a long name doesn't spill past
+        // the frame; the clip trims whatever still doesn't fit.
+        const std::string shown = std::string(preview) + "  v";
+        float width = (layout != nullptr && layout->nextItemWidth > 0.0f) ? layout->nextItemWidth
+                    : std::min(std::max(style.itemWidth, measureText(shown).x + 12.0f), availableWidth());
         float height = getLineHeight() + style.framePaddingY * 2.0f;
 
         uint32_t item = acquireItem(id, GUIRect{.type = GUIType::Button,
@@ -1338,7 +1348,7 @@ public:
         if (item == 0) return false;
 
         if (clickedElement == item) imItems[id].open = !imItems[id].open;
-        setText(item, std::string(preview) + "  v", style.text);
+        setText(item, shown, style.text);
         if (GUITextRun* run = getTextMutable(item)) run->padding = glm::vec2(6.0f, style.framePaddingY);
 
         labelAfter(label);
@@ -1983,6 +1993,15 @@ private:
     void emitTextQuads(const GUIRect& e, const GUITextRun& run) {
         if (!font.loaded() || run.text.empty()) return;
 
+        // Cut at the element's own box as well, so a run longer than its frame ends at the frame.
+        // Text boxes are left to overflow: they don't scroll yet, and a caret past the edge beats a
+        // hidden one. Two pixels of slack keep glyph overhangs at the edges intact.
+        glm::vec2 clipMin = e.clipMin, clipMax = e.clipMax;
+        if (!(e.type & GUIType::TextBox)) {
+            clipMin = glm::max(clipMin, glm::vec2(e.left(), e.top()) - 2.0f);
+            clipMax = glm::min(clipMax, glm::vec2(e.right(), e.bottom()) + 2.0f);
+        }
+
         float startX = std::round(e.left() + run.padding.x);
         // pen sits on the baseline; the run's box starts at the element's top-left
         glm::vec2 pen(startX, std::round(e.top() + run.padding.y + font.ascent()));
@@ -2010,7 +2029,7 @@ private:
                 // instead would accumulate the rounding error into visibly uneven spacing
                 glm::vec2 glyphMin = glm::round(pen + g->offset);
                 GPUGuiQuad quad{};
-                if (clipQuad(glyphMin, glyphMin + g->size, g->uvMin, g->uvMax, e.clipMin, e.clipMax, quad)) {
+                if (clipQuad(glyphMin, glyphMin + g->size, g->uvMin, g->uvMax, clipMin, clipMax, quad)) {
                     quad.color = run.color;
                     quad.textureIndex = atlasTextureIndex;
                     quad.samplerIndex = nearestSamplerIndex;

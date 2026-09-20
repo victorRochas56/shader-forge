@@ -40,13 +40,13 @@ class InputManager {
 
     bool contextMenuShown = false;
     bool canMove = true;
+    // Cleared each frame by a tool that owns left clicks in the viewport; skips selection next tick.
+    bool canSelect = true;
     float contextMenuPinX = 0;
     float contextMenuPinY = 0;
     bool materialPickMode = false;
     int pickedMaterialIndex = -1; // set when a mesh is clicked in pick mode
-    // WASD travel in units/second — the step is scaled by frame time, so this holds whatever the
-    // framerate does. 3.0 matches what the old fixed 0.05-per-frame step gave at 60Hz.
-    float cameraMoveSpeed = 3.0f;
+    float cameraMoveSpeed = 10.0f;
 
     static InputManager& getInstance() {
         static InputManager instance;

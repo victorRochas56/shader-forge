@@ -42,7 +42,7 @@ void InputManager::tickInputState() { //should be only called once in the main a
                     }
                 }
                 inst.materialPickMode = false;
-            } else {
+            } else if (inst.canSelect) {
                 std::vector<uint32_t> hitNodes = Raycast::castNodes(origin, direction, inst.scene->sceneGraph.getNodes(), inst.scene->sceneGraph.getLastNode());
                 if (!hitNodes.empty()) {
                     inst.scene->sceneGraph.selectNode(hitNodes.front());
@@ -136,6 +136,7 @@ void InputManager::tickInputState() { //should be only called once in the main a
         
         
     inst.canMove = true;
+    inst.canSelect = true;
 }
 
 

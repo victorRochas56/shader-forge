@@ -95,6 +95,8 @@ void showNodeMeshInfo(GUI& gui, Node& node, Scene& scene) {
                 }
                 gui.endCombo();
             }
+            gui.sliderFloat("LOD Bias", &scene.assetManager.meshes[node.meshIndex].LODBias ,0.1f, 4.0f);
+
         } else {
             if (gui.button("Add Mesh")) {
                 state.changingMesh = true;

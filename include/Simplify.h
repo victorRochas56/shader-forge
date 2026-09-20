@@ -328,6 +328,10 @@ namespace Simplify
 	// collapse only onto existing vertices: positions never move, vertices are never
 	// reindexed, so result triangles index the original vertex buffer
 	bool preserve_vertices = false;
+	// lock open boundaries: no collapse may touch a vertex on a free edge, so the boundary
+	// polyline comes out of every level unchanged. The stock border[] check only blocks
+	// border<->interior collapses, which still lets a free edge erode along itself.
+	bool preserve_borders = false;
 
 	// Helper functions
 
@@ -401,6 +405,7 @@ namespace Simplify
 					int i0=t.v[ j     ]; Vertex &v0 = vertices[i0];
 					int i1=t.v[(j+1)%3]; Vertex &v1 = vertices[i1];
 					// Border check
+					if(preserve_borders && (v0.border || v1.border)) continue;
 					if(v0.border != v1.border)  continue;
 
 					// Compute vertex to collapse to
@@ -491,6 +496,7 @@ namespace Simplify
 					int i1=t.v[(j+1)%3]; Vertex &v1 = vertices[i1];
 
 					// Border check
+					if(preserve_borders && (v0.border || v1.border)) continue;
 					if(v0.border != v1.border)  continue;
 
 					// Compute vertex to collapse to
@@ -794,6 +800,14 @@ namespace Simplify
 		// compute interpolated vertex
 
 		SymetricMatrix q = vertices[id_v1].q + vertices[id_v2].q;
+
+		if (preserve_borders && (vertices[id_v1].border || vertices[id_v2].border))
+		{
+			// locked edge: unreachable cost keeps it out of t.err[3], so a triangle whose
+			// only cheap edge is on the boundary stops being retried every iteration
+			p_result = vertices[id_v1].p;
+			return DBL_MAX;
+		}
 
 		if (preserve_vertices)
 		{

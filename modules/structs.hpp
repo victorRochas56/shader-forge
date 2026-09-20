@@ -268,7 +268,6 @@ struct SSRSettings {
     float roughnessThreshold = 0.8f;
     int maxSteps = 32;
     float thickness = 0.1f;
-    float temporalBlend = 0.2;
     bool resolutionDirty = false;
     // Tiled trace: compute classification compacts trace-worthy pixels, then a dispatch-indirect
     // trace runs with full warps. Off = legacy fullscreen fragment path.
@@ -442,16 +441,6 @@ struct HiZPushConstants {
 struct SSAOApplyPushConstants {
     uint32_t ssaoTextureIndex;
     uint32_t samplerIndex;
-    uint32_t padding[2];
-};
-
-struct SSRAccumulatePushConstants {
-    uint32_t currentSSRIndex;
-    uint32_t historySSRIndex;
-    uint32_t motionVectorIndex;
-    uint32_t samplerIndex;
-    float    temporalBlend;
-    uint32_t historyValid;          // 0 = no valid history (first frame / resize)
     uint32_t padding[2];
 };
 
@@ -1041,6 +1030,7 @@ struct Mesh {
 
     // index count per LOD [LOD0, LOD1, ...]; consecutive ranges in the index allocation
     std::vector<uint32_t> LODs;
+    float LODBias = 1.0f;
     // LOD0 surface area in model space; drives screen-space triangle-size LOD selection
     float surfaceArea = 0.0f;
     // LOD the screen-size heuristic last picked for this mesh. Groups drawing a forced LOD

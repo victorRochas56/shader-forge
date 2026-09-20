@@ -352,7 +352,7 @@ class SceneLoader {
             } else if (key == "Shader") {
                 // resolve to a registered lit shader so pipelineIndex matches the saved source
                 material.shaderSource = scene.resolveLitShader(value);
-            } else if (key == "TextureMask" || key == "MaterialFlags") {
+            } else if (key == "MaterialFlags") {
                 material.flags = static_cast<MaterialFlags>(std::stoul(value));
             } else if (key == "Color") {
                 auto parts = split(value, ',');
@@ -485,7 +485,7 @@ class SceneLoader {
         std::string meshPath;
         std::string meshName;
         float meshScale = 1.0f;
-        int meshEntry = -1; // -1 = not present (legacy scene) -> fall back to detection-based load
+        uint32_t meshEntry = 0;
         std::vector<uint32_t> materialIDs;
         bool hasLight = false;
         bool hasVolume = false;
@@ -554,7 +554,7 @@ class SceneLoader {
             } else if (key == "MeshName") {
                 meshName = value;
             } else if (key == "MeshEntry") {
-                meshEntry = std::stoi(value);
+                meshEntry = static_cast<uint32_t>(std::stoul(value));
             } else if (key == "MeshScale") {
                 meshScale = std::stof(value);
             } else if (key == "MaterialID") {
@@ -598,14 +598,14 @@ class SceneLoader {
             } else if (key == "Volume") {
                 hasVolume = true;
                 auto parts = split(value, ';');
-                vol.density = std::stof(parts[0]);
-                vol.phase = std::stof(parts[1]);
-                vol.shape = static_cast<VolumeShape>(std::stoul(parts[2]));
-                // parts[3] is a legacy center token — volumes now derive center from their node at
-                // stream time, so it is parsed for format compatibility but discarded.
-                vol.radius = std::stof(parts[4]);
-                auto dimParts = split(parts[5], ',');
-                vol.dimensions = glm::vec3(std::stof(dimParts[0]),std::stof(dimParts[1]),std::stof(dimParts[2]));
+                if (parts.size() >= 5) {
+                    vol.density = std::stof(parts[0]);
+                    vol.phase = std::stof(parts[1]);
+                    vol.shape = static_cast<VolumeShape>(std::stoul(parts[2]));
+                    vol.radius = std::stof(parts[3]);
+                    auto dimParts = split(parts[4], ',');
+                    vol.dimensions = glm::vec3(std::stof(dimParts[0]),std::stof(dimParts[1]),std::stof(dimParts[2]));
+                }
             }
         }
 
@@ -618,33 +618,12 @@ class SceneLoader {
         // Load mesh if specified
         if (!meshPath.empty()) {
             try {
-                uint32_t meshIdx;
-                if (meshEntry >= 0) {
-                    // Fast path: rebuild this exact mesh from its source entry, no instance detection.
-                    // A saved LOD chain skips the simplifier; loadSceneMesh re-derives it if the
-                    // entry no longer matches what was serialised.
-                    auto cached = meshLODCache.find(meshLODKey(meshPath, static_cast<uint32_t>(meshEntry), meshScale));
-                    meshIdx = scene.assetManager.loadSceneMesh(meshPath, static_cast<uint32_t>(meshEntry), meshName, meshScale,
-                                                               cached != meshLODCache.end() ? &cached->second : nullptr);
-                } else {
-                    // Legacy scene without entry indices — fall back to the full detection-based load.
-                    auto loadResult = scene.assetManager.loadMeshFromFile(meshPath, meshScale);
-                    auto& meshIndices = loadResult.meshIndices;
-                    if (meshIndices.empty()) {
-                        throw std::runtime_error("no geometry in " + meshPath);
-                    }
-
-                    // Find the specific sub-mesh by name, or fall back to the first one
-                    meshIdx = meshIndices[0];
-                    if (!meshName.empty()) {
-                        for (uint32_t idx : meshIndices) {
-                            if (scene.assetManager.getMeshes()[idx].name == meshName) {
-                                meshIdx = idx;
-                                break;
-                            }
-                        }
-                    }
-                }
+                // Rebuild this exact mesh from its source entry, no instance detection. A saved LOD
+                // chain skips the simplifier; loadSceneMesh re-derives it if the entry no longer
+                // matches what was serialised.
+                auto cached = meshLODCache.find(meshLODKey(meshPath, meshEntry, meshScale));
+                uint32_t meshIdx = scene.assetManager.loadSceneMesh(meshPath, meshEntry, meshName, meshScale,
+                                                                    cached != meshLODCache.end() ? &cached->second : nullptr);
 
                 Node& n = scene.sceneGraph.getNodes()[nodeIndex];
                 NodeOps::assignMesh(n, meshIdx, scene);
@@ -940,9 +919,8 @@ class SceneLoader {
 
         if (volumePtr) {
             const Volume& vol = *volumePtr;
-            // Center is derived from the node at stream time; write a 0,0,0 placeholder to keep the
-            // legacy token slot in the format (it is discarded on load).
-            ofs << indent << " Volume : " << vol.density << ";" << vol.phase << ";" << static_cast<uint32_t>(vol.shape) << ";" << "0,0,0" << ";" << vol.radius << ";" << vol.dimensions.x << "," << vol.dimensions.y << "," << vol.dimensions.z << std::endl;
+            // Center is derived from the node at stream time, so it isn't written.
+            ofs << indent << " Volume : " << vol.density << ";" << vol.phase << ";" << static_cast<uint32_t>(vol.shape) << ";" << vol.radius << ";" << vol.dimensions.x << "," << vol.dimensions.y << "," << vol.dimensions.z << std::endl;
         }
 
         if (emitterPtr) {
@@ -1007,6 +985,7 @@ class SceneLoader {
             ofs << "  minRadius : " << mesh.minRadius << std::endl;
             ofs << "  maxRadius : " << mesh.maxRadius << std::endl;
             ofs << "  surfaceArea : " << mesh.surfaceArea << std::endl;
+            ofs << "  LODBias : " << mesh.LODBias << std::endl;
             ofs << "  LODs : ";
             for(uint32_t lod : mesh.LODs) {
                 ofs << lod << ";";

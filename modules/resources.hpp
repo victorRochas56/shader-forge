@@ -62,9 +62,14 @@ struct MeshData {
 };
 
 // LOD.cpp — appends simplified index sets to `indices`, fills `LODs` with per-LOD index counts.
-// Not thread-safe (global Simplify state).
-void generateLODs(const std::vector<Vertex>& vertices, std::vector<uint32_t>& indices, std::vector<uint32_t>& LODs);
-inline void generateLODs(MeshEntry& mesh) { generateLODs(mesh.vertices, mesh.indices, mesh.LODs); }
+// Not thread-safe (global Simplify state). preserveBorders keeps free edges (open boundaries)
+// intact at every level so modular pieces still butt up against each other; it costs some
+// reduction on open shells and does nothing on closed ones, which have no free edges.
+void generateLODs(const std::vector<Vertex>& vertices, std::vector<uint32_t>& indices, std::vector<uint32_t>& LODs,
+                  bool preserveBorders = true);
+inline void generateLODs(MeshEntry& mesh, bool preserveBorders = true) {
+    generateLODs(mesh.vertices, mesh.indices, mesh.LODs, preserveBorders);
+}
 
 /*
 namespace for GPU resource operations: loading textures/meshes, creating textures

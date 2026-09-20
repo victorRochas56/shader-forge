@@ -4738,13 +4738,6 @@ Node {
   Light : Directional;10;20;1,1,1;1;2048;10.000000,20.000000,50.000000
 }
 Node {
-  Name : empty_397
-  Position : 0,1,0
-  Rotation : 1,0,0,0
-  Scale : 1,1,1
- Volume : 0.01;0.613;0;0,0,0;20;1,1,1
-}
-Node {
   Name : empty_398
   Position : 11.1924,1.26392,4.03665
   Rotation : 0.724461,-0.689235,0.00726091,-0.00763201

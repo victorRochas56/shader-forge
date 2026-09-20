@@ -260,6 +260,7 @@ void Renderer::initVulkan(uint32_t startWidth, uint32_t startHeight) {
         vk::Format::eUndefined, nullptr, "fragMainGICube");
 
     addLitShader("shaders/water.spv");
+    addLitShader("shaders/glass.spv");
 
     // lit-derived variants are added declaratively here, e.g.:
     // addLitShader("shaders/lit_toon.spv");
@@ -821,7 +822,7 @@ void Renderer::recordCommandBuffer(uint32_t imageIndex) {
 // Finest LOD whose average triangle still covers kMinAvgTrianglePixels on screen 
 // Foreshortening and backfaces shrink real coverage further; the target constant absorbs that on average.
 static uint32_t selectLOD(const Mesh& mesh, float areaToPixels2) {
-    constexpr float kMinAvgTrianglePixels = 8.0f;
+    const float kMinAvgTrianglePixels = 4.0f * mesh.LODBias;
     if (mesh.surfaceArea <= 0.0f) return 0;
     uint32_t lod = 0;
     while (lod + 1 < mesh.LODs.size()) {

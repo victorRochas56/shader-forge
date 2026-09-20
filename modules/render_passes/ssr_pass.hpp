@@ -15,12 +15,9 @@ class SSRPass : public RenderPass {
 
     uint32_t currentTextureIndex = 0xFFFFFFFF;
     uint32_t currentStorageIndex = 0xFFFFFFFF; // storage slot of ssr_current (tiled trace writes)
-    uint32_t historyTextureIndices[2] = {0xFFFFFFFF, 0xFFFFFFFF};
-    uint32_t historyFlip = 0;
 
     uint32_t pipelineIndex = 0xFFFFFFFF;
     uint32_t applyPipelineIndex = 0xFFFFFFFF;
-    uint32_t accumulatePipelineIndex = 0xFFFFFFFF;
     uint32_t classifyPipelineIndex = 0xFFFFFFFF;
     uint32_t tracePipelineIndex = 0xFFFFFFFF;
     uint32_t passDataBufferIndex;
@@ -29,8 +26,6 @@ class SSRPass : public RenderPass {
     // Grow-only: an upward window resize allocates a fresh buffer and strands the old slot.
     uint32_t rayBufferIndex = 0xFFFFFFFF;
     uint32_t rayCapacityPixels = 0;
-
-    bool historyInvalid = true;
 
 public:
     SSRPass(GpuContext& gpu, BindlessSystem& bindless, Scene& scene, RenderFeatures& features, RenderPassResources& shared) : RenderPass(gpu, bindless, scene, features, shared) {
@@ -48,10 +43,6 @@ public:
         // the fallback fragment path still renders to it as a color attachment.
         resize2DStorageImage(currentTextureIndex, currentStorageIndex, ssrW, ssrH, gpu.getSwapchain().getHDRColorFormat(), "internal/ssr_current",
                              vk::ImageUsageFlagBits::eColorAttachment);
-        resize(historyTextureIndices[0], ssrW, ssrH, gpu.getSwapchain().getHDRColorFormat(), "internal/ssr_history0");
-        resize(historyTextureIndices[1], ssrW, ssrH, gpu.getSwapchain().getHDRColorFormat(), "internal/ssr_history1");
-
-        historyInvalid = true;
 
         // Ray list sized for the SSR pixel count (16-byte header + one uint per pixel).
         if (ssrW * ssrH > rayCapacityPixels) {
@@ -63,7 +54,7 @@ public:
                 false, "SSRRayList", true);
         }
 
-        // SSR ray-trace + accumulate write into ssr_current / ssr_history (HDR; reflections sample HDR scene color).
+        // SSR ray-trace writes into ssr_current (HDR; reflections sample HDR scene color).
         if (pipelineIndex == 0xFFFFFFFF) {
             pipelineIndex = bindless.pipelineManager->createPipeline<SSRPushConstants>(
                 PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone,
@@ -79,13 +70,6 @@ public:
                 "shaders/ssr.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(), "classifyMain");
             tracePipelineIndex = bindless.pipelineManager->createComputePipeline<SSRPushConstants>(
                 "shaders/ssr.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(), "traceMain");
-        }
-
-        if (accumulatePipelineIndex == 0xFFFFFFFF) {
-            accumulatePipelineIndex = bindless.pipelineManager->createPipeline<SSRAccumulatePushConstants>(
-                PipelineCategory::POSTPROCESS, vk::PrimitiveTopology::eTriangleList, vk::CullModeFlagBits::eNone,
-                vk::False, vk::False, "shaders/ssr_accumulate.spv", bindless.descriptorSet->getDescriptorSetLayout(), bindless.descriptorSet->getDescriptorSet(),
-                gpu.getSwapchain().getHDRColorFormat());
         }
 
         // Apply composites onto the HDR composite target.
@@ -111,10 +95,6 @@ public:
         // so sloped/grazing surfaces don't band. Stopping coarser biases minZ to the cell's
         // nearest texel and stripes the floor.
         uint32_t hiZStopLevel = 0;
-
-        uint32_t readHistory = historyTextureIndices[historyFlip];
-        uint32_t writeHistory = historyTextureIndices[1 - historyFlip];
-        auto& ssrWriteHist = bindless.descriptorSet->getTextureResource(writeHistory);
 
         // --- Sub-pass 0: Generate blurred mip chain for cone tracing (GPU Pro 5 style)
         // Mip 0 is already populated by the geometry pass MSAA resolve.
@@ -240,36 +220,17 @@ public:
                 vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
         }
 
-        // --- Sub-pass 2: Temporal accumulate -> writeHistory ---
-        resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *ssrWriteHist.image,
-            vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eColorAttachmentOptimal);
-
-        drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[accumulatePipelineIndex], *ssrWriteHist.imageView, ssrExtent,
-            SSRAccumulatePushConstants{
-                .currentSSRIndex = currentTextureIndex,
-                .historySSRIndex = readHistory,
-                .motionVectorIndex = shared.motionVectorTextureIndex,
-                .samplerIndex = shared.screenSamplerIndex,
-                .temporalBlend = features.ssr.temporalBlend,
-                .historyValid = historyInvalid ? 0u : 1u,
-            },
-            vk::AttachmentLoadOp::eClear, {0.0f, 0.0f, 0.0f, 0.0f});
-
-        resource::transitionImageLayout(*bindless.resourceCtx, &cmd, *ssrWriteHist.image, vk::ImageLayout::eColorAttachmentOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
-
-        // --- Sub-pass 3: Apply accumulated SSR to the HDR composite ---
+        // --- Sub-pass 2: Apply the traced SSR to the HDR composite ---
         drawFullscreenPass(cmd, *bindless.pipelineManager->getPostProcessPipelines()[applyPipelineIndex], *bindless.descriptorSet->getTextureResource(shared.compositeColorTextureIndex).imageView, swapExtent,
             SSRApplyPushConstants{
                 .samplerIndex = shared.screenSamplerIndex,
-                .ssrTextureIndex = writeHistory,
+                .ssrTextureIndex = currentTextureIndex,
             },
             vk::AttachmentLoadOp::eLoad);
 
         // transition depth back
         resource::transitionImageLayout(*bindless.resourceCtx, &cmd, gpu.getSwapchain().getDepthImage(), vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eDepthStencilAttachmentOptimal);
 
-        historyFlip = 1 - historyFlip;
-        historyInvalid = false;
         tracing::endTrace("ssr pass");
     }
 };

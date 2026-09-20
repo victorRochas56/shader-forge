@@ -38,7 +38,7 @@ Node {
   Position : -5.75,1.97629,-2.588
   Rotation : 1,0,0,0
   Scale : 1,1,1
- Volume : 0.00142857;0.8;0;0,0,0;20;1,1,1
+ Volume : 0.00142857;0.8;0;20;1,1,1
 }
 Node {
   Name : empty_2
