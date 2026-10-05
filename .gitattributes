@@ -1,3 +1,5 @@
+models/* filter=lfs diff=lfs merge=lfs -text
+textures/* filter=lfs diff=lfs merge=lfs -text
 models/** filter=lfs diff=lfs merge=lfs -text
 textures/** filter=lfs diff=lfs merge=lfs -text
 *.glb filter=lfs diff=lfs merge=lfs -text
