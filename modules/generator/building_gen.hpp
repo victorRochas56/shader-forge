@@ -514,6 +514,7 @@ class BuildingGen : public ISerializable
             makeWall(glm::vec3(start.x, 0.0f, start.y), yaw, glm::vec2(length, height), windowCount,
                      edge < static_cast<int>(entrances.size()) && entrances[edge], mirrored, scene);
         }
+        // TODO polygon of roof
     }
 
     // One wall run: pieces laid along +Z from `origin`, the whole run turned by `yaw` about it.

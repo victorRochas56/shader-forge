@@ -100,6 +100,10 @@ FragmentOutput litFragImpl<let GI_MODE : int, let DEBUG_CASCADES : bool>(VertexO
     float roughness = hasRoughness ? roughTex.r : input.matParams.y;
     float metallic  = hasMetallic  ? metalTex.r : input.matParams.x;
 
+    // albedo = float4(1,1,1,1);
+    // roughness = 1.0;
+    // metallic = 0.0;
+
     float3 cameraPos = UF.cameraPosExtent.xyz;
     float3 cameraForward = UF.cameraForwardGI.xyz;
     float3 V = normalize(cameraPos - input.worldPos);

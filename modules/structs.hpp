@@ -171,15 +171,15 @@ struct VXGISettings {
     int updatePhases = 2;        // power of two, 1..8: a voxel re-traces every N frames
     // Clipmap layout. Level l is CLIP_RESOLUTION voxels of voxelSize0 * 2^l a side, so each level
     // doubles the covered radius at the same voxel count. Resolution is compile-time (VoxelizationPass).
-    int   clipLevels = 5;            // active levels, 1..MAX_VOXEL_CLIP_LEVELS
-    float voxelSize0 = 0.25f;        // level-0 voxel size in metres
+    int   clipLevels = 3;            // active levels, 1..MAX_VOXEL_CLIP_LEVELS
+    float voxelSize0 = 0.15f;        // level-0 voxel size in metres
     // Cone range cap. A cone that reaches it is treated as seeing sky, so this doubles as the
     // occlusion horizon: the old single grid exited at 32 m, which is where this default comes from.
-    float maxTraceDistance = 32.0f;
+    float maxTraceDistance = 64.0f;
     // Raster cull: skip nodes whose bounding box is under this many of the level's voxels on every
     // axis. 0 disables. Modular scenes are built from pieces smaller than a coarse voxel, so this
     // drops whole walls from the far levels — keep it off unless the draw count is the problem.
-    float smallNodeCull = 0.0f;
+    float smallNodeCull = 1.5f;
 };
 
 // Mirror of VoxelGatherPushConstants in shaders/voxel_gather.slang. One dispatch per clip level.
